@@ -822,7 +822,8 @@ function P:with_entries(wtk)
     return items
 end
 
--- `struct { name: Type, ... }`, `oneof { ... }`, `ffistruct { name: ctype, ... }`, and their `with` forms
+-- `struct { name: Type, ... }`, `oneof { ... }`, `ffistruct { name: ctype, ... }`, and their block forms:
+-- the word, fields on lines of their own, `end`
 function P:struct(hint)
     local r = self.r
     local s = r:next()
@@ -845,7 +846,7 @@ function P:struct(hint)
         end)
         r:expect('}', 'to close the ' .. kind)
     else
-        local wtk = r:next()                       -- `with`
+        local wtk = s
         self.kinds[#self.kinds + 1] = 'with'
         self:with_flags({ in_header = false, in_bracket = false, in_with = true }, function()
             while not (r:is('end') or is_endall(r:peek(1)) or r:peek(1).t == 'eof') do
@@ -854,7 +855,7 @@ function P:struct(hint)
             end
         end)
         self.kinds[#self.kinds] = nil
-        if r:peek(1).t == 'eof' then r:error('a `with` block is not closed (expected `end`)', wtk) end
+        if r:peek(1).t == 'eof' then r:error(('a `%s` block is not closed (expected `end`)'):format(kind), wtk) end
         self:close_block('the ' .. kind)
     end
     return { k = 'struct', sum = kind == 'oneof', ffi = kind == 'ffistruct' or nil, fields = fields, name = hint, line = s.line }
@@ -865,8 +866,12 @@ function P:primary(hint, in_type)
     local tk = r:peek(1)
     if tk.t == 'name' then
         if (tk.v == 'struct' or tk.v == 'oneof' or tk.v == 'ffistruct')
-            and (r:peek(2).t == '{' or (is_name(r:peek(2), 'with') and r:peek(3).t == 'name')) then
+            and (r:peek(2).t == '{' or (r:peek(2).t == 'name' and r:peek(3).t == ':')) then
             return self:struct(hint), 'struct'
+        end
+        if (tk.v == 'struct' or tk.v == 'oneof' or tk.v == 'ffistruct') and is_name(r:peek(2), 'with')
+            and r:peek(3).t == 'name' and r:peek(4).t == ':' then
+            r:error(('`%s with` is written `%s`, then the fields and `end`'):format(tk.v, tk.v), r:peek(2))
         end
         r:next()
         return { k = 'name', name = tk.v, line = tk.line, col = tk.col }, 'name'

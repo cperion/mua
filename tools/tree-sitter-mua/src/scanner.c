@@ -111,6 +111,19 @@ bool tree_sitter_mua_external_scanner_scan(void *p, TSLexer *l, const bool *vali
       s->endall = true; s->column = l->get_column(l); s->next = l->lookahead;
       l->mark_end(l); l->result_symbol = ENDALL; return true;
     }
+    // `struct`, `oneof`, `ffistruct` followed by fields (`name: Type`) and `end`: a declaration block
+    // (a table in braces, or any other use of the name, is an ordinary expression)
+    if (valid[DEFINE] && (!strcmp(name, "struct") || !strcmp(name, "oneof") || !strcmp(name, "ffistruct"))) {
+      l->mark_end(l);
+      while (l->lookahead == ' ' || l->lookahead == '\t' || l->lookahead == '\r' || l->lookahead == '\n') advance(l);
+      if (!name_start(l->lookahead)) return false;
+      while (name_char(l->lookahead)) advance(l);
+      while (l->lookahead == ' ' || l->lookahead == '\t') advance(l);
+      if (l->lookahead != ':') return false;
+      advance(l);
+      if (l->lookahead == ':') return false;
+      l->result_symbol = DEFINE; return true;
+    }
     // `define entries end`: a definition, when entries follow (a name, or `..`) and not an
     // ordinary use of the name (`define = 1`, `define(x)`, `define.x`, a statement that follows)
     if (valid[DEFINE] && !strcmp(name, "define")) {

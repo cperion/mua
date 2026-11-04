@@ -142,7 +142,7 @@ end
 local assigned_sexpr = assigned:root():sexpr()
 assert(select(2, assigned_sexpr:gsub('%(lambda', '')) == 4, '=: blocks are not lambdas: ' .. assigned_sexpr)
 local with_tree = parse([[
-local Point = struct with
+local Point = struct
     x: U32
     y: U32
 end
@@ -163,7 +163,8 @@ end
 local with_name = 3
 ]], 'with blocks supply keyed data')
 local with_sexpr = with_tree:root():sexpr()
-assert(select(2, with_sexpr:gsub('%(table_constructor', '')) == 4, 'with blocks are not table constructors: ' .. with_sexpr)
+assert(select(2, with_sexpr:gsub('%(table_constructor', '')) == 3, 'with blocks are not table constructors: ' .. with_sexpr)
+assert(with_sexpr:find('(define_block (field (identifier) (identifier))', 1, true), 'a struct block is not a declaration block: ' .. with_sexpr)
 local contextual = parse([[
 local make = do(n: U32): Point
     return with

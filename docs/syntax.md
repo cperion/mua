@@ -120,7 +120,7 @@ table is not changed, and a typed `const` cannot take one). Where no type applie
 plain table. A host may give it other meaning.
 
 ```mua
-local Point = struct with
+local Point = struct
     x: Number
     y: Number
 end
@@ -205,11 +205,16 @@ area("3", 4)   -- contract: parameter 'w' of area expects Number, got a string "
 
 The translator's `contracts = false` removes the checks.
 
+**`struct`**, **`oneof`** and **`ffistruct`** declare their fields in braces (`struct { x: Number }`) or
+as a block: the word, the fields on lines of their own, and `end`, the way `define` writes a
+table. There is no `with` after the word (`struct with` is an error that says so); `T with` is for
+constructing a value of a type.
+
 **`struct`** is a nominal record type: closed, with typed fields, instances branded by a
 metatable through which methods (`function P:m() … end`) are reached:
 
 ```lua
-local Point = struct with
+local Point = struct
     x: Number
     y: Number
 end
@@ -221,7 +226,7 @@ it with one handler per alternative, and **every match checks** that the handler
 the alternatives: a missing or unknown handler is an error at the match.
 
 ```lua
-local Shape = oneof with
+local Shape = oneof
     circle: Number
     rect: Table
 end
@@ -234,7 +239,7 @@ end
 **`ffistruct`** declares a C struct for LuaJIT's FFI and gives back its ctype:
 
 ```lua
-local Point = ffistruct with
+local Point = ffistruct
     x: double
     y: double
 end

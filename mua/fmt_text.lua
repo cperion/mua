@@ -220,13 +220,14 @@ function M.expand(source, mark, full, filename)
         if frame then frame.entries[#frame.entries + 1] = { first = first, last = last } end
         return result
     end
-    -- `struct with … end`, `oneof with … end`: the fields are read by the parser's own loop
+    -- `struct … end`, `oneof … end`, `ffistruct … end`: the fields are read by the parser's own loop
     local struct = p.struct
     function p:struct(hint)
         local at = r:peek(2)
-        if at.t == 'name' and at.v == 'with' and r:peek(3).t == 'name' then
-            local wtk = at
+        if at.t == 'name' and r:peek(3).t == ':' then
+            local wtk = r:peek(1)
             open_with(wtk, false)
+            replace[wtk.index] = wtk.v .. ' {'              -- the word stays, the block is braced
             local frame = frames[#frames]
             local result = struct(self, hint)
             -- the fields start at a name followed by `:`, outside any brackets
@@ -654,7 +655,8 @@ function M.withize(source, unit, spread_beside)
                 -- between them
                 local w = i - 1
                 while tokens[w] and tokens[w][1] == 'space' and not tokens[w][2]:find '\n' do w = w - 1 end
-                if tokens[w] and tokens[w][1] == 'iden' and tokens[w][2] == 'with' and w < i then
+                if tokens[w] and tokens[w][1] == 'iden' and (tokens[w][2] == 'with' or tokens[w][2] == 'struct'
+                    or tokens[w][2] == 'oneof' or tokens[w][2] == 'ffistruct') and w < i then
                     block.headless = true
                     for k = w + 1, i - 1 do block.drop[k] = true end
                 end
@@ -920,6 +922,11 @@ local function scan_blocks(tokens)
                 stack[#stack] = nil
             end
             close_frame[i] = popped
+        elseif t == 'iden' and (v == 'struct' or v == 'oneof' or v == 'ffistruct') then
+            -- the block form: the word, then fields (`name:`) up to `end`
+            local a = significant_after(tokens, i)
+            local b = tokens[a] and significant_after(tokens, a)
+            if tokens[a] and tokens[a][1] == 'iden' and tokens[b] and tokens[b][1] == ':' then push('with', i) end
         elseif t == 'iden' and v == 'with' then
             local p = skip_back(tokens, i)
             local operand = p >= 1 and (OPERAND[tokens[p][1]]

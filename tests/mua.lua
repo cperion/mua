@@ -191,7 +191,7 @@ parses('endall closes the spine', 'outer:each: a\n  inner:each: b\n    f a b\nen
     'outer:each(colon(a){inner:each(colon(b){f(a)(b)})}), g()')
 parses('endall stops at a typed word', 'local w = do(): U32\n  xs:each: a\n    f a\n  endall\n  return 1\nend',
     'local w = fn():U32{xs:each(colon(a){f(a)}), return 1}')
-parses('struct and oneof', 'local P = struct { x: F32, y: F32 }\nlocal S = oneof with\n  a: Unit\n  b: U32\nend',
+parses('struct and oneof', 'local P = struct { x: F32, y: F32 }\nlocal S = oneof\n  a: Unit\n  b: U32\nend',
     'local P = struct{x:F32, y:F32}, local S = oneof{a:Unit, b:U32}')
 parses('typed word', 'local f = do(x: U32): U32 = x + 1', 'local f = fn(x):U32=(x + 1)')
 parses('opening', 'local ctx.. = e\nf do(..) g end', 'open ctx = e, f(fn(..){g()})')
@@ -337,7 +337,7 @@ runs('a oneof is a checker', 'local R = oneof { ok: Number, err: String }\nlocal
 
 -- ffistruct (LuaJIT FFI): C structs as ctypes; a ctype is a checker
 runs('an ffistruct builds values', 'local P = ffistruct { x: double, y: double }\nlocal p = P { x = 1.5, y = 2 }\nreturn p.x + p.y', 3.5)
-runs('an ffistruct in the with form', 'local P = ffistruct with\n    x: int32_t\n    y: int32_t\nend\nreturn require("ffi").sizeof(P)', 8)
+runs('an ffistruct in the with form', 'local P = ffistruct\n    x: int32_t\n    y: int32_t\nend\nreturn require("ffi").sizeof(P)', 8)
 runs('FFIStructs nest, and an array field is a string of C', 'local P = ffistruct { x: double }\nlocal S = ffistruct { a: P, tag: "uint8_t[4]" }\nlocal s = S { a = P(7) }\nreturn s.a.x', 7)
 runs('a ctype is a contract', 'local P = ffistruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(P(4))', 4)
 errors('a ctype contract rejects another value', 'local P = ffistruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(5)',
@@ -347,6 +347,15 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
+-- struct, oneof and ffistruct take their fields as a block
+runs('struct as a block', 'local P = struct\n    x: Number\n    y: Number\nend\nreturn P { x = 1, y = 2 }.y', 2)
+runs('oneof as a block', 'local O = oneof\n    a: Unit\n    b: Number\nend\nreturn O.b(4).value', 4)
+runs('ffistruct as a block', 'local V = ffistruct\n    x: double\nend\nreturn V { x = 3 }.x', 3)
+runs('a struct block inside a function', 'local f = do(A) = struct\n    a: A\nend\nreturn f(Number) { a = 5 }.a', 5)
+do
+    local ok, message = pcall(mua.translate, 'local P = struct with\n    x: Number\nend', 'p.mua')
+    check('struct with is written struct', not ok and message:find('is written `struct`', 1, true), message)
+end
 -- a headless `with` is a plain table that a struct contract fills in, in place
 runs('with is a plain table without a type', 'local t = with\n    x = 1\nend\nreturn t.x + (getmetatable(t) == nil and 10 or 0)', 11)
 runs('a typed local takes the struct', 'local P = struct { x: Number }\nlocal p: P = with\n    x = 1\nend\nreturn getmetatable(p) == getmetatable(P { x = 2 }) and p.x or -1', 1)
