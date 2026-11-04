@@ -8,14 +8,14 @@ local failure = f -> reason(select(2, pcall f))
 -- An annotation is a contract, checked when the function is called and when it returns.
 local area = do(width: Number, height: Number): Number = width * height
 print(area(3, 4))
-print(failure(do() = area("3", 4)))
+print(failure(|| -> area("3", 4)))
 
 -- A struct is a closed record with typed fields.
 local Point = struct { x: Number, y: Number }
 local origin = Point { x = 0, y = 0 }
 print(origin.x, origin.y)
-print(failure(do() = Point { x = 1 }))
-print(failure(do() = Point { x = 1, y = 2, z = 3 }))
+print(failure(|| -> Point { x = 1 }))
+print(failure(|| -> Point { x = 1, y = 2, z = 3 }))
 
 -- Its instances reach their methods through the struct.
 function Point:distance_squared()
@@ -26,30 +26,30 @@ print(Point { x = 3, y = 4 }:distance_squared())
 -- A struct is a checker, so it works as a contract.
 local length_squared = do(p: Point): Number = p:distance_squared()
 print(length_squared(Point { x = 6, y = 8 }))
-print(failure(do() = length_squared { x = 6, y = 8 }))
+print(failure(|| -> length_squared { x = 6, y = 8 }))
 
 -- A oneof is a closed set of alternatives, each with a payload.
 local Shape = oneof { circle: Number, rect: Table, dot: Unit }
 
 -- A value is matched by calling it with one handler per alternative.
 local area_of = do(shape: Shape): Number = shape with
-    circle = do(r) = 3 * r * r
-    rect = do(t) = t.w * t.h
-    dot = do() = 0
+    circle = r -> 3 * r * r
+    rect = t -> t.w * t.h
+    dot = || -> 0
 end
 print(area_of(Shape.circle 2), area_of(Shape.rect { w = 2, h = 5 }), area_of(Shape.dot()))
 
 -- Every match checks that the handlers are exactly the alternatives.
-print(failure(do() = Shape.dot() { circle = do(r) = r }))
-print(failure(do() = Shape.dot() with
-            circle = do(r) = r
-            rect = do(t) = 0
-            dot = do() = 0
-            line = do() = 0
+print(failure(|| -> Shape.dot() { circle = r -> r }))
+print(failure(|| -> Shape.dot() with
+            circle = r -> r
+            rect = t -> 0
+            dot = || -> 0
+            line = || -> 0
         end))
 
 -- A payload is checked when the alternative is built.
-print(failure(do() = Shape.circle "wide"))
+print(failure(|| -> Shape.circle "wide"))
 
 --[=[ output
 12

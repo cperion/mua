@@ -25,7 +25,7 @@ local function analyze(ast)
     return scope.analyze(ast, env)
 end
 M.defaults = { indent_width = 4, column_width = 100, call_style = 'minimal', spine_style = 'pure',
-               table_style = 'shorthand', spread_style = 'top', opening_style = 'anonymous',
+               table_style = 'shorthand', spread_style = 'top', lambda_style = 'arrow', opening_style = 'anonymous',
                block_style = 'colon', data_style = 'with', inline_with = 2 }
 
 function M.options(options, with_host)
@@ -54,6 +54,9 @@ function M.options(options, with_host)
     end
     if out.table_style ~= 'preserve' and out.table_style ~= 'shorthand' then
         error('fmt: table_style must be "preserve" or "shorthand"', 0)
+    end
+    if out.lambda_style ~= 'arrow' and out.lambda_style ~= 'do' then
+        error('fmt: lambda_style must be "arrow" or "do"', 0)
     end
     if out.spread_style ~= 'top' and out.spread_style ~= 'preserve' then
         error('fmt: spread_style must be "top" or "preserve"', 0)
@@ -195,14 +198,16 @@ local function parse(source, filename)
     local lambda = p.lambda
     function p:lambda(hint)
         local native = native_depth > 0
+        local first = r:peek(1).index
         local node = lambda(self, hint)
+        local last_token = last
         local closer
         if ts[last] and (ts[last].v == 'end' or ts[last].v == 'endall') then
             closer = last
         else
             closer = r:peek(1).index
         end
-        lambdas[#lambdas + 1] = { fn = node.fn, closer = closer, native = native }
+        lambdas[#lambdas + 1] = { fn = node.fn, closer = closer, native = native, first = first, last = last_token }
         return node
     end
     local entry, entry_spans = p.entry, {}
@@ -333,7 +338,7 @@ end
 -- Unknown argument groups and expression grouping retain their exact structure.
 -- node fields that record how something was spelled or where, not what it means
 local SPELLING = { line = true, end_line = true, juxta = true, col = true, implicit = true, short = true,
-                   define = true }
+                   define = true, arrow = true }
 -- A single keyed spread among a table's entries may stand first: explicit fields override spread
 -- fields wherever they are written, and the entries before it evaluate nothing observable (a
 -- name, a literal, a function, a table of those), so moving the spread ahead changes nothing.
@@ -393,7 +398,8 @@ local function fingerprint(root)
         if node.k == 'paren' and (node.e.k == 'num' or node.e.k == 'str') then return encode(node.e) end
         local keys = {}
         for k in pairs(node) do
-            if not SPELLING[k] then keys[#keys + 1] = k end
+            -- a flag that is false says what its absence says
+            if not SPELLING[k] and node[k] ~= false then keys[#keys + 1] = k end
         end
         table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
         local out = { '{' }
@@ -518,6 +524,68 @@ local function spread_first(source, info, filename)
     end
     walk(info.ast)
     return found or source
+end
+
+-- `do(a, b) = e` with plain parameters is the short function `|a, b| -> e` (`x -> e` for one
+-- name): the same function, spelled the way LuaJIT 3.0 spells it. Typed, opened and rest
+-- parameters have no arrow spelling and stay. After an operand (a juxtaposed argument) only the
+-- one-name form can stand without brackets, since `|` there is bitwise-or: the others are
+-- bracketed.
+local function arrow_lambdas(source, info, filename)
+    local ts = info.tokens
+    local function sig(i, step)
+        i = i + step
+        while ts[i] and (ts[i].t == 'space' or ts[i].t == 'comment') do i = i + step end
+        return i
+    end
+    local edits = {}
+    for _, item in ipairs(info.lambdas) do
+        local fn = item.fn
+        local plain = fn.expr and not fn.result and not fn.vararg and not fn.rest and not fn.colon
+        for _, prm in ipairs(fn.params or {}) do
+            if prm.type or prm.opened or prm.unnamed then plain = false end
+        end
+        if plain then
+            local open = sig(item.first, 1)
+            if ts[open] and ts[open].t == '(' then
+                -- the parameter list's `)`, then `=`; a comment inside the head keeps the form
+                local depth, close = 0, open
+                while ts[close] do
+                    if ts[close].t == '(' then depth = depth + 1
+                    elseif ts[close].t == ')' then depth = depth - 1; if depth == 0 then break end
+                    elseif ts[close].t == 'comment' then plain = false end
+                    close = close + 1
+                end
+                local eq = sig(close, 1)
+                if plain and ts[eq] and ts[eq].t == '=' then
+                    local names = {}
+                    for _, prm in ipairs(fn.params) do names[#names + 1] = prm.name end
+                    local head
+                    if #names == 1 then head = names[1] .. ' ->'
+                    else head = '|' .. table.concat(names, ', ') .. '| ->' end
+                    local before = ts[sig(item.first, -1)]
+                    local after_operand = before and (before.t == 'iden' or before.t == 'string' or before.t == 'number'
+                        or before.v == ')' or before.v == ']' or before.v == '}')
+                    local wrap = after_operand and #names ~= 1
+                    edits[#edits + 1] = { from = ts[item.first].first, to = ts[eq].last,
+                        text = (wrap and '(' or '') .. head, close = wrap and ts[item.last].last or nil }
+                end
+            end
+        end
+    end
+    if #edits == 0 then return source end
+    -- apply from the end of the source: replacements by position, bracket closers after them
+    local ops = {}
+    for _, e in ipairs(edits) do
+        ops[#ops + 1] = { at = e.from, to = e.to, text = e.text }
+        if e.close then ops[#ops + 1] = { at = e.close + 1, to = e.close, text = ')' } end
+    end
+    table.sort(ops, function(a, b) if a.at ~= b.at then return a.at > b.at end return a.to > b.to end)
+    local out = source
+    for _, op in ipairs(ops) do out = out:sub(1, op.at - 1) .. op.text .. out:sub(op.to + 1) end
+    local ok, reparsed = pcall(parse, out, filename)
+    if ok and fingerprint(reparsed.ast) == fingerprint(info.ast) then return out end
+    return source
 end
 
 -- A named opening whose name is never mentioned needs only its anonymous home.
@@ -1026,6 +1094,13 @@ function format(source, options, filename)
             local moved = spread_first(source, info, filename)
             if moved == source then break end
             source = moved
+            info = parse(source, filename)
+        end
+    end
+    if options.lambda_style == 'arrow' then
+        local written = arrow_lambdas(source, info, filename)
+        if written ~= source then
+            source = written
             info = parse(source, filename)
         end
     end

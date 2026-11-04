@@ -311,8 +311,21 @@ formatted('return do(names) is written return:', 'local f = do(a)\n    return do
     'local f =: a\n    return: body\n        go body\n    end\nend\n')
 formatted('return: stays', 'local f =: a\n    return: body\n        go body\n    end\nend\n',
     'local f =: a\n    return: body\n        go body\n    end\nend\n')
-formatted('return with an expression body keeps its form', 'local f = do(a)\n    return do(x) = x + a\nend\n',
-    'local f =: a\n    return do(x) = x + a\nend\n')
+formatted('return of an expression lambda is an arrow', 'local f = do(a)\n    return do(x) = x + a\nend\n',
+    'local f =: a\n    return x -> x + a\nend\n')
+
+-- lambda_style: a plain `do(a, b) = e` is the short function `|a, b| -> e`
+formatted('one name', 'local f = do(x) = x * 2\n', 'local f = x -> x * 2\n')
+formatted('several names', 'local g = do(a, b) = a + b\n', 'local g = |a, b| -> a + b\n')
+formatted('no names', 'local z = do() = 1\n', 'local z = || -> 1\n')
+formatted('a curried lambda', 'local add = do(a) = do(b) = a + b\n', 'local add = a -> b -> a + b\n')
+formatted('one name stays a juxtaposed argument', 'map xs do(x) = x + 1\n', 'map xs x -> x + 1\n')
+formatted('several names are bracketed after an operand', 'map xs do(a, b) = a + b\n', 'map xs (|a, b| -> a + b)\n')
+formatted('in a table', 'local t = { found = do(i) = i, missing = do() = -1 }\n', 'local t = { found = i -> i, missing = || -> -1 }\n')
+formatted('an opened parameter has no arrow', 'local f = do(ctx..) = x\n', 'local f = do(..) = x\n')
+formatted('a block body keeps its do', 'local f = do(x)\n    return x\nend\n', 'local f =: x\n    return x\nend\n')
+formatted('lambda_style do keeps do', 'local f = do(x) = x * 2\n', 'local f = do(x) = x * 2\n', { lambda_style = 'do' })
+check('an invalid lambda_style is rejected', not pcall(fmt.format, 'local x=1', { lambda_style = 'fn' }))
 
 -- def and define: `define` entries `end` is `def with … end`
 formatted('define is a block and stays one', 'local d = define\n    length = 0\n    cursor = 0\nend\n',

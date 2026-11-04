@@ -27,7 +27,8 @@ examples work, not the prose's claims or the quality of the design. Diagrams use
 
 | Form | Used for |
 |---|---|
-| `local f = do(x) = e`, `do(x) … end` | lambdas |
+| `x -> e`, `|a, b| -> e`, `do(x) … end` | lambdas: an arrow for an expression, `do` for statements, types and opening |
+| `=: x`, `return: x` (then a block and `end`) | a block assigned to a name, a block returned: the colon always means a block |
 | `f a b`, `f x do … end`, `f a: x … end` | juxtaposed, **curried** application: `f a b` is `f(a)(b)` |
 | `define … end`, `def { … }` | a vocabulary: names bound with no layout (`define` entries `end` is `def with … end`; `def` is the identity) |
 | `{ ..base, name = v }`, `..base` in a `with` block | keyed spread: a vocabulary extended, entries overriding |
@@ -215,7 +216,7 @@ local Editing = define
     ..Moves
     ..Edits
 end
-local clash = pcall(function() return define ..Edits ..Edits end end)
+local clash = pcall(function() return define ..Edits .. Edits end end)
 assert(not clash)
 
 local document = { length = 0, cursor = 0, edits = 0 }
@@ -231,7 +232,7 @@ vocabulary as a parameter and calls its members, or opens it:
 
 ```lua
 -- a function that takes a vocabulary calls its members
-local type_and_step_back = do(ops, document, n)
+local type_and_step_back =: ops document n
     ops.insert document n
     ops.left document
 end
@@ -239,7 +240,7 @@ type_and_step_back(Editing, document, 3)
 assert(document.length == 8 and document.cursor == 6)
 
 -- opening a vocabulary brings its names into scope
-local type_twice = do(document, n)
+local type_twice =: document n
     local Editing..
     insert document n
     insert document n
@@ -256,8 +257,8 @@ is needed, and an instance can serve as the type of further instances:
 -- a structural type carries its defaults; an instance is the type spread with overrides
 local Margins = def { left = 4, right = 4 }
 local wide = def { ..Margins, right = 12 }
-local text_width = do(doc) = doc.length - wide.left - wide.right
-assert(text_width(document) == 10 - 4 - 12)
+local text_width = doc -> doc.length - wide.left - wide.right
+assert(text_width document == 10 - 4 - 12)
 ```
 
 Overrides are explicit fields, never a second spread: two spreads that offer one name are
@@ -290,7 +291,7 @@ fields, word entries become methods; uses such as `span.stop` read the same.
 local Span = struct { start: Number, stop: Number }
 local span = Span { start = 2, stop = 9 }
 assert(span.stop - span.start == 7)
-assert(not pcall(Span, { start = 2 }))        -- stop is required: the contract fails at the call
+assert(not pcall(Span, { start = 2 }))  -- stop is required: the contract fails at the call
 ```
 
 Scenarios show which groupings meet a trigger: what must be stored, replayed, logged, undone or
@@ -331,14 +332,14 @@ absence as a magic value:
 local Found = oneof { found: Number, missing: Unit }
 
 local find_nonzero = do(xs): Found
-    for i, x in ipairs(xs) do
-        if x ~= 0 then return Found.found(i) end
+    for i, x in ipairs xs do
+        if x ~= 0 then return Found.found i end
     end
     return Found.missing()
 end
-local where = find_nonzero({ 0, 0, 7 }) { found = do(i) = i, missing = do() = -1 }
+local where = find_nonzero { 0, 0, 7 } { found = i -> i, missing = || -> -1 }
 assert(where == 3)
-assert(not pcall(function() return find_nonzero({}) { found = do(i) = i } end))   -- no `missing` handler
+assert(not pcall(function() return find_nonzero {} { found = i -> i } end))  -- no `missing` handler
 ```
 
 **Which kind of failure is which:**
@@ -435,9 +436,9 @@ the context's names available; a bare call then reads as an instruction.
 
 ```lua
 -- a working copy of the document, with the verbs of tentative editing
-local new_draft = do(document)
+local new_draft =: document
     local draft = { length = document.length, cursor = document.cursor, edits = document.edits }
-    draft.insert = do(n)
+    draft.insert =: n
         draft.length = draft.length + n
         draft.cursor = draft.cursor + n
         draft.edits = draft.edits + 1
@@ -449,10 +450,10 @@ local new_draft = do(document)
 end
 
 -- an activity that always commits: setup, the body speaking instructions, completion
-local edit = do(document)
+local edit =: document
     return: body
-        local draft = new_draft(document)
-        body(draft)
+        local draft = new_draft document
+        body draft
         document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
     end
 end
@@ -502,9 +503,9 @@ the activity matches on it to choose its completion:**
 ```lua
 local Outcome = oneof { commit: Unit, abort: Number }
 
-local try_edit = do(document)
+local try_edit =: document
     return: body
-        local draft = new_draft(document)
+        local draft = new_draft document
         local committed = body(draft) {
             commit() = true,
             abort(reason) = false,
@@ -516,7 +517,7 @@ local try_edit = do(document)
     end
 end
 
-local type_capped = do(document, n, cap)
+local type_capped =: document n cap
     return try_edit document:
         insert n
         if length > cap then return Outcome.abort(length) end
@@ -527,7 +528,7 @@ end
 local doc = { length = 0, cursor = 0, edits = 0 }
 assert(type_capped(doc, 4, 10) == true and doc.length == 4 and doc.edits == 1)
 assert(type_capped(doc, 9, 10) == false)
-assert(doc.length == 4 and doc.cursor == 4 and doc.edits == 1)      -- rejection changed nothing
+assert(doc.length == 4 and doc.cursor == 4 and doc.edits == 1)  -- rejection changed nothing
 ```
 
 The rule "the activity owns completion" covers the body's ordinary outcomes too: the body says
@@ -545,18 +546,18 @@ Each policy is its own activity, and the order of the spine is the order of comp
 
 ```lua
 -- a policy that completes after the work inside it
-local clamp_length = do(document, max)
+local clamp_length =: document max
     return: body
-        body()
+        body
         if document.length > max then
             document.length = max
             document.cursor = max
         end
     end
 end
-local count_into = do(stats)
+local count_into =: stats
     return: body
-        body()
+        body
         stats.count = stats.count + 1
     end
 end
@@ -581,14 +582,14 @@ once:
 
 ```lua
 -- nested activities compose: a name the inner context lacks reaches the outer one
-local collect_notes = do(body)
+local collect_notes =: body
     local log = { notes = 0 }
     log.note = do(count) log.notes = log.notes + count end
-    body(log)
+    body log
     return log.notes
 end
 
-local type_logged = do(document, n)
+local type_logged =: document n
     return collect_notes:
         edit document:
             insert n
@@ -637,15 +638,15 @@ instruction.
 -- a builder: the block declares, the builder returns a description
 local keymap = do(body)
     local bindings = {}
-    body(define
-        bind = do(key) = do(command)
-            bindings[#bindings + 1] = { key = key, command = command }
-        end
-    end)
+    body( define
+            bind = do(key) = do(command)
+                bindings[#bindings + 1] = { .key, .command }
+            end
+        end)
     return bindings
 end
 
-local editor_keys = keymap:
+local editor_keys = keymap do(..)
     bind "h" (Command.move(Direction.left()))
     bind "l" (Command.move(Direction.right()))
     bind "u" (Command.undo())
@@ -706,26 +707,26 @@ spoke the instruction:
 
 ```lua
 -- the builder: one verb per method; sentences in, a checked description out
-local router = do(Verbs)
+local router =: Verbs
     return: body
         local routes, seen, Routing = {}, {}, {}
-        for name, code in pairs(Verbs) do
-            Routing[name] = do(path)
+        for name, code in pairs Verbs do
+            Routing[name] =: path
                 -- level 3: the error names the line that spoke the route
-                if type(path) ~= "string" or path:sub(1, 1) ~= "/" then
-                    error(name .. ": a path starts with '/', got " .. tostring(path), 3)
+                if type path ~= "string" or path:sub(1, 1) ~= "/" then
+                    error(name .. ": a path starts with '/', got " .. tostring path, 3)
                 end
                 if seen[name .. path] then error(name .. " " .. path .. " is declared twice", 3) end
                 seen[name .. path] = true
-                return do(handler) routes[#routes + 1] = { method = code, path = path, handler = handler } end
+                return do(handler) routes[#routes + 1] = { method = code, .path, .handler } end
             end
         end
-        body(Routing)
+        body Routing
         return routes
     end
 end
 local routes = router Methods
-assert(not pcall(routes, do(..) get "notes" (do() = 1) end))      -- a path starts with '/'
+assert(not pcall(routes, do(..) get "notes" (|| -> 1) end))  -- a path starts with '/'
 ```
 
 The builder makes its verbs from the vocabulary it is given (one verb per method), so the
@@ -751,10 +752,10 @@ local site = routes:
 end
 
 -- the engine over the description
-local dispatch = do(table, request)
-    for _, r in ipairs(table) do
+local dispatch =: table request
+    for _, r in ipairs table do
         if request.method == r.method and request.path == r.path then
-            return r.handler(request)
+            return r.handler request
         end
     end
     return 404
@@ -818,14 +819,14 @@ local Event = oneof { bytes: Number, bad_line: Unit, hang_up: Unit }
 local step = do(c: Conn, e: Event): Conn = c {
     reading(n) = e {
         bytes(k) = Conn.reading(n + k),
-        bad_line() = Conn.rejected(n),
+        bad_line() = Conn.rejected n,
         hang_up() = Conn.closed(),
     },
-    rejected(n) = Conn.reading(0),
+    rejected(n) = Conn.reading 0,
     closed() = Conn.closed(),
 }
-local after = step(Conn.reading(3), Event.bytes(4))
-assert(after { reading = do(n) = n, rejected = do(n) = -1, closed = do() = -2 } == 7)
+local after = step(Conn.reading 3, Event.bytes 4)
+assert(after { reading = n -> n, rejected = n -> -1, closed = || -> -2 } == 7)
 ```
 
 * **Match exhaustively, and account for every state/event combination.** A "cannot happen" arm is
@@ -875,18 +876,17 @@ is a vocabulary that spreads its base and overrides a few entries; the overlap r
 layers defining the same name.
 
 ```lua
-local square = do(x) = x * x
-local double = do(x) = x * 2
+local square = x -> x * x
+local double = x -> x * 2
 local library = define
     .square
     .double
     area = square
 end
-local platform = define
-    ..library
-    double = do(x) = x * 3
+local platform = define ..library
+    double = x -> x * 3
 end
-assert(library.area(3) == 9 and platform.double(2) == 6 and platform.square(2) == 4)
+assert(library.area 3 == 9 and platform.double 2 == 6 and platform.square 2 == 4)
 ```
 
 ## 8. Steps 5 and 6: the skeleton, and verifying it
@@ -948,7 +948,7 @@ function Cursor:at_end()
 end
 
 local cursor = Cursor { position = 2, length = 2 }
-cursor:move_left()
+cursor:move_left
 assert(cursor.position == 1 and not cursor:at_end())
 ```
 
@@ -960,7 +960,7 @@ the opened parameter only when its name is used.
 Handlers are named after outcomes, and the handler sugar `name(p) = e` keeps short arms short:
 
 ```lua
-local first_or = do(xs, fallback)
+local first_or =: xs fallback
     return find_nonzero(xs) {
         found(i) = xs[i],
         missing() = fallback,
@@ -979,8 +979,8 @@ local apply = do(document, c: Command): Unit
     c with
         move =: d
             d with
-                left() = Editing.left(document)
-                right() = Editing.right(document)
+                left() = Editing.left document
+                right() = Editing.right document
             end
         end
         insert =: n
@@ -991,9 +991,9 @@ local apply = do(document, c: Command): Unit
     end
 end
 
-local greeting = { Command.insert(5), Command.move(Direction.left()), Command.insert(1) }
+local greeting = { Command.insert 5, Command.move(Direction.left()), Command.insert 1 }
 local text = { length = 0, cursor = 0, edits = 0 }
-for _, command in ipairs(greeting) do apply(text, command) end
+for _, command in ipairs greeting do apply(text, command) end
 assert(text.length == 6 and text.cursor == 5)
 ```
 
@@ -1043,7 +1043,7 @@ signature decides where the activity completes, not the parser.
 | `oneof` alternative | snake_case outcome | `found`, `missing`, `done`, `timed_out` |
 | vocabulary describing a structure (interface, capability set, namespace) | PascalCase, like a type | `Editing`, `Moves`, `Storage` |
 | vocabulary holding data (configuration, fixture, values in flight) | snake_case, like a value | `config`, `span` |
-| Mua's own forms | lowercase keywords | `struct`, `oneof`, `define`, `ffistruct` |
+| Mua's own forms | lowercase keywords | `struct`, `oneof`, `define`, `def`, `ffistruct` |
 
 The forms are lowercase so that the capitals are the user's types, not the language's keywords.
 
@@ -1087,12 +1087,16 @@ generic or a homonym should stay qualified.
 | parentheses | required grouping, argument lists of functions with several parameters, zero-argument calls in expressions; named call statements need no `()` |
 | `word` | a zero-argument call statement |
 | `word()` | a zero-argument invocation in an expression; also valid as an explicit statement |
-| trailing block (colon) | scopes, iteration, activities, builders |
+| trailing block (colon) | scopes, iteration, activities, builders: `f x:` then the block and `end` |
+| `=: x` | a function that is a block: `local f =: x` for a definition whose body is statements |
+| `return: x` | an activity that returns the function taking its block: `return: body` |
 | instruction | inside an opened block, a call without a receiver: `insert n`, `note 1` |
 | `with` blocks | keyed data that spans lines; a `struct` or `oneof` declaration; matching |
 | `{ }` braces | Lua tables, compact one-liners |
-| `do(x) = e` | a small expression lambda |
-| `do(x) … end` | a callback with statements |
+| `define` entries `end` | a vocabulary or a structural type; `def { … }` for a one-line table |
+| `x -> e`, `|a, b| -> e` | a small expression lambda (one name needs no bars; several names after an operand are bracketed) |
+| `do(x) … end` | a callback with statements, when a colon block does not fit |
+| `do(x: T): R = e` | a lambda with types, or with an opened parameter (`do(ctx..)`): arrows have no spelling for these |
 | `endall` | the closing run of a trailing-block spine |
 | `local x = e` | a binding |
 | `x: T` | a contract at a boundary |
@@ -1100,6 +1104,12 @@ generic or a homonym should stay qualified.
 A standalone callable name is a zero-argument call statement: `refresh` calls `refresh()`. In an
 expression the name remains a value: `local action = refresh` saves the callable, while
 `local result = refresh()` invokes it.
+
+**One lambda spelling for each purpose.** An expression is an arrow (`x -> x * 2`); statements are
+a block, written with a colon (`f x:`, `=: x`, `return: x`) wherever the grammar allows and with
+`do(x) … end` where it does not; types and opening need `do`. A function that returns a block
+is written `=: params` with `return: block_params`, so an activity reads without a visible
+`do`.
 
 Parentheses group and delimit required argument lists; they are not a substitute for clear
 names. Application binds tighter than operators and takes a name's full postfix chain. Write
@@ -1110,7 +1120,10 @@ parenthesis-free application is hard to read, revisit names or split the functio
 
 **Current source and the host's formatter establish the house style.** Use 4-space indentation,
 a 100-column soft target, safe parenthesis-free application, `.name` for a `name = name` field,
-and anonymous openings when the receiver name is unused. What the formatter leaves to you:
+and anonymous openings when the receiver name is unused. The formatter also writes the house
+spellings: colon blocks (`=: x`, `return: x`, `f x:`), arrows for plain expression lambdas
+(`lambda_style`), `define` blocks, and a single `..base` first and beside its `define`
+(`spread_style`). The code blocks of this guide are written that way. What the formatter leaves to you:
 
 * **Where lines break.** Break a long application at its argument groups, and put each handler
   of a multiline match on its own line.
@@ -1123,7 +1136,8 @@ and anonymous openings when the receiver name is unused. What the formatter leav
 
 ## 16. Files and libraries
 
-* **A file is a vocabulary or a program.** A program file defines its functions and runs its
+* **A file is a vocabulary or a program**, and a Mua file is `.mua` (a module of plain Lua that a
+  Mua program requires stays `.lua`). A program file defines its functions and runs its
   scenario. A library returns its vocabulary through `require`, usually `return define … end`
   after its locals (§7.2).
 * **Readable dependency order:** `require`s first, then types and supporting functions before

@@ -3,7 +3,7 @@
 --   luajit mua.lua examples/editor.mua
 
 -- The document persists; a draft is the private working copy of one edit.
-local new_document = do() = { length = 0, cursor = 0, edits = 0 }
+local new_document = || -> { length = 0, cursor = 0, edits = 0 }
 
 local new_draft =: document
     local draft = { length = document.length, cursor = document.cursor, edits = document.edits }

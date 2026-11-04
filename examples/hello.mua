@@ -2,11 +2,11 @@
 --   luajit mua.lua examples/hello.mua
 
 -- Application is juxtaposition: `greet "Mua"` is `greet("Mua")`.
-local greet = do(name) = "hello, " .. name
+local greet = name -> "hello, " .. name
 print(greet "Mua")
 
 -- It is curried: `add 2 3` is `add(2)(3)`, so a partial application is just a name.
-local add = do(a) = do(b) = a + b
+local add = a -> b -> a + b
 local increment = add 1
 print(add 2 3, increment 41)
 

@@ -55,7 +55,7 @@ print(dispatch(site, { method = Methods.get, path = "/missing" }))
 
 -- A bad sentence is rejected where it is written.
 local bad_sentence =:
-    get "notes" (do() = 1)
+    get "notes" (|| -> 1)
 end
 print(reason(select(2, pcall(routes, bad_sentence))))
 

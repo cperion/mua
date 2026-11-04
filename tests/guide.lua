@@ -4,6 +4,7 @@
 local root = arg[0]:match('^(.*)/tests/[^/]*$') or '.'
 package.path = root .. '/?.lua;' .. root .. '/?/init.lua;' .. package.path
 local mua = require 'mua.init'
+local fmt = require 'mua.fmt'
 local doc = assert(io.open(root .. '/docs/designing-and-writing-mua.md')):read '*a'
 local parts, starts, line, n = {}, {}, 1, 0
 for block in doc:gmatch('```lua\n(.-)```') do
@@ -18,6 +19,16 @@ local function block_of(l)
     for _, s in ipairs(starts) do if s.line <= l then found = s.block end end
     return found
 end
+-- the blocks are written as the formatter writes them (the house style)
+local unformatted = 0
+for i, block in ipairs(parts) do
+    local ok, formatted = pcall(fmt.format, block, nil, 'guide block ' .. i)
+    if not ok or formatted ~= block then
+        unformatted = unformatted + 1
+        print(('FAIL  guide block %d is not formatted as mua fmt writes it'):format(i))
+    end
+end
+if unformatted > 0 then os.exit(1) end
 local source = table.concat(parts)
 local chunk, err = mua.load(source, '=guide')
 local ok, e = false, err
