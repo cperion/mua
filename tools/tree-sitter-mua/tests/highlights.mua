@@ -28,3 +28,10 @@ end
 local shorthand = do(x: U32, y: U32): Point
     return Point { .x, .y, z = 3 }
 end
+
+-- a block colon
+local with_log =: title
+    return: body
+        body
+    end
+end

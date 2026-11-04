@@ -42,11 +42,11 @@ print(area_of(Shape.circle 2), area_of(Shape.rect { w = 2, h = 5 }), area_of(Sha
 -- Every match checks that the handlers are exactly the alternatives.
 print(failure(|| -> Shape.dot() { circle = r -> r }))
 print(failure(|| -> Shape.dot() with
-            circle = r -> r
-            rect = t -> 0
-            dot = || -> 0
-            line = || -> 0
-        end))
+    circle = r -> r
+    rect = t -> 0
+    dot = || -> 0
+    line = || -> 0
+end))
 
 -- A payload is checked when the alternative is built.
 print(failure(|| -> Shape.circle "wide"))

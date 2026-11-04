@@ -31,7 +31,7 @@ for id, node in query:iter_captures(tree:root(), 0) do
 end
 for _, pair in ipairs({
   {'keyword', 'struct'}, {'keyword.function', 'do'},
-  {'keyword.function', 'endall'}, {'type.builtin', 'Unit'}, {'variable.parameter', 'x'},
+  {'keyword.function', 'endall'}, {'keyword.function', ':'}, {'type.builtin', 'Unit'}, {'variable.parameter', 'x'},
   {'function', 'inc'}, {'function.call', 'print'}, {'function', 'ok'},
   {'number', '2'}, {'operator', '+'}, {'string.escape', '\\n'},
 }) do

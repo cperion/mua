@@ -327,6 +327,14 @@ formatted('a block body keeps its do', 'local f = do(x)\n    return x\nend\n', '
 formatted('lambda_style do keeps do', 'local f = do(x) = x * 2\n', 'local f = do(x) = x * 2\n', { lambda_style = 'do' })
 check('an invalid lambda_style is rejected', not pcall(fmt.format, 'local x=1', { lambda_style = 'fn' }))
 
+-- a with or define block as a call argument: no space after the bracket, entries one unit in
+formatted('a define block as the argument', 'local keymap = do(body)\n    body(define\n        bind = do(key) = do(command)\n            go key\n        end\n    end)\nend\n',
+    'local keymap =: body\n    body(define\n        bind = do(key) = do(command)\n            go key\n        end\n    end)\nend\n')
+formatted('a with block as the argument', 'local x = f(Point with\n    x = 1\n    y = 2\n    z = 3\nend)\n',
+    'local x = f(Point with\n    x = 1\n    y = 2\n    z = 3\nend)\n')
+formatted('a define block among arguments', 'local x = f(a, define\n    x = 1\n    y = 2\nend, b)\n',
+    'local x = f(a, define\n    x = 1\n    y = 2\nend, b)\n')
+
 -- def and define: `define` entries `end` is `def with … end`
 formatted('define is a block and stays one', 'local d = define\n    length = 0\n    cursor = 0\nend\n',
     'local d = define\n    length = 0\n    cursor = 0\nend\n')

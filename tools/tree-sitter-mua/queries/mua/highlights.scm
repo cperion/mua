@@ -9,6 +9,8 @@
 
 ["local" "with" "define" "goto"] @keyword
 ["do" "function" "end" "endall"] @keyword.function
+; a block colon opens a block as `do` does (`f x:`, `=:`, `return:`), and `end` closes it
+(lambda ":" @keyword.function)
 ["if" "then" "elseif" "else"] @keyword.conditional
 ["for" "in" "while" "repeat" "until" "break" "continue"] @keyword.repeat
 "return" @keyword.return

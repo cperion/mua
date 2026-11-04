@@ -197,10 +197,10 @@ they are by being used:
 ```lua
 -- vocabularies: names bound with no identity of their own
 local Moves = define
-    left = do(document)
+    left =: document
         if document.cursor > 0 then document.cursor = document.cursor - 1 end
     end
-    right = do(document)
+    right =: document
         if document.cursor < document.length then document.cursor = document.cursor + 1 end
     end
 end
@@ -636,17 +636,17 @@ instruction.
 
 ```lua
 -- a builder: the block declares, the builder returns a description
-local keymap = do(body)
+local keymap =: body
     local bindings = {}
-    body( define
-            bind = do(key) = do(command)
-                bindings[#bindings + 1] = { .key, .command }
-            end
-        end)
+    body(define
+        bind = do(key) = do(command)
+            bindings[#bindings + 1] = { .key, .command }
+        end
+    end)
     return bindings
 end
 
-local editor_keys = keymap do(..)
+local editor_keys = keymap:
     bind "h" (Command.move(Direction.left()))
     bind "l" (Command.move(Direction.right()))
     bind "u" (Command.undo())

@@ -369,6 +369,13 @@ function M.colonize(source)
             local operand = p >= 1 and (OPERAND[tokens[p][1]] or tokens[p][1] == '='
                 or (tokens[p][1] == 'keyword' and tokens[p][2] == 'return')
                 or (tokens[p][1] == 'keyword' and LITERAL[tokens[p][2]]))
+            -- the `=` of `do(params) = e` is a lambda's, not an assignment: `e` is an expression
+            if p >= 1 and tokens[p][1] == '=' then
+                local q = skip_back(tokens, p)
+                if q >= 1 and tokens[q][1] == ')' and closer_of[q] and parameter_list(tokens, closer_of[q]) then
+                    operand = false
+                end
+            end
             local after_params = p >= 1 and tokens[p][1] == ')' and closer_of[p]
                 and parameter_list(tokens, closer_of[p])
             local names, close = untyped_head(tokens, i)
@@ -715,6 +722,23 @@ function M.withize(source, unit, spread_beside)
                         end
                     end
                     own_line(close_of[i], indent)
+                    -- Lines the layout already put on their own keep their indentation, which was
+                    -- worked out for braces (inside call brackets it is two levels too deep): shift
+                    -- them so the entries stand one unit in from the line the block starts on, and the
+                    -- `end` stands under it
+                    local function indent_of(k) return #(tokens[k][2]:match('[^\n]*$')) end
+                    for k = i + 1, close_of[i] - 1 do
+                        if tokens[k][1] == 'space' and tokens[k][2]:find '\n' and not block.drop[k]
+                            and not block.before[k + 1] and k + 1 < close_of[i] then
+                            block.delta = #(indent .. unit) - indent_of(k)
+                            break
+                        end
+                    end
+                    local before_close = close_of[i] - 1
+                    if tokens[before_close][1] == 'space' and tokens[before_close][2]:find '\n' and not block.drop[before_close] then
+                        block.close_delta = #indent - indent_of(before_close)
+                        block.close_space = before_close
+                    end
                 end
                 for k = i + 1, close_of[i] - 1 do
                     local c = tokens[k]
@@ -737,11 +761,17 @@ function M.withize(source, unit, spread_beside)
     end
     -- the source with the selected blocks written as `with ... end`
     local function build(selected)
-        local drop, replace, before = {}, {}, {}
+        local drop, replace, before, shift = {}, {}, {}, {}
         for _, block in ipairs(selected) do
             for k in pairs(block.drop) do drop[k] = true end
             for k, text in pairs(block.before) do before[k] = text end
             replace[block.open], replace[block.close] = block.define and 'define' or 'with', 'end'
+            for k = block.open + 1, block.close - 1 do
+                if tokens[k][1] == 'space' and tokens[k][2]:find '\n' and k ~= block.close_space then
+                    shift[k] = (shift[k] or 0) + (block.delta or 0)
+                end
+            end
+            if block.close_space then shift[block.close_space] = (shift[block.close_space] or 0) + block.close_delta end
         end
         local out = {}
         for i, tk in ipairs(tokens) do
@@ -749,8 +779,13 @@ function M.withize(source, unit, spread_beside)
                 if before[i] then out[#out + 1] = { 'space', before[i] } end
                 local text = replace[i]
                 if text then
-                    if out[#out] and out[#out][1] ~= 'space' then out[#out + 1] = { 'space', ' ' } end
+                    local prev = out[#out]
+                    -- a space before the word, except right after an opening bracket
+                    if prev and prev[1] ~= 'space' and prev[1] ~= '(' and prev[1] ~= '[' then out[#out + 1] = { 'space', ' ' } end
                     out[#out + 1] = { 'iden', text }
+                elseif shift[i] and shift[i] ~= 0 then
+                    local lead, indent = tk[2]:match('^(.*\n)([^\n]*)$')
+                    out[#out + 1] = { 'space', lead .. (' '):rep(math.max(0, #indent + shift[i])) }
                 else
                     out[#out + 1] = tk
                 end
