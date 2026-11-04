@@ -9,7 +9,7 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
 - `mua/runtime.lua`: what emitted code calls (`__mua`).
 - `mua/scope.lua`: lexical analysis over the AST, with a host-supplied fact provider.
 - `mua/init.lua`: `parse`, `translate`, `load`, `loadfile`, `searcher`.
-- `docs/syntax.md`: the surface language.
+- `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
 
 Needs LuaJIT 2.1 with the 3.0 syntax backport (merged upstream 2026-07-20). `make test`
 runs `tests/mua.lua`; `LUA=/path/to/luajit make test` selects the interpreter.

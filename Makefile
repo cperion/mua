@@ -3,3 +3,4 @@ LUA ?= luajit
 .PHONY: test
 test:
 	$(LUA) tests/mua.lua
+	$(LUA) tests/guide.lua
