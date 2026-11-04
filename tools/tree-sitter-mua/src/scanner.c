@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-enum { LONG_STRING, LONG_COMMENT, NAME_ARGUMENT, ENDALL, IMPLICIT_END, ERROR_SENTINEL, ENDALL_RESET, ATTACHED_PAREN, BLOCK_COLON, HEADER_NAME, HEADER_DOTS, WITH };
+enum { LONG_STRING, LONG_COMMENT, NAME_ARGUMENT, ENDALL, IMPLICIT_END, ERROR_SENTINEL, ENDALL_RESET, ATTACHED_PAREN, BLOCK_COLON, HEADER_NAME, HEADER_DOTS, WITH, DEFINE };
 typedef struct { bool endall; bool header; uint32_t column; int32_t next; } Scanner;
 void *tree_sitter_mua_external_scanner_create(void) { return calloc(1, sizeof(Scanner)); }
 void tree_sitter_mua_external_scanner_destroy(void *p) { free(p); }
@@ -100,7 +100,7 @@ bool tree_sitter_mua_external_scanner_scan(void *p, TSLexer *l, const bool *vali
     }
   }
   if (s->header && !same_line) s->header = false;
-  if ((valid[ENDALL] || valid[WITH] || (valid[NAME_ARGUMENT] && same_line && space)) && name_start(l->lookahead)) {
+  if ((valid[ENDALL] || valid[WITH] || valid[DEFINE] || (valid[NAME_ARGUMENT] && same_line && space)) && name_start(l->lookahead)) {
     char name[128]; unsigned n = 0;
     while (name_char(l->lookahead)) {
       if (n < sizeof(name) - 1) name[n++] = (char)l->lookahead;
@@ -110,6 +110,25 @@ bool tree_sitter_mua_external_scanner_scan(void *p, TSLexer *l, const bool *vali
     if (valid[ENDALL] && !strcmp(name, "endall")) {
       s->endall = true; s->column = l->get_column(l); s->next = l->lookahead;
       l->mark_end(l); l->result_symbol = ENDALL; return true;
+    }
+    // `define entries end`: a definition, when entries follow (a name, or `..`) and not an
+    // ordinary use of the name (`define = 1`, `define(x)`, `define.x`, a statement that follows)
+    if (valid[DEFINE] && !strcmp(name, "define")) {
+      l->mark_end(l);
+      while (l->lookahead == ' ' || l->lookahead == '\t' || l->lookahead == '\r' || l->lookahead == '\n') advance(l);
+      bool block = false;
+      if (name_start(l->lookahead)) {
+        char next[16]; unsigned m = 0;
+        while (name_char(l->lookahead)) { if (m < sizeof(next) - 1) next[m++] = (char)l->lookahead; advance(l); }
+        next[m] = 0;
+        const char *ends[] = {"end", "endall", "return", "local", "if", "for", "while", "repeat", "function", "break", "goto", "do", "then", "else", "elseif", "until", "and", "or"};
+        block = true;
+        for (unsigned i = 0; i < sizeof(ends)/sizeof(*ends); ++i) if (!strcmp(next, ends[i])) block = false;
+      } else if (l->lookahead == '.') {
+        block = dots_ahead(l);
+      }
+      if (block) { l->result_symbol = DEFINE; return true; }
+      return false;
     }
     // `T with entries end`: scanned here so it wins over a statement starting with the name
     if (valid[WITH] && !strcmp(name, "with")) { l->mark_end(l); l->result_symbol = WITH; return true; }

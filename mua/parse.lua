@@ -22,7 +22,7 @@
 --   name{name}  num{text}  str{text}  nil  true  false  vararg  home  spread{e}  paren{e}
 --   field{obj, name}  index{obj, key}  call{fn, args, juxta?, boundary?}  method{obj, name, args}
 --   lambda{fn}  table{items={kind=pos|named|keyed|spread, name, key, e}, with?}
---   with{items} (contextual)  binop{op, a, b, spelling?}  unop{op, a, spelling?}
+--   call{define=true} (`define` entries `end`: `def with … end`)  with{items} (contextual)  binop{op, a, b, spelling?}  unop{op, a, spelling?}
 --   cond{c, a, b} (`c ? a : b`)  struct{sum?, ffi?, fields={name,type}, name}
 -- `field`, `index`, `call` and `method` carry `safe` for `?.`; a method `safe_call` for
 -- `o:m?.(...)`. The customary operators are normalized: `!`, `&&`, `||`, `!=` arrive as
@@ -608,6 +608,25 @@ function P:with_block_ahead()
     return true
 end
 
+-- `define` then entries and `end` is `def with … end`: the definition of a vocabulary or a
+-- structural type (the identity function is `def`, and takes tables and values as they are).
+-- Returns the node, or nil when `define` here is an ordinary name.
+function P:define_block(tk, in_type)
+    local r = self.r
+    if not is_name(tk, 'define') or in_type then return nil end
+    local nt = r:peek(2)
+    if self:entry_ahead(2) then
+        r:next()
+        local items = self:with_entries(tk)
+        local fn = { k = 'name', name = 'def', line = tk.line, col = tk.col }
+        return { k = 'call', fn = fn, args = { { k = 'table', items = items, with = true, line = tk.line } },
+                 line = tk.line, define = true }
+    elseif nt.t == '{' or nt.t == '(' then
+        r:error("`define` opens a block of entries closed by `end` (`def with … end`); "
+            .. "the function that takes a table is `def`: write `def { … }`", tk)
+    end
+end
+
 function P:simple(hint, in_type)
     local r = self.r
     local tk = r:peek(1)
@@ -627,6 +646,8 @@ function P:simple(hint, in_type)
     if tk.t == '|' or tk.t == '||' or (tk.t == 'name' and r:peek(2).t == '->') then
         return self:short_function(hint)
     end
+    local d = self:define_block(tk, in_type)
+    if d then return d end
     -- contextual `with`: where an expression starts, before an entry
     if is_name(tk, 'with') and not in_type and self:entry_ahead(2) then
         r:next()
@@ -880,6 +901,8 @@ function P:argument()
     local tk = r:peek(1)
     if tk.kw == 'do' then return self:lambda() end
     if tk.t == 'name' and r:peek(2).t == '->' then return self:short_function() end   -- L2
+    local d = self:define_block(tk)
+    if d then return d end
     if tk.t == 'number' or tk.t == 'string' then
         r:next()
         local lit = { k = tk.t == 'number' and 'num' or 'str', text = tk.v, line = tk.line }

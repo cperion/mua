@@ -124,6 +124,12 @@ kept where the reader would not recover it, before an entry that starts with a
 bracket or a literal. Each table is converted on its own, and only when expanding
 the result gives the same program as the braces.
 
+## Definitions
+
+`define` followed by entries and `end` is `def with … end`. The formatter writes a multi-line
+`def { … }` or `def with … end` as `define`, and never collapses a `define` block onto one line;
+a `def { … }` already on one line is left alone.
+
 ## Spreads
 
 A table with one keyed spread, `..base`, has a base and the entries that change it. A `with`
@@ -131,7 +137,7 @@ block is not ordered, so the formatter writes that spread first, on the line of 
 the changes below it:
 
 ```lua
-local document = define with ..Document
+local document = define ..Document
     length = 10
 end
 ```

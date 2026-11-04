@@ -179,7 +179,7 @@ function M.expand(source, mark, full, filename)
     local frames = {}                                  -- the `with` blocks being read
     local function open_with(wtk, contextual)
         frames[#frames + 1] = { entries = {}, contextual = contextual }
-        replace[wtk.index] = (contextual and not mark) and 'with {' or '{'
+        replace[wtk.index] = wtk.v == 'define' and 'def {' or ((contextual and not mark) and 'with {' or '{')
         after[wtk.index] = mark and M.MARK or nil
     end
     local function close_with(frame)
@@ -513,6 +513,7 @@ local function inline_pass(source, limit, width, keep_spreads)
             local p = skip_back(tokens, i)
             local head = p >= 1 and OPERAND[tokens[p][1]] and tokens[p][1] ~= 'string'
                 and not (tokens[p][1] == 'iden' and tokens[p][2] == 'with')
+                and not (tokens[p][1] == 'iden' and tokens[p][2] == 'def')   -- a definition stays a block
             local n = head and entries(i)
             if n and n >= 1 and n <= limit and nested_within_limit(i) and not line_used[line_start] then
                 -- the table on one line: newlines inside become single spaces
@@ -627,6 +628,13 @@ function M.withize(source, unit, spread_beside)
             if tokens[j] and tokens[j][1] == 'comment' and tokens[j][2] == MARK then
                 local block = { open = i, close = close_of[i], drop = {} }
                 blocks[#blocks + 1] = block
+                -- `def { … }` written as a block is `define … end`: the head word goes, the brace
+                -- becomes `define`
+                local hp = skip_back(tokens, i)
+                if hp >= 1 and tokens[hp][1] == 'iden' and tokens[hp][2] == 'def' then
+                    block.define = true
+                    for k = hp, i - 1 do block.drop[k] = true end
+                end
                 for k = i + 1, j do block.drop[k] = true end
                 local f = opened[i]
                 local function has_newline(a, b)
@@ -730,7 +738,7 @@ function M.withize(source, unit, spread_beside)
         for _, block in ipairs(selected) do
             for k in pairs(block.drop) do drop[k] = true end
             for k, text in pairs(block.before) do before[k] = text end
-            replace[block.open], replace[block.close] = 'with', 'end'
+            replace[block.open], replace[block.close] = block.define and 'define' or 'with', 'end'
         end
         local out = {}
         for i, tk in ipairs(tokens) do

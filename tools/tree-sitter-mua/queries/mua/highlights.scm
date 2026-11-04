@@ -7,7 +7,7 @@
 (boolean) @boolean
 (nil) @constant.builtin
 
-["local" "with" "goto"] @keyword
+["local" "with" "define" "goto"] @keyword
 ["do" "function" "end" "endall"] @keyword.function
 ["if" "then" "elseif" "else"] @keyword.conditional
 ["for" "in" "while" "repeat" "until" "break" "continue"] @keyword.repeat
@@ -40,6 +40,6 @@
 
 ; Mua's own forms and checkers, by spelling (not semantic resolution)
 ((identifier) @keyword
- (#any-of? @keyword "struct" "oneof" "ffistruct" "define" "closed" "required" "optional"))
+ (#any-of? @keyword "struct" "oneof" "ffistruct" "def" "closed" "required" "optional"))
 ((identifier) @type.builtin
  (#any-of? @type.builtin "Number" "String" "Boolean" "Table" "Function" "Any" "Unit" "Optional"))

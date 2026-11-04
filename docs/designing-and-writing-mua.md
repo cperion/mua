@@ -27,7 +27,7 @@ examples work, not the prose's claims or the quality of the design. Diagrams use
 |---|---|
 | `local f = do(x) = e`, `do(x) … end` | lambdas |
 | `f a b`, `f x do … end`, `f a: x … end` | juxtaposed, **curried** application: `f a b` is `f(a)(b)` |
-| `define with … end`, `define { … }` | a vocabulary: names bound with no layout |
+| `define … end`, `def { … }` | a vocabulary: names bound with no layout (`define` entries `end` is `def with … end`; `def` is the identity) |
 | `{ ..base, name = v }`, `..base` in a `with` block | keyed spread: a vocabulary extended, entries overriding |
 | `.name` | `name = name` in a table or `with` block |
 | `do(ctx..)`, `do(..)`, `local ctx.. = e` | opening a table: its string keys become names |
@@ -193,7 +193,7 @@ they are by being used:
 
 ```lua
 -- vocabularies: names bound with no identity of their own
-local Moves = define with
+local Moves = define
     left = do(document)
         if document.cursor > 0 then document.cursor = document.cursor - 1 end
     end
@@ -201,7 +201,7 @@ local Moves = define with
         if document.cursor < document.length then document.cursor = document.cursor + 1 end
     end
 end
-local Edits = define with
+local Edits = define
     insert = do(document) = do(n)
         document.length = document.length + n
         document.cursor = document.cursor + n
@@ -209,11 +209,11 @@ local Edits = define with
 end
 
 -- capabilities compose by spread; two that both offer a name are rejected
-local Editing = define with
+local Editing = define
     ..Moves
     ..Edits
 end
-local clash = pcall(function() return define with ..Edits ..Edits end end)
+local clash = pcall(function() return define ..Edits ..Edits end end)
 assert(not clash)
 
 local document = { length = 0, cursor = 0, edits = 0 }
@@ -222,7 +222,7 @@ Editing.left document
 assert(document.length == 5 and document.cursor == 4)
 ```
 
-`define` is the identity; what it means comes from where it sits. `with` supplies keyed entries,
+`def` is the identity and `define` is `def with`; what a definition means comes from where it sits. `with` supplies keyed entries,
 and keyed spread composes (syntax §5): explicit entries override, and two spreads that offer the
 same name are rejected (`spread-overlap`) rather than silently shadowing. A function takes a
 vocabulary as a parameter and calls its members, or opens it:
@@ -252,8 +252,8 @@ is needed, and an instance can serve as the type of further instances:
 
 ```lua
 -- a structural type carries its defaults; an instance is the type spread with overrides
-local Margins = define { left = 4, right = 4 }
-local wide = define { ..Margins, right = 12 }
+local Margins = def { left = 4, right = 4 }
+local wide = def { ..Margins, right = 12 }
 local text_width = do(doc) = doc.length - wide.left - wide.right
 assert(text_width(document) == 10 - 4 - 12)
 ```
@@ -307,7 +307,7 @@ to consume.
 declared, a match handles each one, and adding an alternative makes every match that must learn
 it fail where it is written. Use it where completeness is part of the meaning: a connection's
 states, an operation's outcomes, the commands an editor understands. A vocabulary of known values
-is an open set: an enumeration is names for codes (`define { get = 1, post = 2 }`), and anyone may
+is an open set: an enumeration is names for codes (`def { get = 1, post = 2 }`), and anyone may
 extend it by spread, so code that meets an unknown member needs a default. Use it where extension
 is expected: protocol methods, opcodes, tokens, plugin points. Ask whether someone else may
 legitimately add a member: if so, keep the set open; if adding one should make every user
@@ -635,7 +635,7 @@ instruction.
 -- a builder: the block declares, the builder returns a description
 local keymap = do(body)
     local bindings = {}
-    body(define with
+    body(define
         bind = do(key) = do(command)
             bindings[#bindings + 1] = { key = key, command = command }
         end
@@ -694,7 +694,7 @@ known values:
 
 ```lua
 -- the methods a router speaks: a structural vocabulary of known values
-local Methods = define { get = 1, post = 2 }
+local Methods = def { get = 1, post = 2 }
 ```
 
 **4. Make the builder check its sentences, and report at the user's line.** A structural mistake
@@ -777,7 +777,7 @@ qualify a homonym rather than letting one shadow the other (§13):
 
 ```lua
 -- a dialect: the same builder over a vocabulary extended by spread
-local Dav = define { ..Methods, propfind = 7 }
+local Dav = def { ..Methods, propfind = 7 }
 local dav_routes = router Dav
 local share = dav_routes:
     propfind "/":
@@ -867,7 +867,7 @@ flowchart LR
 ### 7.2 What is a vocabulary, and what is a function
 
 A library module is a vocabulary: write its functions as locals, so they can use each other, and
-end the file with the surface it offers, `return define with .square .double end`. What is not
+end the file with the surface it offers, `return define .square .double end`. What is not
 listed stays private, and an entry may rename (`area = square`). A layer (a platform, a backend)
 is a vocabulary that spreads its base and overrides a few entries; the overlap rule catches two
 layers defining the same name.
@@ -875,12 +875,12 @@ layers defining the same name.
 ```lua
 local square = do(x) = x * x
 local double = do(x) = x * 2
-local library = define with
+local library = define
     .square
     .double
     area = square
 end
-local platform = define with
+local platform = define
     ..library
     double = do(x) = x * 3
 end
@@ -1122,7 +1122,7 @@ and anonymous openings when the receiver name is unused. What the formatter leav
 ## 16. Files and libraries
 
 * **A file is a vocabulary or a program.** A program file defines its functions and runs its
-  scenario. A library returns its vocabulary through `require`, usually `return define with … end`
+  scenario. A library returns its vocabulary through `require`, usually `return define … end`
   after its locals (§7.2).
 * **Readable dependency order:** `require`s first, then types and supporting functions before
   their users. Give each exported function a one-line promise. Drafting top-down does not make

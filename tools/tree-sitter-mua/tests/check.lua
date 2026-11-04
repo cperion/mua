@@ -254,10 +254,10 @@ assert(not parser:parse()[1]:root():has_error())
 -- a `..base` is an entry of a `with` block, beside the `with` or on a line of its own; the next
 -- `..` on a new line starts another entry instead of concatenating
 local spreads = parse([[
-local d = define with ..Document
+local d = define ..Document
     length = 10
 end
-local e = define with
+local e = define
     ..A
     ..B
     n = 1
@@ -265,5 +265,18 @@ end
 ]], 'spread entries in with blocks')
 assert(not spreads:root():sexpr():find('binary_expression', 1, true), 'a with spread concatenated: ' .. spreads:root():sexpr())
 assert(select(2, spreads:root():sexpr():gsub('spread_expression', '')) == 3, 'with spreads missing: ' .. spreads:root():sexpr())
+-- `define` entries `end` is a block; an ordinary use of the name is not
+local defined = parse([[
+local a = define
+    x = 1
+end
+local define = 5
+local b = define
+local c = closed define
+    op = "s"
+end
+]], 'define blocks and the name define')
+local defined_sexpr = defined:root():sexpr()
+assert(select(2, defined_sexpr:gsub('define_block', '')) == 2, 'define blocks missing: ' .. defined_sexpr)
 print(('Mua Tree-sitter: %d parse cases passed; highlight captures, filetype, startup, and incremental edits passed'):format(count))
 vim.cmd('qa!')

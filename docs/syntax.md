@@ -127,7 +127,7 @@ are exactly those of the expanded program.
 - a spread source must be a table (`spread-source`).
 
 `..e` in an argument list, a return list or an initializer list expands a call's several
-results or a table's array part. `define` returns its argument, so `define with … end` reads as
+results or a table's array part. `def` is the identity: it returns its argument, and `define` followed by entries and `end` is `def with … end`, so a definition reads as
 a definition; a **structural type** is the table it is given.
 
 **Structural markers.** `required` and `optional` are values in a structural type: a keyed

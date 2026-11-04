@@ -329,7 +329,8 @@ end
 -- Compare the compiler's proven application normal forms, not just spelling.
 -- Unknown argument groups and expression grouping retain their exact structure.
 -- node fields that record how something was spelled or where, not what it means
-local SPELLING = { line = true, end_line = true, juxta = true, col = true, implicit = true, short = true }
+local SPELLING = { line = true, end_line = true, juxta = true, col = true, implicit = true, short = true,
+                   define = true }
 -- A single keyed spread among a table's entries may stand first: explicit fields override spread
 -- fields wherever they are written, and the entries before it evaluate nothing observable (a
 -- name, a literal, a function, a table of those), so moving the spread ahead changes nothing.

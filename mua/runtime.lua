@@ -140,8 +140,9 @@ end
 -- `with ... end` where an expression starts: the table itself, unless a host gives it meaning
 function R.with(t) return t end
 
--- `define`: the identity; a structural type is the table it is given
-function R.define(t) return t end
+-- `def`: the identity; a structural type is the table it is given. `define` followed by entries
+-- and `end` is `def with … end` (the parser writes it so)
+function R.def(t) return t end
 
 -- `f(a, ..t)`: the array part of t, as the call's last arguments
 function R.expand(t) return unpack(t, 1, t.n or #t) end
@@ -326,7 +327,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'def', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R
