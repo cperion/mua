@@ -24,6 +24,8 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
   step, and the colon explained. Start here if `=: title` looks strange.
 - `bench/micro.lua`: micro-benchmarks of the emitted code against hand-written Lua.
 - `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
+- `docs/writing-compilers.md`: writing compilers and language tools in Mua: one compiler built
+  from text to running Lua, with families, passes, an IR, an optimizer and tests; its code blocks run.
 
 Needs LuaJIT 2.1 with the 3.0 syntax backport (merged upstream 2026-07-20). `make test`
 runs `tests/mua.lua`; `LUA=/path/to/luajit make test` selects the interpreter.
