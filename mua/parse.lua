@@ -621,9 +621,6 @@ function P:define_block(tk, in_type)
         local fn = { k = 'name', name = 'def', line = tk.line, col = tk.col }
         return { k = 'call', fn = fn, args = { { k = 'table', items = items, with = true, line = tk.line } },
                  line = tk.line, define = true }
-    elseif nt.t == '{' or nt.t == '(' then
-        r:error("`define` opens a block of entries closed by `end` (`def with … end`); "
-            .. "the function that takes a table is `def`: write `def { … }`", tk)
     end
 end
 

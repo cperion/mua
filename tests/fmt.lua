@@ -307,7 +307,6 @@ formatted('a multi-line def table is written as define', 'local d = def {\n    l
 formatted('a one-line def table is left alone', 'local d = def { length = 0, cursor = 0 }\n', 'local d = def { length = 0, cursor = 0 }\n')
 formatted('define as an argument', 'local n = closed define\n    op = "s"\n    place = required\nend\n',
     'local n = closed define\n    op = "s"\n    place = required\nend\n')
-check('define followed by a brace is an error', not pcall(fmt.format, 'local d = define { a = 1 }\n', nil, 't.lua'))
 
 -- spread_style: one `..base` among a table's entries is written first, beside the `with`
 formatted('a single spread stays beside the with', 'local d = define ..Document\n    length = 10\nend\n',

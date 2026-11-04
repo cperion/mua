@@ -349,10 +349,8 @@ runs('def is the identity', 'return def({ a = 1 }).a + def(2)', 3)
 runs('define is def with', 'local d = define\n    a = 1\n    b = 2\nend\nreturn d.a + d.b', 3)
 runs('define takes a spread', 'local base = define\n    a = 1\nend\nlocal d = define ..base\n    b = 2\nend\nreturn d.a + d.b', 3)
 runs('define is a name when no entry follows', 'local define = 5\nreturn define', 5)
-do
-    local ok, message = pcall(mua.translate, 'local d = define { a = 1 }', 'd.lua')
-    check('define does not take a brace', not ok and message:find('write `def { … }`', 1, true), message)
-end
+errors('define called as a function says what to write', 'local d = define { a = 1 }', 'write `def { … }`')
+runs('a program may bind its own define', 'local function define(x) return x * 2 end\nreturn define(4)', 8)
 -- the bytecode cache: a load writes bytecode that the next load reads; a different source, the
 -- contracts switch or a host without an id are different keys or uncached
 do
