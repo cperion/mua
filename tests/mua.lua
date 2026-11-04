@@ -249,6 +249,22 @@ do
     local ok, e = pcall(mua.translate, 't = { ..a, x = 1, x = 2 }', 't')
     check('a duplicated field beside a spread', not ok and tostring(e):find("duplicate field 'x'", 1, true), e)
 end
+runs('an explicit field resolves a clash between spreads', 'local t = { ..{ a = 1, b = 1 }, ..{ a = 2 }, a = 3 }\nreturn t.a + t.b', 4)
+runs('meta composes vocabularies, an explicit entry settles a clash', [[
+local Printable = define
+    tostring = self -> self.name
+end
+local Loud = define
+    tostring = self -> "LOUD"
+end
+local P = meta with
+    ..Printable
+    ..Loud
+    tostring = self -> "mine"
+end with
+    name = "x"
+end
+return tostring(P)]], 'mine')
 runs('keyed spread overlap', 'local ok = pcall(function() return { ..{ a = 1 }, ..{ a = 2 } } end)\nreturn ok', false)
 runs('contextual with is a table', 'local t = with\n  k = 7\nend\nreturn t.k', 7)
 runs('opening reads members', 'local ctx = { a = 10 }\nlocal f = do(..) return a + 1 end\nreturn f(ctx)', 11)
@@ -367,6 +383,7 @@ runs('meta keeps __ names and shares one metatable', 'local make = meta { __inde
 runs('a program may bind its own meta', 'local meta = 5\nreturn meta', 5)
 errors('meta takes named metamethods', 'local m = meta { 1 }', 'names its metamethods')
 errors('meta applies to a table', 'local m = meta { index = {} }\nm(3)', 'applies to a table')
+errors('a clash left unresolved names the field', 'local t = { ..{ a = 1, b = 1 }, ..{ a = 2, b = 2 }, a = 3 }', "field 'b'")
 -- struct, oneof and ffistruct take their fields as a block
 runs('struct as a block', 'local P = struct\n    x: Number\n    y: Number\nend\nreturn P { x = 1, y = 2 }.y', 2)
 runs('oneof as a block', 'local O = oneof\n    a: Unit\n    b: Number\nend\nreturn O.b(4).value', 4)

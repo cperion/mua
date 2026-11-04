@@ -227,7 +227,8 @@ assert(document.length == 5 and document.cursor == 4)
 
 `define` is a table written as a block; what a definition means comes from where it sits. `with` supplies keyed entries,
 and keyed spread composes (syntax §5): explicit entries override, and two spreads that offer the
-same name are rejected (`spread-overlap`) rather than silently shadowing. A function takes a
+same name are rejected (`spread-overlap`) rather than silently shadowing, unless the block names
+that field itself, which resolves the clash by intent. A function takes a
 vocabulary as a parameter and calls its members, or opens it:
 
 ```lua
@@ -274,7 +275,7 @@ assert(#steps == 3 and steps[2] == "check")
 ```
 
 Overrides are explicit fields, never a second spread: two spreads that offer one name are
-rejected, an explicit field wins by intent.
+rejected until an explicit field names it, and an explicit field wins by intent.
 
 ### 3.2 Commit on demand
 

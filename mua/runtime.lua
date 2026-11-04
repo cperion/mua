@@ -87,10 +87,12 @@ local function is_mark(k) return type(k) == 'table' and marks[rawget(k, 'spread'
 -- sorted order so the message does not depend on how the table was walked. `required` fields
 -- must be supplied, `optional` ones left out are absent; a spread of a closed type admits only
 -- the fields it declares, and the result is closed too.
-local function overlap(src, from, i)
+local function overlap(src, from, i, explicit)
     local names = {}
     for name in pairs(src) do
-        if type(name) == 'string' and from[name] ~= nil and from[name] ~= i then names[#names + 1] = name end
+        if type(name) == 'string' and from[name] ~= nil and from[name] ~= i and explicit[name] == nil then
+            names[#names + 1] = name
+        end
     end
     table.sort(names)
     error(("spread-overlap: field '%s' comes from two spreads"):format(names[1]), 3)
@@ -122,7 +124,8 @@ function R.keyed(t)
             for name, value in pairs(src) do
                 if type(name) == 'string' then
                     if from then
-                        if from[name] ~= nil and from[name] ~= i then overlap(src, from, i) end
+                        -- two spreads offering one name clash, unless the block names that field itself
+                        if from[name] ~= nil and from[name] ~= i and t[name] == nil then overlap(src, from, i, t) end
                         from[name] = i
                     end
                     if t[name] == nil then

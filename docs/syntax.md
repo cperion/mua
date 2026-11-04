@@ -142,7 +142,8 @@ are exactly those of the expanded program.
 
 - explicit fields override spread fields regardless of position;
 - duplicate explicit fields are rejected;
-- two spreads contributing the same field are rejected (`spread-overlap`);
+- two spreads contributing the same field are rejected (`spread-overlap`), unless the block
+  names that field itself: an explicit entry resolves the clash;
 - all operands evaluate in source order;
 - a spread source must be a table (`spread-source`).
 
@@ -156,20 +157,31 @@ already starts with `__` is kept) and returns a function that sets that metatabl
 is given and returns the table; every table it is given shares the one metatable:
 
 ```mua
-local Counter = meta with
-    index = define
-        increment =: self
-            self.value += 1
-        end
-    end
-
-    tostring = self -> tostring(self.value)
-end with
-    value = 0
+local Printable = define
+    tostring = self -> self.name
 end
-Counter:increment()
-print(Counter)   -- 1
+local Comparable = define
+    eq = |a, b| -> a.id == b.id
+end
+
+local Person = meta with
+    ..Printable
+    ..Comparable
+end with
+    id = 42
+    name = "Alice"
+
+    greet =: self
+        print("Hello, " .. self.name)
+    end
+end
+Person:greet()   -- Hello, Alice
 ```
+
+The first block composes behavior (metatable entries), the second the ordinary fields and
+methods of the table: methods live on the table, and `index` is only for names that are missing
+(`index = defaults`). Both blocks compose by spread; two vocabularies that offer one name clash
+until the block names it itself.
 
 `meta` brands nothing and checks nothing: it is the plain Lua counterpart of a `struct`'s methods.
 
