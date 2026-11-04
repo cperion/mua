@@ -1,5 +1,5 @@
--- Every example runs and prints what its `.expected` file says, and is formatted as `mua fmt`
--- writes it. Run from the repository root: luajit tests/examples.lua
+-- Every example runs and prints what the `output` comment at its end says, and is formatted as
+-- `mua fmt` writes it. Run from the repository root: luajit tests/examples.lua
 local root = arg[0]:match('^(.*)/tests/[^/]*$') or '.'
 local lua = "'" .. (arg[-1] or 'luajit') .. "'"
 local function capture(command)
@@ -25,7 +25,8 @@ check('examples were found', #names >= 8, #names)
 for _, path in ipairs(names) do
     local name = path:match('([^/]+)%.mua$')
     local out, status = capture('cd ' .. root .. ' && timeout 30 ' .. lua .. ' mua.lua examples/' .. name .. '.mua')
-    local expected = read(root .. '/examples/' .. name .. '.expected')
+    -- the program's output is written at the end of the example, in a comment
+    local expected = (read(path) or ''):match('\n%-%-%[=%[ output\n(.*)%]=%]\n?$')
     check(name .. ' runs', status == 0, out)
     check(name .. ' prints what it should', expected ~= nil and out == expected, out)
     local _, fmt_status = capture('cd ' .. root .. ' && ' .. lua .. ' mua.lua fmt --check examples/' .. name .. '.mua')

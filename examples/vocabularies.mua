@@ -70,3 +70,12 @@ local n = { ..Node, place = 7 }
 print(n.op, n.place, n.what)
 print(reason(select(2, pcall(do() = { ..Node }))))
 print(reason(select(2, pcall(do() = { ..Node, place = 1, plcae = 2 }))))
+
+--[=[ output
+spread-overlap: field 'insert' comes from two spreads
+4	12
+7	6
+store	7	nil
+required: the field 'place' is not supplied
+closed: 'plcae' is not a field of this structural type
+]=]

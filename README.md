@@ -19,7 +19,7 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
   `blocks` (trailing blocks, activities, `endall`), `vocabularies` (`define`, spread, opening, closed
   types), `contracts` (`struct`, `oneof`, matching), `router` (a builder and its engine),
   `lifecycle` (a state machine as a `oneof`), `editor` (activities, outcomes and commands: the guide's
-  worked example), `ffi` (`ffistruct`). `tests/examples.lua` runs them against their `.expected` output.
+  worked example), `ffi` (`ffistruct`). Each ends with a comment holding what it prints; `tests/examples.lua` runs them against it.
 - `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
 
 Needs LuaJIT 2.1 with the 3.0 syntax backport (merged upstream 2026-07-20). `make test`

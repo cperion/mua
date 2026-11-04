@@ -32,3 +32,12 @@ local Shape = struct { outline: Segment, label: String }
 local shape = Shape { outline = segment, label = "diagonal" }
 print(shape.label, shape.outline.b.x)
 print(reason(select(2, pcall(Shape, { outline = Point(1, 2), label = "wrong" }))))
+
+--[=[ output
+1	4	40
+25
+contract: parameter 'p' of length_squared expects Point, got a table
+16	40
+diagonal	3
+contract: the field 'outline' of Shape expects Segment, got a Point
+]=]

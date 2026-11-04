@@ -48,3 +48,19 @@ local handlers = {
     end,
 }
 handlers.greet "blocks"
+
+--[=[ output
+begin import
+  reading
+  writing
+end import
+1	a
+2	b
+3	c
+begin outer
+start inner
+  the work
+stop inner
+end outer
+hello, blocks
+]=]

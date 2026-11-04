@@ -1,6 +1,0 @@
-spread-overlap: field 'insert' comes from two spreads
-4	12
-7	6
-store	7	nil
-required: the field 'place' is not supplied
-closed: 'plcae' is not a field of this structural type
