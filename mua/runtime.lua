@@ -330,7 +330,7 @@ function R.family(name)
     local F = setmetatable({}, { __tostring = function() return name end })
     local kinds, members, sealed = {}, {}, false         -- members: struct -> true
     local function need_sealed(what)
-        if not sealed then error(('family %s is %s before it is sealed (seal it with %s { … })'):format(name, what, name), 3) end
+        if not sealed then error(("the family '%s' is %s before it is sealed (seal it with { … } after its structs)"):format(name, what), 3) end
     end
     local function member_of(v)
         local S = type(v) == 'table' and instance_of[getmetatable(v)]
@@ -338,15 +338,15 @@ function R.family(name)
     end
     checkers[F] = { name = name, test = function(v) need_sealed('checked'); return not not member_of(v) end }
     getmetatable(F).__call = function(_, list)
-        if sealed then error(('family %s is already sealed'):format(name), 2) end
-        if type(list) ~= 'table' then error(('seal %s with the list of its structs: %s { A, B }'):format(name, name), 2) end
+        if sealed then error(("the family '%s' is already sealed"):format(name), 2) end
+        if type(list) ~= 'table' then error(("seal the family '%s' with the list of its structs: { A, B }"):format(name), 2) end
         local seen = {}
         for i, S in ipairs(list) do
             if not structs[S] then
-                error(('family %s: entry %d is %s, not a struct'):format(name, i, describe_value(S)), 2)
+                error(("the family '%s': entry %d is %s, not a struct"):format(name, i, describe_value(S)), 2)
             end
             local kind = structs[S].name
-            if seen[kind] then error(('family %s: two kinds are named %s'):format(name, kind), 2) end
+            if seen[kind] then error(("the family '%s': two kinds are named %s"):format(name, kind), 2) end
             seen[kind] = true
             members[S] = true
             kinds[#kinds + 1] = kind
@@ -359,36 +359,36 @@ function R.family(name)
     function F.is(node, kind)
         need_sealed('asked')
         if not (structs[kind] and members[kind]) then
-            error(('%s is not a kind of %s'):format(R.describe(kind), name), 2)
+            error(("%s is not a kind in the family '%s'"):format(R.describe(kind), name), 2)
         end
         return type(node) == 'table' and instance_of[getmetatable(node)] == kind
     end
     function F.pass(pass_name)
         need_sealed('given a pass')
         return function(handlers)
-            if type(handlers) ~= 'table' then error(('pass %s takes a table of handlers, one per kind'):format(pass_name), 2) end
+            if type(handlers) ~= 'table' then error(("pass '%s' takes a table of handlers, one per kind"):format(pass_name), 2) end
             local by_meta, known = {}, {}
             for S in pairs(members) do known[structs[S].name] = S end
             for _, kind in ipairs(kinds) do
                 local handler = handlers[kind]
                 if handler == nil then
-                    error(("pass %s: no handler for kind '%s' of %s"):format(pass_name, kind, name), 2)
+                    error(("pass '%s': no handler for the kind '%s' of the family '%s'"):format(pass_name, kind, name), 2)
                 end
                 if type(handler) ~= 'function' then
-                    error(("pass %s: the handler for '%s' is %s, not a function"):format(pass_name, kind, describe_value(handler)), 2)
+                    error(("pass '%s': the handler for '%s' is %s, not a function"):format(pass_name, kind, describe_value(handler)), 2)
                 end
                 by_meta[structs[known[kind]].meta] = handler
             end
             for kind in pairs(handlers) do
                 if not known[kind] then
-                    error(("pass %s: '%s' is not a kind of %s (kinds: %s)"):format(pass_name, tostring(kind), name, table.concat(kinds, ', ')), 2)
+                    error(("pass '%s': '%s' is not a kind in the family '%s' (kinds: %s)"):format(pass_name, tostring(kind), name, table.concat(kinds, ', ')), 2)
                 end
             end
             local run
             run = function(node)
                 local handler = by_meta[getmetatable(node)]
                 if not handler then
-                    error(('pass %s: %s is not a %s'):format(pass_name, describe_value(node), name), 2)
+                    error(("pass '%s': %s is not a member of the family '%s'"):format(pass_name, describe_value(node), name), 2)
                 end
                 return handler(node, run)
             end

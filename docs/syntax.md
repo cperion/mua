@@ -207,6 +207,11 @@ local eval = Expr.pass "eval" with ..Eval end
 print(eval(Add { left = Num { value = 1 }, right = Num { value = 2 } }))   -- 3
 ```
 
+- The names are descriptions. `family "expression of the toy language"` and
+  `Expr.pass "evaluate an expression to a number"` take any text; messages quote it back
+  (`pass 'evaluate…': no handler for the kind 'Neg' of the family 'expression of the toy
+  language'`), and a contract says `expects <description>`, so a short noun reads best for the
+  family.
 - `Expr` is a checker named `Expr`: a field typed `left: Expr` fails with `expects Expr` for a
   value that is no member. Using it before it is sealed is an error.
 - `Expr.pass name handlers` returns a function over the family's values. A handler is keyed by

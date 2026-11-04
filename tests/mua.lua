@@ -388,14 +388,14 @@ return eval(Add { left = Num { value = 5 }, right = Neg { operand = Num { value 
 runs('a family answers is', FAMILY .. 'return tostring(Expr.is(Num { value = 1 }, Num)) .. tostring(Expr.is(Num { value = 1 }, Neg)) .. tostring(Expr.is(5, Num))', 'truefalsefalse')
 runs('a family lists its kinds', FAMILY .. 'return table.concat(Expr.kinds, ",")', 'Num,Add,Neg')
 errors('a family field names the family', FAMILY .. 'local x = Add { left = Num { value = 1 }, right = 2 }', 'expects Expr')
-errors('a pass with a kind missing', FAMILY .. 'local p = Expr.pass "p" with Num = Eval.Num, Add = Eval.Add end', "no handler for kind 'Neg' of Expr")
-errors('a pass with an unknown kind', FAMILY .. 'local p = Expr.pass "p" with ..Eval, Nul = Eval.Neg end', "'Nul' is not a kind of Expr")
+errors('a pass with a kind missing', FAMILY .. 'local p = Expr.pass "p" with Num = Eval.Num, Add = Eval.Add end', "no handler for the kind 'Neg' of the family 'Expr'")
+errors('a pass with an unknown kind', FAMILY .. 'local p = Expr.pass "p" with ..Eval, Nul = Eval.Neg end', "'Nul' is not a kind in the family 'Expr'")
 errors('a pass handler that is not a function', FAMILY .. 'local p = Expr.pass "p" with ..Eval, Neg = 1 end', 'not a function')
-errors('a pass meets a value that is no member', FAMILY .. 'local p = Expr.pass "p" with ..Eval end\np(5)', 'is not a Expr')
+errors('a pass meets a value that is no member', FAMILY .. 'local p = Expr.pass "p" with ..Eval end\np(5)', "is not a member of the family 'Expr'")
 errors('a family used before it is sealed', 'local Expr = family "Expr"\nlocal S = struct { e: Expr }\nlocal x = S { e = 1 }', 'before it is sealed')
 errors('a family sealed twice', 'local E = family "E"\nlocal A = struct { }\nE { A }\nE { A }', 'already sealed')
 errors('a family needs structs', 'local E = family "E"\nE { 1 }', 'not a struct')
-errors('is asks about a kind of the family', FAMILY .. 'local Other = struct { }\nExpr.is(Num { value = 1 }, Other)', 'is not a kind of Expr')
+errors('is asks about a kind of the family', FAMILY .. 'local Other = struct { }\nExpr.is(Num { value = 1 }, Other)', "is not a kind in the family 'Expr'")
 runs('passes compose by spread and an explicit entry settles a clash', FAMILY .. [[
 local Loud = define
     Num =: n go
@@ -410,6 +410,8 @@ local p = Expr.pass "p" with
     end
 end
 return p(Add { left = Num { value = 1 }, right = Num { value = 2 } })]], 14)
+errors('a family and a pass take prose as their description', 'local Expr = family "expression of the toy language"\nlocal Num = struct { value: Number }\nExpr { Num }\nExpr.pass "evaluate an expression to a number" with Num = do(n) = 1, Nul = do(n) = 2 end',
+    "pass 'evaluate an expression to a number': 'Nul' is not a kind in the family 'expression of the toy language'")
 -- checker names a predicate
 errors('a named checker names what it expected', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nf(3)', 'expects Even')
 runs('a named checker accepts', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nreturn f(4)', 4)
