@@ -4,3 +4,4 @@ LUA ?= luajit
 test:
 	$(LUA) tests/mua.lua
 	$(LUA) tests/guide.lua
+	$(LUA) tests/cli.lua

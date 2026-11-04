@@ -344,6 +344,28 @@ errors('a ctype contract rejects another value', 'local P = ffistruct { x: doubl
     "parameter 'p' of f expects P, got number 5")
 errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type")
 
+-- the bytecode cache: a load writes bytecode that the next load reads; a different source, the
+-- contracts switch or a host without an id are different keys or uncached
+do
+    local dir = os.tmpname(); os.remove(dir); assert(os.execute('mkdir -p ' .. dir))
+    local function entries() local p = io.popen('ls ' .. dir); local t = p:read('*a'); p:close(); return select(2, t:gsub('%.luac', '')) end
+    local src = 'local f = do(x: Number): Number = x + 1\nreturn f(1)'
+    local chunk = assert(mua.load(src, '=cached', { cache = dir }))
+    check('a cached load runs', chunk() == 2)
+    check('a load writes one bytecode file', entries() == 1, entries())
+    local again = assert(mua.load(src, '=cached', { cache = dir }))
+    check('a second load reads it', again() == 2 and entries() == 1)
+    assert(mua.load('return 3', '=cached', { cache = dir }))
+    check('another source is another entry', entries() == 2)
+    assert(mua.load(src, '=cached', { cache = dir, contracts = false }))
+    check('the contracts switch is part of the key', entries() == 3)
+    assert(mua.load(src, '=cached', { cache = dir, host = {} }))
+    check('a host without an id is not cached', entries() == 3)
+    assert(mua.load(src, '=cached', { cache = dir, host = { id = 'h1' } }))
+    check('a host with an id is', entries() == 4)
+    os.execute('rm -rf ' .. dir)
+end
+
 -- every tracked Lua source: the round trip is exact, every number and string token is one
 -- LuaJIT reads the same way, it parses, and what it translates to compiles
 local function sh(cmd)
