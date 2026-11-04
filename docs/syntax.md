@@ -192,6 +192,23 @@ local area = do(s: Shape): Number = s with
 end
 ```
 
+**`FFIStruct`** declares a C struct for LuaJIT's FFI and gives back its ctype:
+
+```lua
+local Point = FFIStruct with
+    x: double
+    y: double
+end
+local Segment = FFIStruct { a: Point, b: Point, tag: "uint8_t[4]" }
+local p = Point { x = 12.5, y = 8 }
+```
+
+A field's type is a C type: a name nothing in scope binds is read as C's (`double`), a string is
+C text (`"uint8_t[4]"`, `"char *"`), and a name that is bound must hold an `FFIStruct` ctype
+(nesting). The result is an ordinary ctype: values are built as for any ctype (`Point { … }`,
+`Point(1, 2)`). A ctype is a checker, so it works as a contract (`do(p: Point)`), a `Struct`
+field or a `Sum` payload. There are no methods on an `FFIStruct`.
+
 ## 8. For hosts
 
 A host gives the typed forms and other forms meaning through a table passed to the translator:

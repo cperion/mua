@@ -14,6 +14,9 @@ local structs = setmetatable({}, { __mode = 'k' })      -- Struct type -> { name
 local sums = setmetatable({}, { __mode = 'k' })         -- Sum type -> { name, alts, index, meta }
 local closed = setmetatable({}, { __mode = 'k' })       -- closed structural type -> { declared names }
 local instance_of = setmetatable({}, { __mode = 'k' })  -- instance metatable -> its Struct or Sum
+local ctypes = setmetatable({}, { __mode = 'k' })        -- FFIStruct ctype -> { name, tag }
+local ffi_loaded
+local function ffi() ffi_loaded = ffi_loaded or require 'ffi'; return ffi_loaded end
 
 local function describe_value(v)
     local mt = type(v) == 'table' and getmetatable(v)
@@ -21,6 +24,10 @@ local function describe_value(v)
     if owner then
         if structs[owner] then return 'a ' .. structs[owner].name end
         return ('%s.%s'):format(sums[owner].name, rawget(v, 'tag'))
+    end
+    if type(v) == 'cdata' then
+        local ct = ffi().typeof(v)
+        return 'a ' .. (ctypes[ct] and ctypes[ct].name or tostring(ct))
     end
     if type(v) == 'string' then
         local s = #v > 20 and (v:sub(1, 17) .. '...') or v
@@ -37,6 +44,7 @@ function R.describe(T)
     if structs[T] then return structs[T].name end
     if sums[T] then return sums[T].name end
     if closed[T] then return 'a closed structural type' end
+    if type(T) == 'cdata' then return ctypes[T] and ctypes[T].name or tostring(T) end
     if type(T) == 'function' then return 'a predicate' end
     return describe_value(T)
 end
@@ -169,6 +177,7 @@ function R.check(T, v)
     if c then return c.test(v) end
     local s = structs[T] or sums[T]
     if s then return type(v) == 'table' and getmetatable(v) == s.meta end
+    if type(T) == 'cdata' then return ffi().istype(T, v) end      -- a ctype is a checker
     local declared = closed[T]
     if declared then
         if type(v) ~= 'table' then return false end
@@ -267,6 +276,32 @@ function R.Sum(name, alts, unchecked)
     end
     setmetatable(S, { __tostring = function() return name end })
     return S
+end
+
+-- FFIStruct (LuaJIT FFI): a C struct, declared once under a generated tag, as a ctype. A field's
+-- type is a string of C (`"double"`, `"char *"`, `"uint8_t[16]"`) or a ctype made by FFIStruct;
+-- the ctype is a checker (R.check), and `Point { x = 1 }` / `Point(1, 2)` build values as for
+-- any ctype.
+local ffi_tags = 0
+function R.FFIStruct(name, fields)
+    local decls = {}
+    for _, f in ipairs(fields) do
+        local fname, T = f[1], f[2]
+        local text
+        if type(T) == 'string' then text = T
+        elseif type(T) == 'cdata' and ctypes[T] then text = 'struct ' .. ctypes[T].tag
+        else error(('FFIStruct %s: the field \'%s\' needs a C type (a name, a string of C, or an FFIStruct), got %s')
+            :format(name, fname, describe_value(T)), 3) end
+        local base, array = text:match('^(.-)%s*(%[[^%]]*%])$')
+        if base then text = base else array = '' end
+        decls[#decls + 1] = ('%s %s%s;'):format(text, fname, array)
+    end
+    ffi_tags = ffi_tags + 1
+    local tag = ('mua_%s_%d'):format(name:gsub('[^%w_]', '_'), ffi_tags)
+    ffi().cdef(('struct %s { %s };'):format(tag, table.concat(decls, ' ')))
+    local ct = ffi().typeof('struct ' .. tag)
+    ctypes[ct] = { name = name, tag = tag }
+    return ct
 end
 
 -- opening (design §4.4, E1) ----------------------------------------------------------------------

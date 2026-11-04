@@ -335,6 +335,15 @@ errors('a missing handler', 'local Shape = Sum { a: Unit, b: Unit }\nlocal v = S
 errors('an unknown handler', 'local Shape = Sum { a: Unit }\nlocal v = Shape.a()\nreturn v { a = do() = 1, c = do() = 2 }', "has no alternative 'c'")
 runs('a Sum is a checker', 'local R = Sum { ok: Number, err: String }\nlocal f = do(r: R): Number = r { ok = do(v) = v, err = do(e) = -1 }\nreturn f(R.ok(4))', 4)
 
+-- FFIStruct (LuaJIT FFI): C structs as ctypes; a ctype is a checker
+runs('an FFIStruct builds values', 'local P = FFIStruct { x: double, y: double }\nlocal p = P { x = 1.5, y = 2 }\nreturn p.x + p.y', 3.5)
+runs('an FFIStruct in the with form', 'local P = FFIStruct with\n    x: int32_t\n    y: int32_t\nend\nreturn require("ffi").sizeof(P)', 8)
+runs('FFIStructs nest, and an array field is a string of C', 'local P = FFIStruct { x: double }\nlocal S = FFIStruct { a: P, tag: "uint8_t[4]" }\nlocal s = S { a = P(7) }\nreturn s.a.x', 7)
+runs('a ctype is a contract', 'local P = FFIStruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(P(4))', 4)
+errors('a ctype contract rejects another value', 'local P = FFIStruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(5)',
+    "parameter 'p' of f expects P, got number 5")
+errors('a field needs a C type', 'local P = FFIStruct { x: 5 }', "needs a C type")
+
 -- every tracked Lua source: the round trip is exact, every number and string token is one
 -- LuaJIT reads the same way, it parses, and what it translates to compiles
 local function sh(cmd)

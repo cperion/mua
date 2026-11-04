@@ -219,6 +219,20 @@ function E:expr(n)
     elseif k == 'cond' then
         -- the middle operand is bracketed: it may not hold a method call directly
         self:operand(n.c); self:put(' ? ('); self:expr(n.a); self:put(') : '); self:operand(n.b)
+    elseif k == 'struct' and n.ffi then
+        -- FFIStruct: a C struct for LuaJIT's FFI. A field's type is a C type name (a name no
+        -- scope binds is read as C's), a string of C, or a ctype value (a name that is bound).
+        local translate = self.host.ffi_struct
+        if translate then return self:put(translate(n, self:context(n)), line) end
+        self:put(('%s(%s, { '):format(self:rt('FFIStruct'), quote(n.name or 'FFIStruct')), line)
+        for i, f in ipairs(n.fields) do
+            if i > 1 then self:put(', ') end
+            self:put('{ ' .. quote(f.name) .. ', ', f.line)
+            if f.type.k == 'name' and not self:bound(f.type.name) then self:put(quote(f.type.name))
+            else self:expr(f.type) end
+            self:put(' }')
+        end
+        self:put(' })')
     elseif k == 'struct' then
         local translate = self.host[n.sum and 'sum' or 'struct']
         if translate then return self:put(translate(n, self:context(n)), line) end

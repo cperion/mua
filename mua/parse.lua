@@ -23,7 +23,7 @@
 --   field{obj, name}  index{obj, key}  call{fn, args, juxta?, boundary?}  method{obj, name, args}
 --   lambda{fn}  table{items={kind=pos|named|keyed|spread, name, key, e}, with?}
 --   with{items} (contextual)  binop{op, a, b, spelling?}  unop{op, a, spelling?}
---   cond{c, a, b} (`c ? a : b`)  struct{sum, fields={name,type}, name}
+--   cond{c, a, b} (`c ? a : b`)  struct{sum?, ffi?, fields={name,type}, name}
 -- `field`, `index`, `call` and `method` carry `safe` for `?.`; a method `safe_call` for
 -- `o:m?.(...)`. The customary operators are normalized: `!`, `&&`, `||`, `!=` arrive as
 -- `not`, `and`, `or`, `~=` with their `spelling` kept (design macro-layer.md L3). A short
@@ -772,7 +772,7 @@ function P:with_entries(wtk)
     return items
 end
 
--- `Struct { name: Type, ... }`, `Sum { ... }`, and their `with` forms
+-- `Struct { name: Type, ... }`, `Sum { ... }`, `FFIStruct { name: ctype, ... }`, and their `with` forms
 function P:struct(hint)
     local r = self.r
     local s = r:next()
@@ -782,6 +782,7 @@ function P:struct(hint)
     local function field()
         local n = r:name('as a ' .. what)
         r:expect(':', ("after %s '%s' (%ss are declared name: Type)"):format(what, n.v, what))
+        -- an FFIStruct field's type is a C type: a name is read as C's, not looked up
         local ty = self:typeexpr()
         fields[#fields + 1] = { name = n.v, type = ty, line = n.line }
     end
@@ -806,14 +807,14 @@ function P:struct(hint)
         if r:peek(1).t == 'eof' then r:error('a `with` block is not closed (expected `end`)', wtk) end
         self:close_block('the ' .. kind)
     end
-    return { k = 'struct', sum = kind == 'Sum', fields = fields, name = hint, line = s.line }
+    return { k = 'struct', sum = kind == 'Sum', ffi = kind == 'FFIStruct' or nil, fields = fields, name = hint, line = s.line }
 end
 
 function P:primary(hint, in_type)
     local r = self.r
     local tk = r:peek(1)
     if tk.t == 'name' then
-        if (tk.v == 'Struct' or tk.v == 'Sum')
+        if (tk.v == 'Struct' or tk.v == 'Sum' or tk.v == 'FFIStruct')
             and (r:peek(2).t == '{' or (is_name(r:peek(2), 'with') and r:peek(3).t == 'name')) then
             return self:struct(hint), 'struct'
         end
