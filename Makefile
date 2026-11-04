@@ -5,3 +5,5 @@ test:
 	$(LUA) tests/mua.lua
 	$(LUA) tests/guide.lua
 	$(LUA) tests/cli.lua
+	$(LUA) tests/fmt.lua
+	$(LUA) tests/fmt_do.lua

@@ -13,6 +13,8 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
 - `mua.lua`, `mua/cli.lua`: the `mua` command: `luajit mua.lua [-e code] [-d] [--no-contracts]
   [-l module] file.lua [args]` runs a file, runs an expression, or prints what a file translates
   to; `MUA_CACHE=dir` turns the bytecode cache on.
+- `mua/fmt.lua`, `mua/fmt_text.lua`, `mua/fmt_cli.lua`: the formatter and `mua fmt`; a host (Nua is
+  one) passes its parse forms, facts and extra passes (`docs/formatting.md`).
 - `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
 
 Needs LuaJIT 2.1 with the 3.0 syntax backport (merged upstream 2026-07-20). `make test`
