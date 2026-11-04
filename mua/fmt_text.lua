@@ -767,7 +767,10 @@ function M.withize(source, unit, spread_beside)
                             or first[1] == '-' or (first[1] == 'keyword' and (first[2] == 'do' or first[2] == 'true'
                             or first[2] == 'false')))
                         -- entries on one line keep their commas; at a line end the reader writes it back
-                        if nx == close_of[i] or (newline and (starts or begins)) then
+                        -- a plain `with` keeps the commas of positional entries; a `define` list is
+                        -- written without them
+                        local plain_start = first and (first[1] == 'iden' or first[1] == '.')
+                        if nx == close_of[i] or (newline and (starts or (block.define and begins) or plain_start)) then
                             block.drop[k] = true
                         end
                     end
