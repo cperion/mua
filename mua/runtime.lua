@@ -167,6 +167,28 @@ function R.define()
         .. "to write a table in braces, write { … }", 2)
 end
 
+-- `meta` installs a vocabulary as a metatable: `meta { index = …, tostring = … }` copies its
+-- entries under `__` names (`__index`, `__tostring`; a name that already starts `__` is kept) and
+-- returns a function that sets that metatable on a table and gives the table back. Every table
+-- it is given shares the one metatable. It is the plain Lua counterpart of a struct's methods:
+-- it brands nothing and checks nothing.
+function R.meta(vocabulary)
+    if type(vocabulary) ~= 'table' then
+        error(('meta takes a table of metamethods (index, tostring, add, …), got %s'):format(describe_value(vocabulary)), 2)
+    end
+    local mt = {}
+    for key, value in pairs(vocabulary) do
+        if type(key) ~= 'string' then
+            error(('meta names its metamethods: a %s key has no name (write index = …, tostring = …)'):format(type(key)), 2)
+        end
+        mt[key:sub(1, 2) == '__' and key or '__' .. key] = value
+    end
+    return function(t)
+        if type(t) ~= 'table' then error(('meta applies to a table, got %s'):format(describe_value(t)), 2) end
+        return setmetatable(t, mt)
+    end
+end
+
 -- `f(a, ..t)`: the array part of t, as the call's last arguments
 function R.expand(t) return unpack(t, 1, t.n or #t) end
 
@@ -376,7 +398,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R

@@ -150,6 +150,29 @@ are exactly those of the expanded program.
 results or a table's array part. `define` followed by entries and `end` is a table (a plain one, never a host's contextual construction), so a definition reads as
 a definition; a **structural type** is the table it is given.
 
+**`meta`** installs a vocabulary as a metatable. `meta { index = …, tostring = … }` (or
+`meta with … end`) copies its entries under `__` names (`__index`, `__tostring`; a name that
+already starts with `__` is kept) and returns a function that sets that metatable on the table it
+is given and returns the table; every table it is given shares the one metatable:
+
+```mua
+local Counter = meta with
+    index = define
+        increment =: self
+            self.value += 1
+        end
+    end
+
+    tostring = self -> tostring(self.value)
+end with
+    value = 0
+end
+Counter:increment()
+print(Counter)   -- 1
+```
+
+`meta` brands nothing and checks nothing: it is the plain Lua counterpart of a `struct`'s methods.
+
 **Lists.** A `define` block (like any `with` block) also takes positional entries: any expression,
 one per line, or separated by commas on a line, so it writes list-like tables without commas:
 

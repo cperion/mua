@@ -347,6 +347,26 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
+-- meta installs a vocabulary as a metatable
+runs('meta installs methods and metamethods', [[
+local Counter = meta with
+    index = define
+        increment =: self
+            self.value += 1
+        end
+    end
+
+    tostring = self -> tostring(self.value)
+end with
+    value = 0
+end
+Counter:increment()
+Counter:increment()
+return tostring(Counter)]], '2')
+runs('meta keeps __ names and shares one metatable', 'local make = meta { __index = { hi = do() = 1 }, call = do(self) = 7 }\nlocal a, b = make {}, make {}\nreturn a:hi() + b() + (getmetatable(a) == getmetatable(b) and 100 or 0)', 108)
+runs('a program may bind its own meta', 'local meta = 5\nreturn meta', 5)
+errors('meta takes named metamethods', 'local m = meta { 1 }', 'names its metamethods')
+errors('meta applies to a table', 'local m = meta { index = {} }\nm(3)', 'applies to a table')
 -- struct, oneof and ffistruct take their fields as a block
 runs('struct as a block', 'local P = struct\n    x: Number\n    y: Number\nend\nreturn P { x = 1, y = 2 }.y', 2)
 runs('oneof as a block', 'local O = oneof\n    a: Unit\n    b: Number\nend\nreturn O.b(4).value', 4)
