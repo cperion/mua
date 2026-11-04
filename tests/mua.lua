@@ -347,6 +347,24 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
+-- a headless `with` is a plain table that a struct contract fills in, in place
+runs('with is a plain table without a type', 'local t = with\n    x = 1\nend\nreturn t.x + (getmetatable(t) == nil and 10 or 0)', 11)
+runs('a typed local takes the struct', 'local P = struct { x: Number }\nlocal p: P = with\n    x = 1\nend\nreturn getmetatable(p) == getmetatable(P { x = 2 }) and p.x or -1', 1)
+runs('a typed parameter takes the struct', 'local P = struct { x: Number }\nlocal f = do(p: P): Number = p.x\nreturn f(with x = 5 end)', 5)
+runs('a typed result takes the struct', 'local P = struct { x: Number }\nlocal g = do(): P = with x = 7 end\nreturn getmetatable(g()) == getmetatable(P { x = 0 }) and g().x or -1', 7)
+runs('a struct field takes the struct', 'local I = struct { x: Number }\nlocal O = struct { inner: I }\nlocal o = O { inner = with x = 3 end }\nreturn getmetatable(o.inner) == getmetatable(I { x = 0 }) and o.inner.x or -1', 3)
+runs('the table keeps its identity', 'local P = struct { x: Number }\nlocal t = with x = 4 end\nlocal f = do(p: P): Number = p.x\nf(t)\nreturn getmetatable(t) == getmetatable(P { x = 0 }) and t.x or -1', 4)
+errors('a with that does not fit the struct', 'local P = struct { x: Number }\nlocal p: P = with\n    y = 1\nend', "has no field 'y'")
+errors('a with that is missing a field', 'local P = struct { x: Number }\nlocal p: P = with\n    z = nil\nend', "the field 'x' of P expects Number")
+errors('a with already branded by another struct is not filled again', 'local P = struct { x: Number }\nlocal Q = struct { x: Number }\nlocal t = with x = 1 end\nlocal p: P = t\nlocal q: Q = t', "expects Q")
+-- ... and an ffistruct: a new C value made from the table's fields
+runs('a typed local takes the ffistruct', 'local V = ffistruct { x: "double", y: "double" }\nlocal v: V = with x = 1, y = 2 end\nreturn tostring(type(v)) .. v.x + v.y', 'cdata3')
+runs('a typed parameter takes the ffistruct', 'local V = ffistruct { x: "double", y: "double" }\nlocal f = do(v: V): Number = v.x * v.y\nreturn f(with x = 3, y = 4 end)', 12)
+runs('a typed result takes the ffistruct', 'local V = ffistruct { x: "double" }\nlocal g = do(): V = with x = 7 end\nreturn g().x', 7)
+runs('a struct field takes the ffistruct', 'local V = ffistruct { x: "double" }\nlocal S = struct { v: V }\nreturn S { v = with x = 9 end }.v.x', 9)
+runs('a oneof payload takes the ffistruct', 'local V = ffistruct { x: "double" }\nlocal O = oneof { some: V, none: Unit }\nreturn O.some(with x = 5 end).value.x', 5)
+runs('a typed assignment takes the ffistruct', 'local V = ffistruct { x: "double" }\nlocal v: V = V { x = 1 }\nv = with x = 8 end\nreturn v.x', 8)
+errors('a with that does not fit the ffistruct', 'local V = ffistruct { x: "double" }\nlocal v: V = with y = 1 end', 'y')
 -- define entries end is a table, and a list when its entries are positional
 runs('define makes a list of numbers', 'local t = define\n    1\n    2\n    3\nend\nreturn #t + t[3]', 6)
 runs('define makes a list of tables', 'local t = define\n    { x = 1 }\n    { x = 2 }\nend\nreturn t[1].x + t[2].x', 3)

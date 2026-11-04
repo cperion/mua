@@ -112,7 +112,23 @@ inside brackets, not `::label::`, and not a method call (`xs:each`).
 by `end`. Entries are `name = value`, `.name` (which is `name = name`), `[k] = v`, `..spread`,
 positional values on lines of their own, and handlers `name =: params …`. With no head,
 `with` where an expression starts (after `return`, `=`, `(`, `,` or `{`) is the table itself,
-unless a host gives it meaning.
+which a contract can fill in: where a `struct` or an `ffistruct` is the declared type (a typed
+local, parameter or result, a typed assignment, a struct's field, a `oneof` payload), the table
+becomes an instance, checked as `T { … }` is. A `struct` instance is the same table, branded in
+place; an `ffistruct` value is C data, so it is a new value made from the table's fields (the
+table is not changed, and a typed `const` cannot take one). Where no type applies, it stays a
+plain table. A host may give it other meaning.
+
+```mua
+local Point = struct with
+    x: Number
+    y: Number
+end
+local origin: Point = with
+    x = 0
+    y = 0
+end
+```
 
 **`endall`** closes every open block (`do`, colon, `=:` and `with`) back to the nearest
 enclosing Lua control block or typed function body: `if`, `while`, `for`, `function`,
@@ -230,7 +246,8 @@ A field's type is a C type: a name nothing in scope binds is read as C's (`doubl
 C text (`"uint8_t[4]"`, `"char *"`), and a name that is bound must hold an `ffistruct` ctype
 (nesting). The result is an ordinary ctype: values are built as for any ctype (`Point { … }`,
 `Point(1, 2)`). A ctype is a checker, so it works as a contract (`do(p: Point)`), a `struct`
-field or a `oneof` payload. There are no methods on an `ffistruct`.
+field or a `oneof` payload, and a headless `with` is filled into one (§3). There are no methods on
+an `ffistruct`.
 
 ## 8. For hosts
 

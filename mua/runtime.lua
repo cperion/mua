@@ -150,8 +150,15 @@ function R.keyed(t)
     return fields
 end
 
--- `with ... end` where an expression starts: the table itself, unless a host gives it meaning
-function R.with(t) return t end
+-- `with ... end` where an expression starts: the table itself, which a contract may fill in. A
+-- table marked here (weakly: it gets no metatable, so it is a plain table to everything else)
+-- that meets a `struct` in a contract (a typed local, parameter or result, a struct's field)
+-- becomes an instance of it, in place, checked as `T { … }` is. A host may give it other meaning.
+local contextual = setmetatable({}, { __mode = 'k' })
+function R.with(t)
+    if type(t) == 'table' then contextual[t] = true end
+    return t
+end
 
 -- `define` is a block, not a function: a program that still calls it (and binds no `define` of
 -- its own) is told what to write
@@ -215,6 +222,23 @@ end
 -- The message is built only when the contract fails: `what` is a format and its arguments.
 local function contract(T, v, level, what, a, b)
     local ok, why = R.check(T, v)
+    if not ok and type(v) == 'table' and contextual[v] and getmetatable(v) == nil
+        and (structs[T] or (type(T) == 'cdata' and ctype_info(T))) then
+        -- a `with` table takes the struct or ffistruct the context names. A struct is constructed
+        -- in place, so the table keeps its identity and gains its type; C data cannot be branded,
+        -- so an ffistruct is a new value made from the table's fields, and the contract returns it
+        -- (the emitted code rebinds the checked name). A failure is the type's own, at the
+        -- contract's line.
+        local declared = type(T) == 'cdata' and ctype_info(T).fields
+        if declared then
+            for k in pairs(v) do
+                if not declared[k] then error(("%s has no field '%s'"):format(ctype_info(T).name, tostring(k)), level) end
+            end
+        end
+        local built, made = pcall(T, v)
+        if not built then error((tostring(made):gsub('^[^:]+:%d+: ', '')), level) end
+        return made
+    end
     if not ok then
         error(('contract: %s expects %s, got %s%s'):format(what:format(a, b), R.describe(T), describe_value(v),
             why and (' (it ' .. why .. ')') or ''), level)
@@ -224,12 +248,12 @@ end
 -- a parameter's contract blames the caller (level 4: contract, param, the function, its
 -- caller); a local's and a result's, the line in the function (level 3)
 -- (contract is called as a statement: a tail call would drop a frame and shift the level)
-function R.param(T, v, name, fname) contract(T, v, 4, "parameter '%s' of %s", name, fname); return v end
-function R.local_(T, v, name, fname) contract(T, v, 3, "local '%s' in %s", name, fname); return v end
+function R.param(T, v, name, fname) v = contract(T, v, 4, "parameter '%s' of %s", name, fname); return v end
+function R.local_(T, v, name, fname) v = contract(T, v, 3, "local '%s' in %s", name, fname); return v end
 -- a result's contract: the value returned (one value: the emitter brackets the call, which
 -- also keeps it from being a tail call)
 function R.result(T, fname, v)
-    contract(T, v, 3, 'the result of %s', fname)
+    v = contract(T, v, 3, 'the result of %s', fname)
     return v
 end
 
@@ -253,7 +277,8 @@ function R.struct(name, fields, unchecked)
                     if not info.index[k] then error(("%s has no field '%s'"):format(name, tostring(k)), 2) end
                 end
                 for _, f in ipairs(fields) do
-                    contract(f[2], t[f[1]], 3, "the field '%s' of %s", f[1], name)
+                    local v = contract(f[2], t[f[1]], 3, "the field '%s' of %s", f[1], name)
+                    if v ~= t[f[1]] then t[f[1]] = v end         -- a `with` filled into an ffistruct
                 end
             end
             return setmetatable(t, info.meta)
@@ -294,7 +319,7 @@ function R.oneof(name, alts, unchecked)
     for _, a in ipairs(alts) do
         local tag, T = a[1], a[2]
         S[tag] = function(payload)
-            if not unchecked then contract(T, payload, 3, 'the payload of %s.%s', name, tag) end
+            if not unchecked then payload = contract(T, payload, 3, 'the payload of %s.%s', name, tag) end
             return setmetatable({ tag = tag, value = payload }, info.meta)
         end
     end
@@ -308,9 +333,10 @@ end
 -- any ctype.
 local ffi_tags = 0
 function R.ffistruct(name, fields)
-    local decls = {}
+    local decls, names = {}, {}
     for _, f in ipairs(fields) do
         local fname, T = f[1], f[2]
+        names[fname] = true
         local text
         if type(T) == 'string' then text = T
         elseif type(T) == 'cdata' and ctype_info(T) then text = 'struct ' .. ctype_info(T).tag
@@ -324,7 +350,7 @@ function R.ffistruct(name, fields)
     local tag = ('mua_%s_%d'):format(name:gsub('[^%w_]', '_'), ffi_tags)
     ffi().cdef(('struct %s { %s };'):format(tag, table.concat(decls, ' ')))
     local ct = ffi().typeof('struct ' .. tag)
-    ctypes[tostring(ct)] = { name = name, tag = tag }
+    ctypes[tostring(ct)] = { name = name, tag = tag, fields = names }
     return ct
 end
 

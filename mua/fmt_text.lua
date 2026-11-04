@@ -182,7 +182,9 @@ function M.expand(source, mark, full, filename)
     local frames = {}                                  -- the `with` blocks being read
     local function open_with(wtk, contextual)
         frames[#frames + 1] = { entries = {}, contextual = contextual }
-        replace[wtk.index] = (contextual and not mark and wtk.v ~= 'define') and 'with {' or '{'
+        -- a headless `with` keeps its word before the brace (`with {`): it is not a table in braces
+        -- (a type may fill it in), so no later pass may take it for one or give it a head
+        replace[wtk.index] = (contextual and wtk.v ~= 'define') and 'with {' or '{'
         after[wtk.index] = mark and (M.MARK .. (wtk.v == 'define' and M.DEFINE or '')) or nil
     end
     local function close_with(frame)
@@ -648,6 +650,14 @@ function M.withize(source, unit, spread_beside)
                 end
                 blocks[#blocks + 1] = block
                 for k = i + 1, j do block.drop[k] = true end
+                -- `with {` (a headless `with`): the word stays and the brace goes, with the space
+                -- between them
+                local w = i - 1
+                while tokens[w] and tokens[w][1] == 'space' and not tokens[w][2]:find '\n' do w = w - 1 end
+                if tokens[w] and tokens[w][1] == 'iden' and tokens[w][2] == 'with' and w < i then
+                    block.headless = true
+                    for k = w + 1, i - 1 do block.drop[k] = true end
+                end
                 local f = opened[i]
                 local function has_newline(a, b)
                     for q = a, b do
@@ -784,7 +794,7 @@ function M.withize(source, unit, spread_beside)
         for _, block in ipairs(selected) do
             for k in pairs(block.drop) do drop[k] = true end
             for k, text in pairs(block.before) do before[k] = text end
-            replace[block.open], replace[block.close] = block.define and 'define' or 'with', 'end'
+            replace[block.open], replace[block.close] = block.define and 'define' or (block.headless and '' or 'with'), 'end'
             if not has_moved(block) then
                 for k = block.open + 1, block.close - 1 do
                     if tokens[k][1] == 'space' and tokens[k][2]:find '\n' and k ~= block.close_space then
@@ -799,7 +809,9 @@ function M.withize(source, unit, spread_beside)
             if not plain[i] and not drop[i] then
                 if before[i] then out[#out + 1] = { 'space', before[i] } end
                 local text = replace[i]
-                if text then
+                if text == '' then
+                    -- a brace that only marked a headless `with`: nothing is written for it
+                elseif text then
                     local prev = out[#out]
                     -- a space before the word, except right after an opening bracket
                     if prev and prev[1] ~= 'space' and prev[1] ~= '(' and prev[1] ~= '[' then out[#out + 1] = { 'space', ' ' } end

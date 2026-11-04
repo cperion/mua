@@ -336,7 +336,7 @@ function E:funcbody(fn, line, head, self_param, contract)
     if self_param then self:bind('self') end
     for _, p in ipairs(fn.params) do self:bind(p.name) end
     for _, p in ipairs(contract and contract.params or {}) do
-        self:put(('%s(%s, %s, %s, %s); '):format(self:rt('param'), p.alias, p.name, quote(p.display), quote(self.fnctx.name)))
+        self:put(('%s = %s(%s, %s, %s, %s); '):format(p.name, self:rt('param'), p.alias, p.name, quote(p.display), quote(self.fnctx.name)))
     end
     if fn.rest then
         self:put(('local %s = { n = select("#", ...), ... }; '):format(fn.rest))
@@ -395,8 +395,9 @@ function E:stat(s)
         for i, v in ipairs(s.names) do
             self:bind(v.name, typed[i])
             if typed[i] then
-                self:put(('%s(%s, %s, %s, %s); '):format(self:rt('local_'), typed[i], v.name, quote(v.name),
-                    quote(self.fnctx and self.fnctx.name or 'the chunk')))
+                -- the contract returns the value (a `with` filled into an ffistruct is a new one)
+                self:put(('%s%s(%s, %s, %s, %s); '):format(k == 'const' and '' or v.name .. ' = ', self:rt('local_'), typed[i], v.name,
+                    quote(v.name), quote(self.fnctx and self.fnctx.name or 'the chunk')))
             end
         end
     elseif k == 'open' then
@@ -473,7 +474,7 @@ function E:stat(s)
         for _, t in ipairs(s.targets) do
             local tb = t.k == 'name' and self:binding(t.name)
             if tb and tb.type then
-                self:put(('%s(%s, %s, %s, %s); '):format(self:rt('local_'), tb.type, t.name, quote(t.name),
+                self:put(('%s = %s(%s, %s, %s, %s); '):format(t.name, self:rt('local_'), tb.type, t.name, quote(t.name),
                     quote(self.fnctx and self.fnctx.name or 'the chunk')))
             end
         end
@@ -481,8 +482,8 @@ function E:stat(s)
         self:put('', line); self:expr(s.target); self:put(' ' .. s.op .. '= '); self:expr(s.e); self:put('; ')
         local tb = s.target.k == 'name' and self:binding(s.target.name)
         if tb and tb.type then
-            self:put(('%s(%s, %s, %s, %s); '):format(self:rt('local_'), tb.type, s.target.name, quote(s.target.name),
-                quote(self.fnctx and self.fnctx.name or 'the chunk')))
+            self:put(('%s = %s(%s, %s, %s, %s); '):format(s.target.name, self:rt('local_'), tb.type, s.target.name,
+                quote(s.target.name), quote(self.fnctx and self.fnctx.name or 'the chunk')))
         end
     elseif k == 'callstat' then
         self:put('', line); self:expr(s.e); self:put('; ')
@@ -510,7 +511,7 @@ function E:stat(s)
             -- iteration, which the off switch removes
             self:put(('local %s = '):format(alias)); self:expr(s.type); self:put('; ')
             self:bind(s.var, alias)
-            self:put(('%s(%s, %s, %s, %s); '):format(self:rt('local_'), alias, s.var, quote(s.var),
+            self:put(('%s = %s(%s, %s, %s, %s); '):format(s.var, self:rt('local_'), alias, s.var, quote(s.var),
                 quote(self.fnctx and self.fnctx.name or 'the chunk')))
         else
             self:bind(s.var)

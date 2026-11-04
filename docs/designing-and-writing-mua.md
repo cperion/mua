@@ -306,6 +306,22 @@ assert(span.stop - span.start == 7)
 assert(not pcall(Span, { start = 2 }))  -- stop is required: the contract fails at the call
 ```
 
+`define` and `with` mark the two sides of the same decision. A `define` block is names and
+nothing more: structural, open to extension by spread, never given a type. A `with` block is data
+that waits for a type: where the program's contract names a `struct` (a typed local, parameter or
+result, or a field of another struct), the table becomes an instance there, in place and checked,
+and nowhere else does it change. Write `define` while the grouping is only names; write `with`
+where a type will recognize it.
+
+```lua
+local Span = struct { start: Number, stop: Number }
+local width = do(span: Span): Number = span.stop - span.start
+assert(width(with
+    start = 2
+    stop = 9
+end) == 7)
+```
+
 Scenarios show which groupings meet a trigger: what must be stored, replayed, logged, undone or
 tested independently of the action that produced it? Those are the program's values. A command
 that a key press produces, a log records and a replay re-applies is such a value:
