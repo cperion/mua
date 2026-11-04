@@ -40,6 +40,7 @@ return {
     call_style = "minimal",
     spine_style = "pure",
     table_style = "shorthand",
+    spread_style = "top",
     opening_style = "anonymous",
     block_style = "colon",
     data_style = "with",
@@ -60,6 +61,7 @@ file, not arbitrary downloaded Lua code.
 | `column_width` | integer 20–240 | Soft wrapping target, not a hard limit. |
 | `call_style` | `"minimal"`, `"preserve"` | Remove safe call parentheses (and fold a spine's closers), or retain call spelling. |
 | `table_style` | `"shorthand"`, `"preserve"` | `"shorthand"` writes a table entry `name = name` as `.name` (syntax doc, §4); `"preserve"` keeps the spelling, including any `.name` already written. |
+| `spread_style` | `"top"`, `"preserve"` | `"top"` writes the one `..base` of a table first, beside its `with` (below); `"preserve"` keeps entries where they are written. |
 | `opening_style` | `"anonymous"`, `"preserve"` | Remove an unused name from an opened `do` parameter, or keep named openings. |
 | `block_style` | `"colon"`, `"do"` | Write an untyped trailing `do(..)` that ends a line in the colon form (syntax doc, §4), or keep the `do` spelling. |
 | `data_style` | `"with"`, `"preserve"` | Write a multi-line table that follows a head (`T {`, `f(x) {`) as a `with` block (syntax doc, §4), or keep the braces. |
@@ -121,6 +123,26 @@ them readable (`Point with x = 1, y = 2 end`). A separator is
 kept where the reader would not recover it, before an entry that starts with a
 bracket or a literal. Each table is converted on its own, and only when expanding
 the result gives the same program as the braces.
+
+## Spreads
+
+A table with one keyed spread, `..base`, has a base and the entries that change it. A `with`
+block is not ordered, so the formatter writes that spread first, on the line of the `with`, with
+the changes below it:
+
+```lua
+local document = define with ..Document
+    length = 10
+end
+```
+
+Explicit fields override spread fields wherever they are written, so moving the spread to the
+front changes nothing, provided nothing observable happens in the entries it moves ahead of: a
+spread is moved only past entries that are names, literals, functions or tables of those. A
+table with several spreads, or with an entry that calls something before its spread, stays as
+written. A table with a spread is not collapsed onto one line when it spans lines, whatever
+`inline_with` says; a table already on one line (`Point { ..p, x = 1 }`) is left alone.
+`spread_style = "preserve"` turns the rule off.
 
 ## End chains
 

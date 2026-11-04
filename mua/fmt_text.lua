@@ -468,7 +468,7 @@ end
 -- lines). Contextual `with` has no type head to attach braces to, so it is left alone.
 local BLOCK = { ['do'] = true, ['function'] = true, ['end'] = true, ['if'] = true, ['for'] = true,
                 ['while'] = true, ['repeat'] = true, ['return'] = true }
-local function inline_pass(source, limit, width)
+local function inline_pass(source, limit, width, keep_spreads)
     local tokens = lexer.scan_raw_tokenlist(source)
     local close_of, keyed = table_scanner(tokens)
     -- top-level entries of the table opened at i; nil when something forbids a single line
@@ -477,6 +477,15 @@ local function inline_pass(source, limit, width)
         for k = open + 1, close_of[open] - 1 do
             local t, text = tokens[k][1], tokens[k][2]
             if t == 'comment' and text ~= MARK then return nil end
+            -- a table that extends a base (`..base`) stays a block when it spans lines
+            if keep_spreads and depth == 0 and t == '.' and tokens[k + 1] and tokens[k + 1][1] == '.'
+                and not (tokens[k + 2] and tokens[k + 2][1] == '.') and (any == false) then
+                local multiline = false
+                for q = open + 1, close_of[open] - 1 do
+                    if tokens[q][1] == 'space' and tokens[q][2]:find '\n' then multiline = true end
+                end
+                if multiline then return nil end
+            end
             if t == 'keyword' and BLOCK[text] then return nil end
             if t == '(' or t == '{' or t == '[' then depth = depth + 1
             elseif t == ')' or t == '}' or t == ']' then depth = depth - 1
@@ -552,10 +561,10 @@ local function inline_pass(source, limit, width)
     end
     return text_of(out)
 end
-function M.inline_tables(source, limit, width)
+function M.inline_tables(source, limit, width, keep_spreads)
     if not limit or limit < 1 then return source end
     for _ = 1, 8 do
-        local result = inline_pass(source, limit, width)
+        local result = inline_pass(source, limit, width, keep_spreads)
         if result == source then break end
         source = result
     end
@@ -595,7 +604,7 @@ end
 -- `name:` or a line of its own, and before the closing brace). Without the marks
 -- the source is returned with its braces; the result is only accepted when
 -- expanding it gives the braces' own token stream.
-function M.withize(source, unit)
+function M.withize(source, unit, spread_beside)
     unit = unit or '    '
     local tokens = lexer.scan_raw_tokenlist(source)
     local top_at, opened = frames_of(tokens)
@@ -663,7 +672,30 @@ function M.withize(source, unit)
                         block.moved[at] = text
                     end
                     local at = next_sig(j)
-                    if at < close_of[i] then own_line(at, indent .. unit) end
+                    -- one `..base` among the entries, standing first, stays beside the `with`
+                    local beside = false
+                    if spread_beside and tokens[at] and tokens[at][1] == '.' and tokens[at + 1] and tokens[at + 1][1] == '.'
+                        and not (tokens[at + 2] and tokens[at + 2][1] == '.') then
+                        local spreads, entries_n, depth_n = 0, 0, 0
+                        local starts_entry = true
+                        for k = i + 1, close_of[i] - 1 do
+                            local c = tokens[k]
+                            if c[1] == '(' or c[1] == '{' or c[1] == '[' then depth_n = depth_n + 1
+                            elseif c[1] == ')' or c[1] == '}' or c[1] == ']' then depth_n = depth_n - 1
+                            elseif depth_n == 0 and (c[1] == ',' or c[1] == ';') then
+                                entries_n = entries_n + 1; starts_entry = true
+                            elseif depth_n == 0 and c[1] == '.' and starts_entry and tokens[k + 1] and tokens[k + 1][1] == '.'
+                                and not (tokens[k + 2] and tokens[k + 2][1] == '.') then
+                                spreads = spreads + 1; starts_entry = false
+                            elseif c[1] ~= 'space' and c[1] ~= 'comment' then starts_entry = false end
+                        end
+                        beside = spreads == 1 and entries_n >= 1
+                    end
+                    if beside then
+                        local p = at - 1
+                        while p > i and tokens[p][1] == 'space' do block.drop[p] = true; p = p - 1 end
+                        block.before[at] = ' '
+                    elseif at < close_of[i] then own_line(at, indent .. unit) end
                     for k = i + 1, close_of[i] - 1 do
                         local c = tokens[k]
                         if top_at[k] == f and (c[1] == ',' or c[1] == ';') then

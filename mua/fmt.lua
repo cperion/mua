@@ -25,7 +25,7 @@ local function analyze(ast)
     return scope.analyze(ast, env)
 end
 M.defaults = { indent_width = 4, column_width = 100, call_style = 'minimal', spine_style = 'pure',
-               table_style = 'shorthand', opening_style = 'anonymous',
+               table_style = 'shorthand', spread_style = 'top', opening_style = 'anonymous',
                block_style = 'colon', data_style = 'with', inline_with = 2 }
 
 function M.options(options, with_host)
@@ -54,6 +54,9 @@ function M.options(options, with_host)
     end
     if out.table_style ~= 'preserve' and out.table_style ~= 'shorthand' then
         error('fmt: table_style must be "preserve" or "shorthand"', 0)
+    end
+    if out.spread_style ~= 'top' and out.spread_style ~= 'preserve' then
+        error('fmt: spread_style must be "top" or "preserve"', 0)
     end
     if out.opening_style ~= 'anonymous' and out.opening_style ~= 'preserve' then
         error('fmt: opening_style must be "anonymous" or "preserve"', 0)
@@ -199,6 +202,13 @@ local function parse(source, filename)
         lambdas[#lambdas + 1] = { fn = node.fn, closer = closer, native = native }
         return node
     end
+    local entry, entry_spans = p.entry, {}
+    function p:entry(...)
+        local first = r:peek(1).index
+        local result = entry(self, ...)
+        entry_spans[result] = { first, last }
+        return result
+    end
     local item, item_ends = p.item, {}
     function p:item(...)
         local result = item(self, ...)
@@ -312,13 +322,49 @@ local function parse(source, filename)
     local facts = analyze(ast)
     return { ast = ast, tokens = ts, ranges = ranges, groups = groups, group_of = group_of, facts = facts,
              colons = colons, commas = commas, unary = unary, chains = chains, lambdas = lambdas,
-             typespans = typespans, locals = locals, parameter_names = parameter_names }
+             typespans = typespans, locals = locals, parameter_names = parameter_names,
+             entry_spans = entry_spans }
 end
 
 -- Compare the compiler's proven application normal forms, not just spelling.
 -- Unknown argument groups and expression grouping retain their exact structure.
 -- node fields that record how something was spelled or where, not what it means
 local SPELLING = { line = true, end_line = true, juxta = true, col = true, implicit = true, short = true }
+-- A single keyed spread among a table's entries may stand first: explicit fields override spread
+-- fields wherever they are written, and the entries before it evaluate nothing observable (a
+-- name, a literal, a function, a table of those), so moving the spread ahead changes nothing.
+local PURE = { name = true, num = true, str = true, ['true'] = true, ['false'] = true, ['nil'] = true, lambda = true }
+local function pure(e)
+    if PURE[e.k] then return true end
+    if e.k == 'paren' then return pure(e.e) end
+    if e.k == 'field' then return pure(e.obj) end
+    if e.k == 'unop' and (e.op == '-' or e.op == 'not') then return pure(e.a) end
+    if e.k == 'table' then
+        for _, it in ipairs(e.items) do
+            if it.kind == 'spread' or it.kind == 'keyed' or not pure(it.e) then return false end
+        end
+        return true
+    end
+    return false
+end
+-- the index of the one spread that can move to the front, or nil
+local function movable_spread(items)
+    local at
+    for i, it in ipairs(items) do
+        if it.kind == 'spread' then
+            if at then return nil end
+            at = i
+        end
+    end
+    if not at or at == 1 then return nil end
+    for i = 1, at - 1 do
+        local it = items[i]
+        if it.kind ~= 'named' or not pure(it.e) then return nil end
+    end
+    return at
+end
+M.movable_spread = movable_spread
+
 local function fingerprint(root)
     local facts = analyze(root)
     local function encode(node)
@@ -327,6 +373,18 @@ local function fingerprint(root)
             return type(node) .. ':' .. #value .. ':' .. value
         end
         node = facts.normal[node] or node
+        -- a movable spread is compared where it would stand first (spread_style)
+        if (node.k == 'table' or node.k == 'with') and node.items then
+            local at = movable_spread(node.items)
+            if at then
+                local copy = {}
+                for key, value in pairs(node) do copy[key] = value end
+                local items = { node.items[at] }
+                for i, it in ipairs(node.items) do if i ~= at then items[#items + 1] = it end end
+                copy.items = items
+                node = copy
+            end
+        end
         -- Only the parser's synthetic literal parentheses are erased.
         if node.k == 'paren' and (node.e.k == 'num' or node.e.k == 'str') then return encode(node.e) end
         local keys = {}
@@ -400,6 +458,62 @@ local function fold_spines(source, info, filename, signature)
     local ok, reparsed = pcall(parse, candidate, filename)
     if ok and fingerprint(reparsed.ast) == signature then return candidate end
     return source
+end
+
+-- One keyed spread among a table's entries is written first (`T with ..base` then the entries):
+-- the spread is the base, and the entries after it are what is changed. Tables whose entries
+-- before the spread might do something observable, and tables with several spreads, stay as written.
+local function spread_first(source, info, filename)
+    local ts = info.tokens
+    local function skippable(i) return ts[i] and ts[i].t == 'space' end
+    local function candidate(node)
+        local at = movable_spread(node.items)
+        if not at then return nil end
+        local first_item = info.entry_spans[node.items[1]]
+        local sp = info.entry_spans[node.items[at]]
+        local before = info.entry_spans[node.items[at - 1]]
+        if not (first_item and sp and before) then return nil end
+        -- nothing but whitespace and the separating comma may stand around the spread
+        for i = sp[1], sp[2] do if ts[i].t == 'comment' then return nil end end
+        local c = before[2] + 1
+        while skippable(c) do c = c + 1 end
+        if not (ts[c] and ts[c].v == ',') then return nil end
+        for i = before[2] + 1, sp[1] - 1 do if ts[i].t == 'comment' then return nil end end
+        local after = sp[2] + 1
+        while skippable(after) do after = after + 1 end
+        local remove_from, remove_to
+        if ts[after] and (ts[after].v == ',' or ts[after].v == ';') then
+            remove_from, remove_to = ts[c].last + 1, ts[after].last
+        else
+            remove_from, remove_to = ts[c].first, ts[sp[2]].last
+        end
+        local spread_text = source:sub(ts[sp[1]].first, ts[sp[2]].last)
+        -- the whitespace before the first entry is repeated after the spread, so it sits where
+        -- the entry was
+        local lead, i = '', first_item[1] - 1
+        while skippable(i) do lead = ts[i].v .. lead; i = i - 1 end
+        if lead == '' then lead = ' ' end
+        local at_char = ts[first_item[1]].first
+        local out = source:sub(1, at_char - 1) .. spread_text .. ',' .. lead
+            .. source:sub(at_char, remove_from - 1) .. source:sub(remove_to + 1)
+        return out
+    end
+    local found
+    local function walk(node)
+        if type(node) ~= 'table' then return end
+        if (node.k == 'table' or node.k == 'with') and node.items and not found then
+            local out = candidate(node)
+            if out then
+                local ok, reparsed = pcall(parse, out, filename)
+                if ok and fingerprint(reparsed.ast) == fingerprint(info.ast) then found = out; return end
+            end
+        end
+        for _, child in pairs(node) do
+            if not found then walk(child) end
+        end
+    end
+    walk(info.ast)
+    return found or source
 end
 
 -- A named opening whose name is never mentioned needs only its anonymous home.
@@ -897,6 +1011,14 @@ function format(source, options, filename)
         source = shorthand(source, info, filename)
         info = parse(source, filename)
     end
+    if options.spread_style == 'top' then
+        for _ = 1, 64 do
+            local moved = spread_first(source, info, filename)
+            if moved == source then break end
+            source = moved
+            info = parse(source, filename)
+        end
+    end
     if options.opening_style == 'anonymous' then
         source = drop_opening_names(source, info, filename)
         info = parse(source, filename)
@@ -917,12 +1039,14 @@ function format(source, options, filename)
         info = parse(source, filename)
     end
     local result = layout(info, options)
-    if options.data_style == 'with' then result = colon.inline_tables(result, options.inline_with, options.column_width) end
+    if options.data_style == 'with' then
+        result = colon.inline_tables(result, options.inline_with, options.column_width, options.spread_style == 'top')
+    end
     if fingerprint(parse(result, filename).ast) ~= signature then
         error(filename .. ': fmt: formatting would change the parsed program; source left unchanged', 0)
     end
     if options.data_style == 'with' then result = colon.mark_tables(result) end
-    result = colon.withize(result, (' '):rep(options.indent_width))
+    result = colon.withize(result, (' '):rep(options.indent_width), options.spread_style == 'top')
     if options.spine_style ~= 'none' then result = colon.foldends(result, (' '):rep(options.indent_width)) end
     if options.block_style == 'colon' then result = colon.colonize(result) end
     return prefix .. result

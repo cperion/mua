@@ -297,6 +297,24 @@ end
 check('reject invalid syntax', not pcall(fmt.format, 'local =', nil, 'broken.nua'))
 
 
+-- spread_style: one `..base` among a table's entries is written first, beside the `with`
+formatted('a single spread stays beside the with', 'local d = define with ..Document\n    length = 10\nend\n',
+    'local d = define with ..Document\n    length = 10\nend\n')
+formatted('a single spread moves to the top', 'local d = define with\n    length = 10\n    ..Document\n    cursor = 2\nend\n',
+    'local d = define with ..Document\n    length = 10\n    cursor = 2\nend\n')
+formatted('a last spread moves to the top', 'local d = define with\n    length = 10\n    cursor = 2\n    ..Document\nend\n',
+    'local d = define with ..Document\n    length = 10\n    cursor = 2\nend\n')
+formatted('a first spread goes beside the with', 'local d = define with\n    ..Document\n    length = 10\n    cursor = 2\n    edits = 3\nend\n',
+    'local d = define with ..Document\n    length = 10\n    cursor = 2\n    edits = 3\nend\n')
+formatted('several spreads stay as written', 'local d = define with\n    ..A\n    ..B\n    length = 10\nend\n',
+    'local d = define with\n    ..A\n    ..B\n    length = 10\nend\n')
+formatted('a spread stays behind an entry that does something', 'local d = define with\n    length = compute()\n    ..Document\nend\n',
+    'local d = define with\n    length = compute()\n    ..Document\nend\n')
+formatted('a one-line table with a spread is left alone', 'local p = Point { ..p, x = p.x + dx }\n', 'local p = Point { ..p, x = p.x + dx }\n')
+formatted('spread_style preserve keeps the order', 'local d = define with\n    length = 10\n    ..Document\n    cursor = 2\nend\n',
+    'local d = define with\n    length = 10\n    ..Document\n    cursor = 2\nend\n', { spread_style = 'preserve' })
+check('an invalid spread_style is rejected', not pcall(fmt.format, 'local x=1', { spread_style = 'bottom' }))
+
 -- CLI: output, explicit write, CI status, discovery, and failed preflight.
 local build = root .. '/build/formatter-tests'
 assert(os.execute('mkdir -p ' .. q(build .. '/nested')) == 0)
