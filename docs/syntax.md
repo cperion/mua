@@ -215,7 +215,9 @@ print(eval(Add { left = Num { value = 1 }, right = Num { value = 2 } }))   -- 3
 - `Expr` is a checker named `Expr`: a field typed `left: Expr` fails with `expects Expr` for a
   value that is no member. Using it before it is sealed is an error.
 - `Expr.pass name handlers` returns a function over the family's values. A handler is keyed by
-  the struct's name and called as `handler(node, pass)`, so it can recurse. The pass is checked
+  the struct's name and called as `handler(node, pass, ...)`, so it can recurse; the extra
+  arguments are those the pass was called with (a scope, a state), passed down by each handler's
+  own calls (`go(child, scope)`). The pass is checked
   when it is made: a kind with no handler, a handler for a name that is no kind, and a handler
   that is not a function are errors that name it. A value that is no member is named when the
   pass meets it.

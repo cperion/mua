@@ -1,0 +1,669 @@
+-- A small Lisp, compiled to Lua: read, parse to an AST, check, lower to an IR, optimize, emit.
+-- Two closed families (the AST and the IR) and a pass over each for every stage; passes are
+-- vocabularies, so they share and extend one another by spread.
+--   luajit mua.lua examples/lisp.mua
+
+------------------------------------------------------------------------------------------------
+-- Reading: text to data. A number is a number, a symbol a string, a list a table.
+
+local read = do(text)
+    local spaced = text:gsub("%(", " ( "):gsub("%)", " ) ")
+    local tokens = {}
+    for token in spaced:gmatch "%S+" do tokens[#tokens + 1] = token end
+    local position = 1
+    local datum
+    datum = do()
+        local token = tokens[position]
+        position = position + 1
+        if token == nil then error("read: the text ends inside a list", 0) end
+        if token == ")" then error("read: a ) closes nothing", 0) end
+        if token ~= "(" then return tonumber token or token end
+        local items = {}
+        while tokens[position] ~= ")" do
+            if tokens[position] == nil then error("read: a ( is never closed", 0) end
+            items[#items + 1] = datum()
+        end
+        position = position + 1
+        return items
+    end
+    local forms = {}
+    while tokens[position] ~= nil do forms[#forms + 1] = datum() end
+    return forms
+end
+
+------------------------------------------------------------------------------------------------
+-- The source language: a family of expression kinds.
+
+local Expr = family "expression of the source language"
+local Num = struct { value: Number }
+local Var = struct { name: String }
+local Prim = struct { op: String, args: Table }
+local If = struct { test: Expr, yes: Expr, no: Expr }
+local Let = struct { name: String, value: Expr, body: Expr }
+local Lambda = struct { params: Table, body: Expr }
+local Apply = struct { fn: Expr, args: Table }
+Expr { Num, Var, Prim, If, Let, Lambda, Apply }
+
+local operators = {
+    ["+"] = |a, b| -> a + b,
+    ["-"] = |a, b| -> a - b,
+    ["*"] = |a, b| -> a * b,
+    ["<"] = |a, b| -> a < b,
+    ["="] = |a, b| -> a == b,
+}
+
+-- Parsing: data to the family. A `let` binding sees itself, so a function can recur.
+local parse
+parse = do(d)
+    if type d == "number" then return Num { value = d } end
+    if type d == "string" then return Var { name = d } end
+    local head = d[1]
+    if head == "if" then
+        if #d ~= 4 then error("parse: (if test yes no) takes three parts", 0) end
+        return If { test = parse d[2], yes = parse d[3], no = parse d[4] }
+    end
+    if head == "let" then
+        local body = parse d[3]
+        for i = #d[2], 1, -1 do
+            body = Let { name = d[2][i][1], value = parse d[2][i][2], .body }
+        end
+        return body
+    end
+    if head == "lambda" then return Lambda { params = d[2], body = parse d[3] } end
+    local args = {}
+    for i = 2, #d do args[#args + 1] = parse d[i] end
+    if operators[head] then return Prim { op = head, .args } end
+    return Apply { fn = parse d[1], .args }
+end
+
+-- A program is some (define name value) forms and then the expression they are for.
+local parse_program = do(forms)
+    local body = parse forms[#forms]
+    for i = #forms - 1, 1, -1 do
+        if forms[i][1] ~= "define" then error("parse: only the last form may be an expression", 0) end
+        body = Let { name = forms[i][2], value = parse forms[i][3], .body }
+    end
+    return body
+end
+
+------------------------------------------------------------------------------------------------
+-- Checking: a pass that carries the names in scope, and says what is wrong.
+
+local Check = define
+    Num = do(n, go, scope)
+        return
+    end
+    Var = do(n, go, scope)
+        if not scope[n.name] then error("check: " .. n.name .. " is not defined here", 0) end
+    end
+    Prim = do(n, go, scope)
+        if #n.args ~= 2 then error(("check: (%s) takes two arguments, got %d"):format(n.op, #n.args),
+                0) end
+        for _, arg in ipairs n.args do go(arg, scope) end
+    end
+    If = do(n, go, scope)
+        go(n.test, scope)
+        go(n.yes, scope)
+        go(n.no, scope)
+    end
+    Let = do(n, go, scope)
+        local inner = { ..scope }
+        inner[n.name] = true
+        go(n.value, inner)
+        go(n.body, inner)
+    end
+    Lambda = do(n, go, scope)
+        local inner = { ..scope }
+        for _, name in ipairs n.params do inner[name] = true end
+        go(n.body, inner)
+    end
+    Apply = do(n, go, scope)
+        go(n.fn, scope)
+        for _, arg in ipairs n.args do go(arg, scope) end
+    end
+end
+local check = Expr.pass "check names and arity" with ..Check end
+
+-- The same family, run directly: the reference the compiled code is compared with.
+local Interpret = define
+    Num = do(n, go, env)
+        return n.value
+    end
+    Var = do(n, go, env)
+        return env[n.name]
+    end
+    Prim = do(n, go, env)
+        return operators[n.op](go(n.args[1], env), go(n.args[2], env))
+    end
+    If = do(n, go, env)
+        if go(n.test, env) then return go(n.yes, env) end
+        return go(n.no, env)
+    end
+    Let = do(n, go, env)
+        local inner = { ..env }
+        inner[n.name] = go(n.value, inner)
+        return go(n.body, inner)
+    end
+    Lambda = do(n, go, env)
+        return do(..values)
+            local inner = { ..env }
+            for i, name in ipairs n.params do inner[name] = values[i] end
+            return go(n.body, inner)
+        end
+    end
+    Apply = do(n, go, env)
+        local values = {}
+        for i, arg in ipairs n.args do values[i] = go(arg, env) end
+        return go(n.fn, env)(unpack values)
+    end
+end
+local interpret = Expr.pass "interpret the source directly" with ..Interpret end
+
+------------------------------------------------------------------------------------------------
+-- The intermediate form: registers and jumps, one list of instructions per function.
+
+local Instr = family "instruction of the intermediate form"
+local Const = struct { dst: String, value: Any }
+local Copy = struct { dst: String, src: String }
+local Op = struct { dst: String, op: String, left: String, right: String }
+local Call = struct { dst: String, fn: String, args: Table }
+local Label = struct { name: String }
+local Jump = struct { target: String }
+local JumpUnless = struct { test: String, target: String }
+local Return = struct { src: String }
+local Closure = struct { dst: String, params: Table, code: Table }
+Instr { Const, Copy, Op, Call, Label, Jump, JumpUnless, Return, Closure }
+
+local emit = do(ctx, instr)
+    ctx.code[#ctx.code + 1] = instr
+end
+
+-- Lowering: a pass from one family to the other. The context holds the code being written, the
+-- registers the names stand for, and the supply of fresh names.
+local Lower = define
+    Num = do(n, go, ctx)
+        local dst = ctx.fresh "t"
+        emit(ctx, Const { .dst, value = n.value })
+        return dst
+    end
+    Var = do(n, go, ctx)
+        return ctx.env[n.name]
+    end
+    Prim = do(n, go, ctx)
+        local left, right = go(n.args[1], ctx), go(n.args[2], ctx)
+        local dst = ctx.fresh "t"
+        emit(ctx, Op { .dst, op = n.op, .left, .right })
+        return dst
+    end
+    If = do(n, go, ctx)
+        local test = go(n.test, ctx)
+        local otherwise, done, dst = ctx.fresh "else", ctx.fresh "end", ctx.fresh "t"
+        emit(ctx, JumpUnless { .test, target = otherwise })
+        emit(ctx, Copy { .dst, src = go(n.yes, ctx) })
+        emit(ctx, Jump { target = done })
+        emit(ctx, Label { name = otherwise })
+        emit(ctx, Copy { .dst, src = go(n.no, ctx) })
+        emit(ctx, Label { name = done })
+        return dst
+    end
+    Let = do(n, go, ctx)
+        local register = ctx.fresh "v"
+        local inner = { ..ctx }
+        inner.env = { ..ctx.env }
+        inner.env[n.name] = register
+        emit(ctx, Copy { dst = register, src = go(n.value, inner) })
+        return go(n.body, inner)
+    end
+    Lambda = do(n, go, ctx)
+        local inner = { ..ctx }
+        inner.code = {}
+        inner.env = { ..ctx.env }
+        local params = {}
+        for i, name in ipairs n.params do
+            params[i] = ctx.fresh "p"
+            inner.env[name] = params[i]
+        end
+        emit(inner, Return { src = go(n.body, inner) })
+        local dst = ctx.fresh "f"
+        emit(ctx, Closure { .dst, .params, code = inner.code })
+        return dst
+    end
+    Apply = do(n, go, ctx)
+        local fn = go(n.fn, ctx)
+        local args = {}
+        for i, arg in ipairs n.args do args[i] = go(arg, ctx) end
+        local dst = ctx.fresh "t"
+        emit(ctx, Call { .dst, .fn, .args })
+        return dst
+    end
+end
+local lower = Expr.pass "lower the source to instructions" with ..Lower end
+
+local fresh_names = do()
+    local count = 0
+    return do(prefix)
+        count = count + 1
+        return prefix .. count
+    end
+end
+
+-- Optimizing. A rewrite pass answers each instruction with the instructions that replace it, so
+-- `Keep` (every instruction stands for itself) is the base the others extend by spread, and each
+-- names only the kinds it changes.
+local keep = n -> { n }
+local Keep = define
+    Const = keep
+    Copy = keep
+    Op = keep
+    Call = keep
+    Label = keep
+    Jump = keep
+    JumpUnless = keep
+    Return = keep
+    Closure = keep
+end
+
+local rewrite = do(pass, code, ctx)
+    local out = {}
+    ctx.out = out
+    for _, instr in ipairs code do
+        for _, result in ipairs(pass(instr, ctx)) do out[#out + 1] = result end
+    end
+    return out
+end
+local walk = do(pass, code, ctx)
+    for _, instr in ipairs code do pass(instr, ctx) end
+end
+
+-- Folding: what a register holds is known from its Const, along straight-line code. A join point
+-- (a label) forgets it, and a function starts knowing nothing.
+local Fold = define ..Keep
+    Const = do(n, go, ctx)
+        ctx.known[n.dst] = { n.value }
+        return { n }
+    end
+    Copy = do(n, go, ctx)
+        local known = ctx.known[n.src]
+        ctx.known[n.dst] = known
+        if known then return { Const { dst = n.dst, value = known[1] } } end
+        return { n }
+    end
+    Op = do(n, go, ctx)
+        local left, right = ctx.known[n.left], ctx.known[n.right]
+        ctx.known[n.dst] = nil
+        if left and right then
+            local value = operators[n.op](left[1], right[1])
+            ctx.known[n.dst] = { value }
+            return { Const { dst = n.dst, .value } }
+        end
+        return { n }
+    end
+    Call = do(n, go, ctx)
+        ctx.known[n.dst] = nil
+        return { n }
+    end
+    Label = do(n, go, ctx)
+        ctx.known = {}
+        return { n }
+    end
+    JumpUnless = do(n, go, ctx)
+        local test = ctx.known[n.test]
+        if test == nil then return { n } end
+        if test[1] then return {} end
+        return { Jump { target = n.target } }
+    end
+    Closure = do(n, go, ctx)
+        ctx.known[n.dst] = nil
+        return { Closure with
+            dst = n.dst
+            params = n.params
+            code = rewrite(go, n.code, { known = {} })
+        end }
+    end
+end
+local fold = Instr.pass "fold what is known" with ..Fold end
+
+-- Which labels are still jumped to.
+local ignore = do() end
+local Targets = define
+    Const = ignore
+    Copy = ignore
+    Op = ignore
+    Call = ignore
+    Label = ignore
+    Return = ignore
+    Jump = do(n, go, targets)
+        targets[n.target] = true
+    end
+    JumpUnless = do(n, go, targets)
+        targets[n.target] = true
+    end
+    Closure = do(n, go, targets)
+        walk(go, n.code, targets)
+    end
+end
+local targets_of = Instr.pass "find the labels still jumped to" with ..Targets end
+
+-- Reaching: nothing runs between a jump and the next label that is jumped to, and a jump to the
+-- label right after it is no jump.
+local live = do(n, go, ctx)
+    if ctx.dead then return {} end
+    return { n }
+end
+local Reach = define
+    Const = live
+    Copy = live
+    Op = live
+    Call = live
+    JumpUnless = live
+    Jump = do(n, go, ctx)
+        if ctx.dead then return {} end
+        ctx.dead = true
+        return { n }
+    end
+    Return = do(n, go, ctx)
+        if ctx.dead then return {} end
+        ctx.dead = true
+        return { n }
+    end
+    Label = do(n, go, ctx)
+        if not ctx.targets[n.name] then return {} end
+        local last = ctx.out[#ctx.out]
+        if last and Instr.is(last, Jump) and last.target == n.name then ctx.out[#ctx.out] = nil end
+        ctx.dead = false
+        return { n }
+    end
+    Closure = do(n, go, ctx)
+        if ctx.dead then return {} end
+        return { Closure with
+            dst = n.dst
+            params = n.params
+            code = rewrite(go, n.code, { targets = ctx.targets })
+        end }
+    end
+end
+local reach = Instr.pass "drop what cannot run" with ..Reach end
+
+-- Reading: how often each register is read, then the removal of pure instructions nobody reads.
+local reading = do(register, ctx)
+    ctx.reads[register] = (ctx.reads[register] or 0) + 1
+end
+local Reads = define
+    Const = ignore
+    Label = ignore
+    Jump = ignore
+    Copy = do(n, go, ctx)
+        reading(n.src, ctx)
+    end
+    Op = do(n, go, ctx)
+        reading(n.left, ctx)
+        reading(n.right, ctx)
+    end
+    Call = do(n, go, ctx)
+        reading(n.fn, ctx)
+        for _, arg in ipairs n.args do reading(arg, ctx) end
+    end
+    JumpUnless = do(n, go, ctx)
+        reading(n.test, ctx)
+    end
+    Return = do(n, go, ctx)
+        reading(n.src, ctx)
+    end
+    Closure = do(n, go, ctx)
+        walk(go, n.code, ctx)
+    end
+end
+local reads_of = Instr.pass "count the reads of each register" with ..Reads end
+
+local unused = do(n, ctx)
+    return (ctx.reads[n.dst] or 0) == 0
+end
+local pure = do(n, go, ctx)
+    if unused(n, ctx) then return {} end
+    return { n }
+end
+local Sweep = define ..Keep
+    Const = pure
+    Copy = pure
+    Op = pure
+    Closure = do(n, go, ctx)
+        if unused(n, ctx) then return {} end
+        return { Closure { dst = n.dst, params = n.params, code = rewrite(go, n.code, ctx) } }
+    end
+end
+local sweep = Instr.pass "sweep the instructions nobody reads" with ..Sweep end
+
+local size
+size = do(code)
+    local total = 0
+    for _, instr in ipairs code do
+        total = total + 1
+        if Instr.is(instr, Closure) then total = total + size instr.code end
+    end
+    return total
+end
+
+local optimize = do(code)
+    for _ = 1, 6 do
+        local before = size code
+        code = rewrite(fold, code, { known = {} })
+        local targets = {}
+        walk(targets_of, code, targets)
+        code = rewrite(reach, code, { .targets })
+        local reads = {}
+        walk(reads_of, code, { .reads })
+        code = rewrite(sweep, code, { .reads })
+        if size code == before then break end
+    end
+    return code
+end
+
+------------------------------------------------------------------------------------------------
+-- Showing and emitting: passes that answer with text.
+
+local ShowIR = define
+    Const = do(n, go, indent)
+        return indent .. n.dst .. " = " .. tostring n.value
+    end
+    Copy = do(n, go, indent)
+        return indent .. n.dst .. " = " .. n.src
+    end
+    Op = do(n, go, indent)
+        return indent .. n.dst .. " = " .. n.left .. " " .. n.op .. " " .. n.right
+    end
+    Call = do(n, go, indent)
+        return indent .. n.dst .. " = " .. n.fn .. "(" .. table.concat(n.args, ", ") .. ")"
+    end
+    Label = do(n, go, indent)
+        return indent .. n.name .. ":"
+    end
+    Jump = do(n, go, indent)
+        return indent .. "jump " .. n.target
+    end
+    JumpUnless = do(n, go, indent)
+        return indent .. "jump " .. n.target .. " unless " .. n.test
+    end
+    Return = do(n, go, indent)
+        return indent .. "return " .. n.src
+    end
+    Closure = do(n, go, indent)
+        local lines = { indent .. n.dst .. " = function(" .. table.concat(n.params, ", ") .. ")" }
+        for _, instr in ipairs n.code do lines[#lines + 1] = go(instr, indent .. "    ") end
+        return table.concat(lines, "\n")
+    end
+end
+local show_instr = Instr.pass "write an instruction as text" with ..ShowIR end
+local show = do(code)
+    local lines = {}
+    for _, instr in ipairs code do lines[#lines + 1] = show_instr(instr, "  ") end
+    return table.concat(lines, "\n")
+end
+
+-- Emitting Lua: the registers a function writes are declared first, so a jump never enters the
+-- scope of a local.
+local body = do(go, code, indent)
+    local names, seen = {}, {}
+    for _, instr in ipairs code do
+        local dst = instr.dst
+        if dst and not seen[dst] then
+            seen[dst] = true
+            names[#names + 1] = dst
+        end
+    end
+    local lines = {}
+    if #names > 0 then lines[1] = indent .. "local " .. table.concat(names, ", ") end
+    for _, instr in ipairs code do lines[#lines + 1] = go(instr, indent) end
+    return table.concat(lines, "\n")
+end
+local EmitLua = define
+    Const = do(n, go, indent)
+        return indent .. n.dst .. " = " .. tostring n.value
+    end
+    Copy = do(n, go, indent)
+        return indent .. n.dst .. " = " .. n.src
+    end
+    Op = do(n, go, indent)
+        local op = n.op == "=" and "==" or n.op
+        return indent .. n.dst .. " = " .. n.left .. " " .. op .. " " .. n.right
+    end
+    Call = do(n, go, indent)
+        return indent .. n.dst .. " = " .. n.fn .. "(" .. table.concat(n.args, ", ") .. ")"
+    end
+    Label = do(n, go, indent)
+        return indent .. "::" .. n.name .. "::"
+    end
+    Jump = do(n, go, indent)
+        return indent .. "goto " .. n.target
+    end
+    JumpUnless = do(n, go, indent)
+        return indent .. "if not " .. n.test .. " then goto " .. n.target .. " end"
+    end
+    Return = do(n, go, indent)
+        return indent .. "return " .. n.src
+    end
+    Closure = do(n, go, indent)
+        return indent .. n.dst .. " = function(" .. table.concat(n.params, ", ") .. ")\n"
+        .. body(go, n.code, indent .. "  ") .. "\n" .. indent .. "end"
+    end
+end
+local emit_instr = Instr.pass "write an instruction as Lua" with ..EmitLua end
+local emit_lua = do(code)
+    return body(emit_instr, code, "")
+end
+
+------------------------------------------------------------------------------------------------
+-- The compiler: the stages in order. `compile` answers the source, the IR before and after
+-- optimizing, and the Lua it emits.
+
+local compile = do(text)
+    local ast = parse_program(read text)
+    check(ast, {})
+    local ctx = { code = {}, fresh = fresh_names(), env = {} }
+    emit(ctx, Return { src = lower(ast, ctx) })
+    local optimized = optimize ctx.code
+    return { .ast, ir = ctx.code, .optimized, lua = emit_lua optimized }
+end
+
+local run = do(text)
+    local compiled = compile text
+    local value = load(compiled.lua, "=compiled")()
+    return value, interpret(compiled.ast, {}), compiled
+end
+
+local programs = {
+    { "a constant condition folds away", "(if (< 1 2) (+ 10 (* 2 3)) 99)" },
+    { "a function and a call", "(define square (lambda (x) (* x x))) (square (+ 3 4))" },
+    { "recursion",
+        [[
+        (define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1))))))
+        (fact 10)]] },
+    { "a closure",
+        [[
+        (define adder (lambda (a) (lambda (b) (+ a b))))
+        ((adder 3) 4)]] },
+}
+for _, program in ipairs programs do
+    local compiled, interpreted, details = run program[2]
+    print(("%s: compiled %s, interpreted %s, %d -> %d instructions"):format(
+            program[1],
+            tostring compiled, tostring interpreted, size details.ir, size details.optimized))
+end
+
+local folds = compile programs[1][2]
+print "instructions before optimizing:"
+print(show folds.ir)
+print "after:"
+print(show folds.optimized)
+print "emitted Lua:"
+print(emit_lua folds.optimized)
+
+print "emitted Lua for recursion:"
+print compile(programs[3][2]).lua
+
+-- What the stages refuse.
+local function reason(f) return (select(2, pcall f):gsub("^[^:]*:%d+: ", "")) end
+print(reason(|| -> compile "(+ 1)"))
+print(reason(|| -> compile "(+ 1 nothing)"))
+print(reason(|| -> compile "(if 1 2)"))
+print(reason(|| -> compile "(+ 1 2"))
+local partial = { ..Keep }
+partial.Closure = nil
+print(reason(|| -> Instr.pass "a pass that forgets a kind" partial))
+
+--[=[ output
+a constant condition folds away: compiled 16, interpreted 16, 16 -> 2 instructions
+a function and a call: compiled 49, interpreted 49, 9 -> 7 instructions
+recursion: compiled 3628800, interpreted 3628800, 19 -> 18 instructions
+a closure: compiled 7, interpreted 7, 11 -> 11 instructions
+instructions before optimizing:
+  t1 = 1
+  t2 = 2
+  t3 = t1 < t2
+  jump else4 unless t3
+  t7 = 10
+  t8 = 2
+  t9 = 3
+  t10 = t8 * t9
+  t11 = t7 + t10
+  t6 = t11
+  jump end5
+  else4:
+  t12 = 99
+  t6 = t12
+  end5:
+  return t6
+after:
+  t6 = 16
+  return t6
+emitted Lua:
+local t6
+t6 = 16
+return t6
+emitted Lua for recursion:
+local f13, v1, t14, t15
+f13 = function(p2)
+  local t3, t4, t7, t9, t10, t11, t12
+  t3 = 2
+  t4 = p2 < t3
+  if not t4 then goto else5 end
+  t7 = 1
+  goto end6
+  ::else5::
+  t9 = 1
+  t10 = p2 - t9
+  t11 = v1(t10)
+  t12 = p2 * t11
+  t7 = t12
+  ::end6::
+  return t7
+end
+v1 = f13
+t14 = 10
+t15 = v1(t14)
+return t15
+check: (+) takes two arguments, got 1
+check: nothing is not defined here
+parse: (if test yes no) takes three parts
+read: a ( is never closed
+pass 'a pass that forgets a kind': no handler for the kind 'Closure' of the family 'instruction of the intermediate form'
+]=]

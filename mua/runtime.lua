@@ -323,7 +323,8 @@ end
 -- `local Expr = family "Expr"` is a checker named Expr that is open until it is sealed with its
 -- kinds, `Expr { Num, Add }`, so the structs' own fields can be typed `Expr`. A pass,
 -- `Expr.pass "eval" with … end`, is a function over the family's values: a handler per kind,
--- keyed by the struct's name, called as handler(node, pass). It is checked against the kinds when
+-- keyed by the struct's name, called as handler(node, pass, ...): the arguments the pass was called
+-- with follow, so a pass can carry a scope or a state down the tree. It is checked against the kinds when
 -- it is made, and a value that is no member is named when the pass meets it.
 function R.family(name)
     if type(name) ~= 'string' then error('family takes a name: family "Expr"', 2) end
@@ -385,12 +386,12 @@ function R.family(name)
                 end
             end
             local run
-            run = function(node)
+            run = function(node, ...)
                 local handler = by_meta[getmetatable(node)]
                 if not handler then
                     error(("pass '%s': %s is not a member of the family '%s'"):format(pass_name, describe_value(node), name), 2)
                 end
-                return handler(node, run)
+                return handler(node, run, ...)
             end
             return run
         end

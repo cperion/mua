@@ -412,6 +412,20 @@ end
 return p(Add { left = Num { value = 1 }, right = Num { value = 2 } })]], 14)
 errors('a family and a pass take prose as their description', 'local Expr = family "expression of the toy language"\nlocal Num = struct { value: Number }\nExpr { Num }\nExpr.pass "evaluate an expression to a number" with Num = do(n) = 1, Nul = do(n) = 2 end',
     "pass 'evaluate an expression to a number': 'Nul' is not a kind in the family 'expression of the toy language'")
+runs('a pass carries extra arguments down', FAMILY .. [[
+local Depth = define
+    Num =: n go depth
+        return depth
+    end
+    Add =: n go depth
+        return math.max(go(n.left, depth + 1), go(n.right, depth + 1))
+    end
+    Neg =: n go depth
+        return go(n.operand, depth + 1)
+    end
+end
+local depth = Expr.pass "how deep" with ..Depth end
+return depth(Add { left = Num { value = 1 }, right = Neg { operand = Num { value = 2 } } }, 0)]], 2)
 -- checker names a predicate
 errors('a named checker names what it expected', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nf(3)', 'expects Even')
 runs('a named checker accepts', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nreturn f(4)', 4)
