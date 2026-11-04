@@ -1,0 +1,120 @@
+-- A bounded edit: activities that own completion, a body that returns an outcome, and an engine
+-- over commands as data. The worked example of the design guide.
+--   luajit mua.lua examples/editor.mua
+
+-- The document persists; a draft is the private working copy of one edit.
+local new_document = do() = { length = 0, cursor = 0, edits = 0 }
+
+local new_draft =: document
+    local draft = { length = document.length, cursor = document.cursor, edits = document.edits }
+    -- the verbs of tentative editing live on the context, not on the document
+    draft.insert =: n
+        draft.length = draft.length + n
+        draft.cursor = draft.cursor + n
+        draft.edits = draft.edits + 1
+    end
+    draft.move_left = do()
+        if draft.cursor > 0 then draft.cursor = draft.cursor - 1 end
+    end
+    return draft
+end
+
+local commit =: document draft
+    document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
+end
+
+-- `edit` always commits when the body returns normally. The block speaks instructions: calls
+-- without a receiver, resolved by the draft it is given.
+local edit =: document
+    return do(body)
+        local draft = new_draft document
+        body draft
+        commit(document, draft)
+    end
+end
+
+-- `try_edit` commits only if the body accepts. The body decides by returning an outcome; the
+-- activity matches on it, and owns what each outcome means for the document.
+local Outcome = oneof { commit: Unit, abort: Number }
+
+local try_edit =: document
+    return do(body)
+        local draft = new_draft document
+        local accepted = body(draft) {
+            commit() = true,
+            abort(reason) = false,
+        }
+        if accepted then commit(document, draft) end
+        return accepted
+    end
+end
+
+local show =: label document
+    print(label,
+        "length=" .. document.length, "cursor=" .. document.cursor, "edits=" .. document.edits)
+end
+
+local document = new_document()
+edit document:
+    insert 5
+    move_left
+end
+show("edit", document)
+
+-- Accepted: the draft is copied back. Rejected: the document is untouched.
+local type_capped =: document n cap
+    return try_edit document:
+        insert n
+        if length > cap then return Outcome.abort(length) end
+        return Outcome.commit()
+    end
+end
+print(type_capped(document, 4, 10))
+show("accepted", document)
+print(type_capped(document, 9, 10))
+show("rejected", document)
+
+-- Policies are activities too, and they stack. The order of the spine is the order of completion:
+-- the edit commits first, then the clamp applies, then the count is recorded.
+local clamp_length =: document max
+    return do(body)
+        body
+        if document.length > max then
+            document.length = max
+            document.cursor = math.min(document.cursor, max)
+        end
+    end
+end
+local count_into =: stats
+    return do(body)
+        body
+        stats.count = stats.count + 1
+    end
+end
+
+local stats = { count = 0 }
+count_into stats do
+clamp_length(document, 10) do
+edit document:
+    insert 250
+endall
+show("stacked", document)
+print("counted", stats.count)
+
+-- Commands as data: one engine, and any front end that produces commands can feed it.
+local Command = oneof { insert: Number, left: Unit, undo: Unit }
+local apply = do(document, command: Command): Unit
+    edit document:
+        command {
+            insert(n) = insert n,
+            left() = move_left(),
+            undo() = nil,
+        }
+    end
+end
+
+local replayed = new_document()
+for _, command in ipairs { Command.insert 5, Command.left(), Command.insert 1, Command.undo() } do
+    apply(replayed, command)
+end
+show("replayed", replayed)

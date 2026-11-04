@@ -78,11 +78,12 @@ function M.loadfile(path, opts)
     return M.load(source, '@' .. path, opts)
 end
 
--- a searcher for package.loaders: Mua modules on `path` (default package.path)
+-- a searcher for package.loaders: Mua modules (`.mua` files) on `path` (default: package.path
+-- with `.lua` templates read as `.mua`)
 function M.searcher(opts)
     opts = opts or {}
     return function(name)
-        local file, err = package.searchpath(name, opts.path or package.path)
+        local file, err = package.searchpath(name, opts.path or (package.path:gsub('%.lua', '.mua')))
         if not file then return err end
         local chunk, lerr = M.loadfile(file, opts)
         if not chunk then error(lerr, 0) end

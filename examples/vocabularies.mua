@@ -1,0 +1,72 @@
+-- Vocabularies: names bound with no layout, composed by spread, opened by a block.
+--   luajit mua.lua examples/vocabularies.mua
+
+-- `define` entries `end` is `def with ... end`: a table of names.
+local Moves = define
+    left = do(document)
+        if document.cursor > 0 then document.cursor = document.cursor - 1 end
+    end
+    right = do(document)
+        if document.cursor < document.length then document.cursor = document.cursor + 1 end
+    end
+end
+
+local Edits = define
+    insert = do(document) = do(n)
+        document.length = document.length + n
+        document.cursor = document.cursor + n
+    end
+end
+
+-- Capabilities compose by spread. Two that offer the same name are rejected, not shadowed.
+local Editing = define
+    ..Moves
+    ..Edits
+end
+-- (error messages carry the file and line; `reason` keeps just the reason)
+local reason = message -> (tostring(message):gsub("^[^:]+:%d+: ", ""))
+print(reason(select(2, pcall do()
+                return define
+                    ..Edits
+                    ..Edits
+                end
+            end)))
+
+-- An instance is the type spread with overrides; explicit entries win wherever they are written.
+local Margins = define
+    left = 4
+    right = 4
+end
+local wide = define ..Margins
+    right = 12
+end
+print(wide.left, wide.right)
+
+-- A function takes a vocabulary and calls its members...
+local type_and_step_back = do(ops, document, n)
+    ops.insert document n
+    ops.left document
+end
+
+-- ...or opens it: the vocabulary's names are in scope in the block.
+local type_twice = do(document, n)
+    local Editing..
+    insert document n
+    insert document n
+end
+
+local document = { length = 0, cursor = 0 }
+type_and_step_back(Editing, document, 5)
+type_twice(document, 1)
+print(document.length, document.cursor)
+
+-- A closed structural type lists the fields a record may have; `required` must be supplied.
+local Node = closed define
+    op = "store"
+    place = required
+    what = optional
+end
+local n = { ..Node, place = 7 }
+print(n.op, n.place, n.what)
+print(reason(select(2, pcall(do() = { ..Node }))))
+print(reason(select(2, pcall(do() = { ..Node, place = 1, plcae = 2 }))))

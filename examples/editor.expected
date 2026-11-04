@@ -1,0 +1,8 @@
+edit	length=5	cursor=4	edits=1
+true
+accepted	length=9	cursor=8	edits=2
+false
+rejected	length=9	cursor=8	edits=2
+stacked	length=10	cursor=10	edits=3
+counted	1
+replayed	length=6	cursor=5	edits=2

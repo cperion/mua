@@ -549,7 +549,7 @@ function P:expr(hint, in_type)
     if not in_type and r:is('?') then
         local q = r:next()
         local a = self:with_flags({ in_ternary = true }, function() return self:subexpr(0) end)
-        r:expect(':', "between the conditional's alternatives")
+        self:ternary(q, r:expect(':', "between the conditional's alternatives"))
         local b = self:expr(hint)
         e = { k = 'cond', c = e, a = a, b = b, line = q.line }
     end
@@ -558,6 +558,10 @@ end
 
 -- a binary operator was read (a hook for tools that watch the parse: the formatter)
 function P:binop(tk, op) end
+-- the `?` and `:` of a conditional were read (a hook, like binop)
+function P:ternary(question, colon) end
+-- the `|` that open and close a short function's parameters were read (a hook, like binop)
+function P:pipes(open, close) end
 
 function P:subexpr(limit, hint, in_type)
     local r = self.r
@@ -667,7 +671,7 @@ function P:short_function(hint)
                 params[#params + 1] = { name = n.v, line = n.line }
             until not r:accept(',')
         end
-        r:expect('|', "to close the short function's parameters")
+        self:pipes(tk, r:expect('|', "to close the short function's parameters"))
     elseif tk.t == 'name' then
         params[1] = { name = tk.v, line = tk.line }
     end

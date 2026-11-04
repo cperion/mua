@@ -379,7 +379,7 @@ local function sh(cmd)
     local p = assert(io.popen(cmd)); local out = p:read '*a'; p:close(); return out
 end
 local files = {}
-for f in sh('cd ' .. root .. ' && git ls-files "*.lua" 2>/dev/null'):gmatch '[^\n]+' do files[#files + 1] = f end
+for f in sh('cd ' .. root .. ' && git ls-files "*.lua" "*.mua" 2>/dev/null'):gmatch '[^\n]+' do files[#files + 1] = f end
 local sources, literals, parsed, compiled = 0, 0, 0, 0
 local emit = require 'mua.emit'
 for _, f in ipairs(files) do

@@ -14,7 +14,10 @@ local structs = setmetatable({}, { __mode = 'k' })      -- struct type -> { name
 local sums = setmetatable({}, { __mode = 'k' })         -- oneof type -> { name, alts, index, meta }
 local closed = setmetatable({}, { __mode = 'k' })       -- closed structural type -> { declared names }
 local instance_of = setmetatable({}, { __mode = 'k' })  -- instance metatable -> its struct or oneof
-local ctypes = setmetatable({}, { __mode = 'k' })        -- ffistruct ctype -> { name, tag }
+-- ffistruct ctypes by their printed form (`ctype<struct tag>`: a ctype object is not interned, so
+-- it cannot be a table key) -> { name, tag }
+local ctypes = {}
+local function ctype_info(ct) return ctypes[tostring(ct)] end
 local ffi_loaded
 local function ffi() ffi_loaded = ffi_loaded or require 'ffi'; return ffi_loaded end
 
@@ -27,7 +30,7 @@ local function describe_value(v)
     end
     if type(v) == 'cdata' then
         local ct = ffi().typeof(v)
-        return 'a ' .. (ctypes[ct] and ctypes[ct].name or tostring(ct))
+        return 'a ' .. (ctype_info(ct) and ctype_info(ct).name or tostring(ct))
     end
     if type(v) == 'string' then
         local s = #v > 20 and (v:sub(1, 17) .. '...') or v
@@ -44,7 +47,7 @@ function R.describe(T)
     if structs[T] then return structs[T].name end
     if sums[T] then return sums[T].name end
     if closed[T] then return 'a closed structural type' end
-    if type(T) == 'cdata' then return ctypes[T] and ctypes[T].name or tostring(T) end
+    if type(T) == 'cdata' then return ctype_info(T) and ctype_info(T).name or tostring(T) end
     if type(T) == 'function' then return 'a predicate' end
     return describe_value(T)
 end
@@ -296,7 +299,7 @@ function R.ffistruct(name, fields)
         local fname, T = f[1], f[2]
         local text
         if type(T) == 'string' then text = T
-        elseif type(T) == 'cdata' and ctypes[T] then text = 'struct ' .. ctypes[T].tag
+        elseif type(T) == 'cdata' and ctype_info(T) then text = 'struct ' .. ctype_info(T).tag
         else error(('ffistruct %s: the field \'%s\' needs a C type (a name, a string of C, or an ffistruct), got %s')
             :format(name, fname, describe_value(T)), 3) end
         local base, array = text:match('^(.-)%s*(%[[^%]]*%])$')
@@ -307,7 +310,7 @@ function R.ffistruct(name, fields)
     local tag = ('mua_%s_%d'):format(name:gsub('[^%w_]', '_'), ffi_tags)
     ffi().cdef(('struct %s { %s };'):format(tag, table.concat(decls, ' ')))
     local ct = ffi().typeof('struct ' .. tag)
-    ctypes[ct] = { name = name, tag = tag }
+    ctypes[tostring(ct)] = { name = name, tag = tag }
     return ct
 end
 

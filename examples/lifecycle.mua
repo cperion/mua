@@ -1,0 +1,49 @@
+-- A lifecycle as a oneof, one function per transition, and every case accounted for.
+--   luajit mua.lua examples/lifecycle.mua
+
+-- states: reading, rejected, closed          events: bytes, bad line, hang up
+local Conn = oneof { reading: Number, rejected: Number, closed: Unit }
+local Event = oneof { bytes: Number, bad_line: Unit, hang_up: Unit }
+
+-- A transition is a function from state and event to the next state. Both matches are checked
+-- for exhaustiveness, so a new state or event that is not handled here fails where it is matched.
+local step = do(c: Conn, e: Event): Conn = c {
+    reading(n) = e {
+        bytes(k) = Conn.reading(n + k),
+        bad_line() = Conn.rejected n,
+        hang_up() = Conn.closed(),
+    },
+    -- a rejected line is dropped by the next event, whatever it is
+    rejected(n) = Conn.reading 0,
+    closed() = Conn.closed(),
+}
+
+-- Describing a state for a person is another match over the same type.
+local describe = do(c: Conn): String = c {
+    reading(n) = "reading, " .. n .. " bytes buffered",
+    rejected(n) = "rejected after " .. n .. " bytes",
+    closed() = "closed",
+}
+
+-- Run a script of events and watch the lifecycle.
+local state = Conn.reading 0
+print(describe state)
+for _, event in ipairs {
+    Event.bytes 10, Event.bytes 5, Event.bad_line(), Event.bytes 1, Event.bytes 2, Event.hang_up(),
+    Event.bytes 3,
+} do
+    state = step(state, event)
+    print(describe state)
+end
+
+-- Test transitions, not just arithmetic: every state with every event.
+local events = { Event.bytes 1, Event.bad_line(), Event.hang_up() }
+local states = { Conn.reading 7, Conn.rejected 7, Conn.closed() }
+local count = 0
+for _, s in ipairs states do
+    for _, e in ipairs events do
+        describe(step(s, e))
+        count = count + 1
+    end
+end
+print(count .. " transitions are defined")

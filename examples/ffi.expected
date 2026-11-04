@@ -1,0 +1,6 @@
+1	4	40
+25
+contract: parameter 'p' of length_squared expects Point, got a table
+16	40
+diagonal	3
+contract: the field 'outline' of Shape expects Segment, got a Point

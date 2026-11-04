@@ -11,10 +11,15 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
 - `mua/init.lua`: `parse`, `translate`, `load`, `loadfile`, `searcher`; `load` can keep the
   translation as LuaJIT bytecode in a cache directory (`opts.cache`).
 - `mua.lua`, `mua/cli.lua`: the `mua` command: `luajit mua.lua [-e code] [-d] [--no-contracts]
-  [-l module] file.lua [args]` runs a file, runs an expression, or prints what a file translates
+  [-l module] file.mua [args]` runs a file, runs an expression, or prints what a file translates
   to; `MUA_CACHE=dir` turns the bytecode cache on.
 - `mua/fmt.lua`, `mua/fmt_text.lua`, `mua/fmt_cli.lua`: the formatter and `mua fmt`; a host (Nua is
   one) passes its parse forms, facts and extra passes (`docs/formatting.md`).
+- `examples/`: runnable programs, one idea each: `hello` (application, currying, short functions),
+  `blocks` (trailing blocks, activities, `endall`), `vocabularies` (`define`, spread, opening, closed
+  types), `contracts` (`struct`, `oneof`, matching), `router` (a builder and its engine),
+  `lifecycle` (a state machine as a `oneof`), `editor` (activities, outcomes and commands: the guide's
+  worked example), `ffi` (`ffistruct`). `tests/examples.lua` runs them against their `.expected` output.
 - `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
 
 Needs LuaJIT 2.1 with the 3.0 syntax backport (merged upstream 2026-07-20). `make test`

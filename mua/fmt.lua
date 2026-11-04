@@ -155,6 +155,9 @@ local function parse(source, filename)
     end
     -- The same token opens/expands in prefix or suffix position and concatenates
     -- in infix position. Use the parser's decision, not whitespace, to format it.
+    -- a conditional's `?` and `:`, and a short function's `|` pairs, are spaced by the parse's decision
+    function p:ternary(question, colon) ts[question.index].ternary = true; ts[colon.index].ternary = true end
+    function p:pipes(open, close) ts[open.index].pipe = 'open'; ts[close.index].pipe = 'close' end
     local binop = p.binop
     function p:binop(tk, op)
         binop(self, tk, op)
@@ -875,6 +878,12 @@ local function gap(prev, tk, colon, unary, spaced)
     local a, b = prev.v, tk.v
     if tk.t == 'comment' then return '  ' end
     if prev.t == 'comment' then return ' ' end
+    -- `?.` (safe navigation) is a member access: no space around it
+    if a == '?.' or b == '?.' then return '' end
+    -- the conditional `c ? a : b`, and `->` of a short function, are spaced operators
+    if tk.ternary or prev.ternary or a == '->' or b == '->' then return ' ' end
+    -- a short function's parameters: `|a, b|` touches its names
+    if tk.pipe == 'close' or prev.pipe == 'open' then return '' end
     -- `.name` shorthand entries: a dot never follows these in other code
     if b == '.' and (a == '{' or a == ',' or a == ';') then return ' ' end
     if b == ',' or b == ';' or b == ')' or b == ']' or b == '.' or b == ':' or a == '.' then return '' end

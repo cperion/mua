@@ -297,6 +297,15 @@ end
 check('reject invalid syntax', not pcall(fmt.format, 'local =', nil, 'broken.nua'))
 
 
+-- LuaJIT 3.0 syntax: the conditional, safe navigation, short functions
+formatted('a conditional is spaced', 'local x=a?b:c\n', 'local x = a ? b : c\n')
+formatted('safe navigation touches', 'local x=a?.b?.c ?? d\n', 'local x = a?.b?.c ?? d\n')
+formatted('short functions', 'local f=|a,b|->a+b\nlocal g=x->x*2\n', 'local f = |a, b| -> a + b\nlocal g = x -> x * 2\n')
+formatted('a short function with a block', 'local f=|x|->do\n    return x\nend\n', 'local f = |x| -> do\n    return x\nend\n')
+
+formatted('a block with no parameters keeps its do', 'local f = do()\n    return 1\nend\nedit document do(..)\n    go\nend\n',
+    'local f = do()\n    return 1\nend\nedit document:\n    go\nend\n')
+
 -- def and define: `define` entries `end` is `def with … end`
 formatted('define is a block and stays one', 'local d = define\n    length = 0\n    cursor = 0\nend\n',
     'local d = define\n    length = 0\n    cursor = 0\nend\n')
@@ -329,8 +338,8 @@ check('an invalid spread_style is rejected', not pcall(fmt.format, 'local x=1', 
 -- CLI: output, explicit write, CI status, discovery, and failed preflight.
 local build = root .. '/build/formatter-tests'
 assert(os.execute('mkdir -p ' .. q(build .. '/nested')) == 0)
-local source_path = build .. '/nested/input.lua'
-local bad_path = build .. '/nested/bad.lua'
+local source_path = build .. '/nested/input.mua'
+local bad_path = build .. '/nested/bad.mua'
 local cfg = build .. '/.muafmt.lua'
 local bad_cfg = build .. '/bad-config.lua'
 write(source_path, 'local r=Ref(h)')

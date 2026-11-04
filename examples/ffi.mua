@@ -1,0 +1,34 @@
+-- C structs for LuaJIT's FFI: `ffistruct` declares one, a ctype is a checker, and vocabularies
+-- compose them like any other value.
+--   luajit mua.lua examples/ffi.mua
+local ffi = require "ffi"
+
+local reason = message -> (tostring(message):gsub("^[^:]+:%d+: ", ""))
+
+-- A field's type is C: a name nothing binds is read as C's, a string is C text.
+local Point = ffistruct { x: double, y: double }
+
+-- Nesting uses the ctype itself; an array field is a string of C.
+local Segment = ffistruct { a: Point, b: Point, tag: "uint8_t[4]" }
+
+-- Values are built the usual FFI way: with a table, or positionally.
+local segment = Segment { a = Point { x = 1, y = 2 }, b = Point(3, 4) }
+print(segment.a.x, segment.b.y, ffi.sizeof segment)
+
+-- A ctype is a checker, so it works as a contract on a function.
+local length_squared = do(p: Point): Number = p.x * p.x + p.y * p.y
+print(length_squared(Point(3, 4)))
+print(reason(select(2, pcall(length_squared, { x = 3, y = 4 }))))
+
+-- A vocabulary holds the types of a domain.
+local Geometry = define
+    .Point
+    .Segment
+end
+print(ffi.sizeof Geometry.Point, ffi.sizeof Geometry.Segment)
+
+-- A struct field can name a ctype, so FFI values fit in Mua's own records.
+local Shape = struct { outline: Segment, label: String }
+local shape = Shape { outline = segment, label = "diagonal" }
+print(shape.label, shape.outline.b.x)
+print(reason(select(2, pcall(Shape, { outline = Point(1, 2), label = "wrong" }))))

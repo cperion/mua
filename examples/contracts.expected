@@ -1,0 +1,12 @@
+12
+contract: parameter 'width' of area expects Number, got a string "3"
+0	0
+contract: the field 'y' of Point expects Number, got nil
+Point has no field 'z'
+25
+100
+contract: parameter 'p' of length_squared expects Point, got a table
+12	10	0
+matching a Shape: the alternative 'rect' has no handler
+Shape has no alternative 'line' to handle
+contract: the payload of Shape.circle expects Number, got a string "wide"

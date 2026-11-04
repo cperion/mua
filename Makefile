@@ -7,6 +7,7 @@ test:
 	$(LUA) tests/cli.lua
 	$(LUA) tests/fmt.lua
 	$(LUA) tests/fmt_do.lua
+	$(LUA) tests/examples.lua
 
 # Editor support (Neovim Tree-sitter): the grammar is Mua's; hosts such as Nua add queries over it
 TREE_SITTER ?= tree-sitter

@@ -1,6 +1,6 @@
 # Mua: the surface language
 
-Mua is sugared Lua: every Mua program is read by Mua's lexer and parser and written back as
+Mua is sugared Lua: every Mua program (a `.mua` file) is read by Mua's lexer and parser and written back as
 plain Lua that LuaJIT runs. It knows nothing about any host that gives its forms more meaning
 (Nua is one). This document owns Mua's surface syntax and runtime semantics; a host's own
 documents say what a host adds.

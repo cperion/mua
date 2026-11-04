@@ -1,0 +1,69 @@
+-- A small language: a builder collects sentences into a description, an engine runs it.
+--   luajit mua.lua examples/router.mua
+
+local reason = message -> (tostring(message):gsub("^[^:]+:%d+: ", ""))
+
+-- The vocabulary of known values the sentences are built from.
+local Methods = def { get = 1, post = 2 }
+
+-- The builder: one verb per method. It checks each sentence and reports at the line that spoke
+-- it (error level 3: the verb, the block's call, the line in the block).
+local router =: Verbs
+    return do(body)
+        local routes, seen, Routing = {}, {}, {}
+        for name, code in pairs Verbs do
+            Routing[name] =: path
+                if type path ~= "string" or path:sub(1, 1) ~= "/" then
+                    error(name .. ": a path starts with '/', got " .. tostring path, 3)
+                end
+                if seen[name .. path] then error(name .. " " .. path .. " is declared twice", 3) end
+                seen[name .. path] = true
+                return do(handler) routes[#routes + 1] = { method = code, .path, .handler } end
+            end
+        end
+        body Routing
+        return routes
+    end
+end
+local routes = router Methods
+
+-- The sentences. Each handler opens the request it is given, so it speaks the request's fields.
+local site = routes:
+    get "/":
+        return 200
+    end
+    post "/notes":
+        return 200 + #path
+    end
+end
+
+-- The description is data: look at it, test it, hand it to an engine.
+print(#site, site[1].path, site[2].path)
+
+-- The engine walks the description.
+local dispatch =: table request
+    for _, route in ipairs table do
+        if request.method == route.method and request.path == route.path then
+            return route.handler request
+        end
+    end
+    return 404
+end
+print(dispatch(site, { method = Methods.get, path = "/" }))
+print(dispatch(site, { method = Methods.post, path = "/notes" }))
+print(dispatch(site, { method = Methods.get, path = "/missing" }))
+
+-- A bad sentence is rejected where it is written.
+local bad_sentence =:
+    get "notes" (do() = 1)
+end
+print(reason(select(2, pcall(routes, bad_sentence))))
+
+-- A dialect is the same builder over an extended vocabulary.
+local Dav = def { ..Methods, propfind = 7 }
+local share = router Dav:
+    propfind "/":
+        return 207
+    end
+end
+print(share[1].method, dispatch(share, { method = 7, path = "/" }))

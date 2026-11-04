@@ -1,0 +1,50 @@
+-- Blocks as arguments: the trailing colon, activities that own their completion, `endall`.
+--   luajit mua.lua examples/blocks.mua
+
+-- A function that takes a block is an activity: it sets up, runs the block, and completes.
+local with_log =: title
+    return do(body)
+        print("begin " .. title)
+        body
+        print("end " .. title)
+    end
+end
+
+-- The trailing colon opens a block; no parentheses, no `do(...)`.
+with_log "import":
+    print("  reading")
+    print("  writing")
+end
+
+-- Names after the colon are the block's parameters.
+local each =: items
+    return do(body)
+        for i, item in ipairs items do body(i, item) end
+    end
+end
+
+each { "a", "b", "c" }: index item
+    print(index, item)
+end
+
+-- Activities stack, and `endall` closes the whole spine at once.
+local timed =: label
+    return do(body)
+        print("start " .. label)
+        body
+        print("stop " .. label)
+    end
+end
+
+with_log "outer" do
+timed "inner" do
+    print("  the work")
+endall
+
+-- `=:` assigns a block, here as a handler in a table.
+local handlers = {
+    greet =: name
+        print("hello, " .. name)
+    end,
+}
+handlers.greet "blocks"

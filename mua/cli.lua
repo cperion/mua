@@ -1,8 +1,8 @@
 -- mua.cli: the `mua` command. Run a Mua file, dump what it translates to, or run an expression.
 --
---   mua [options] file.lua [args]      run a file (a Mua program), passing it `args`
+--   mua [options] file.mua [args]      run a file (a Mua program), passing it `args`
 --   mua -e 'code'                      run a chunk of Mua
---   mua -d file.lua                    print the Lua a file translates to
+--   mua -d file.mua                    print the Lua a file translates to
 --   mua --no-contracts ...             translate without the contract checks
 --   mua -l module ...                  require a module first
 --   mua fmt [--check | --write] files  format Mua source (see mua/fmt_cli.lua)
@@ -16,7 +16,7 @@ local mua = require 'mua.init'
 local M = {}
 
 local USAGE = [[
-usage: mua [options] file.lua [args]
+usage: mua [options] file.mua [args]
   -e code          run a chunk of Mua
   -d               print the translation of the file instead of running it
   -l module        require a module before running

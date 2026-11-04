@@ -10,11 +10,11 @@ imports. It removes unused names from opened `do` parameters (see `opening_style
 Run from the repository root with LuaJIT 2.1 (with the 3.0 syntax backport):
 
 ```sh
-luajit mua.lua fmt program.lua                  # formatted source on stdout
+luajit mua.lua fmt program.mua                  # formatted source on stdout
 luajit mua.lua fmt -                            # stdin to stdout (also the default)
-luajit mua.lua fmt --check src/*.lua             # CI: report files needing formatting
-luajit mua.lua fmt --write program.lua lib/*.lua # explicitly update these files
-luajit mua.lua fmt --config path/to/style.lua program.lua
+luajit mua.lua fmt --check src/*.mua             # CI: report files needing formatting
+luajit mua.lua fmt --write program.mua lib/*.mua # explicitly update these files
+luajit mua.lua fmt --config path/to/style.lua program.mua
 ```
 
 There is no implicit repository-wide rewrite. Stdout mode takes one input;
@@ -302,7 +302,7 @@ From Lua:
 
 ```lua
 local fmt = require 'mua.fmt'
-local formatted = fmt.format(source, { indent_width = 2 }, "program.lua")
+local formatted = fmt.format(source, { indent_width = 2 }, "program.mua")
 ```
 
 The library returns formatted text or raises an error. It does not search for configuration

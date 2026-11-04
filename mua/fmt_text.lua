@@ -339,6 +339,8 @@ local function untyped_head(tokens, i)
         end
         k = k + 1
     end
+    -- `do()` takes no parameters; the colon form with no names opens the home, which is `do(..)`
+    if #names == 0 then return nil end
     local e = k + 1
     while tokens[e] and tokens[e][1] == 'space' and not tokens[e][2]:find '\n' do e = e + 1 end
     if tokens[e] and tokens[e][1] == 'comment' then e = e + 1 end
