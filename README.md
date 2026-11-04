@@ -19,7 +19,7 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
   `blocks` (trailing blocks, activities, `endall`), `vocabularies` (`define`, spread, opening, closed
   types), `contracts` (`struct`, `oneof`, matching), `router` (a builder and its engine),
   `lifecycle` (a state machine as a `oneof`), `editor` (activities, outcomes and commands: the guide's
-  worked example), `ffi` (`ffistruct`). Each ends with a comment holding what it prints; `tests/examples.lua` runs them against it.
+  worked example), `ffi` (`ffistruct`), `variants` (`meta`: a metatable per tag, behaviors shared by spread). Each ends with a comment holding what it prints; `tests/examples.lua` runs them against it.
 - `docs/reading-mua.md`: a tour for newcomers: one function read slowly, its sugar undone step by
   step, and the colon explained. Start here if `=: title` looks strange.
 - `bench/micro.lua`: micro-benchmarks of the emitted code against hand-written Lua.

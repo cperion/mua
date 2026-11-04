@@ -1,0 +1,81 @@
+-- Variants: one metatable per tag, behaviors shared by spread. An instance is plain data and a tag;
+-- `index` is the fallback for names the instance does not have, so its methods are never copied.
+--   luajit mua.lua examples/variants.mua
+
+-- A behavior is a vocabulary. These are shared by spreading them into each variant's.
+local Describable = define
+    describe =: self
+        return self.tag .. " with area " .. self:area()
+    end
+end
+
+-- `variants` makes a constructor per tag. Each tag has one metatable (`meta`), built once from that
+-- tag's behavior, so a method is found by a table lookup and an instance holds only its fields.
+local variants =: behaviors
+    local constructors = {}
+    for tag, methods in pairs behaviors do
+        local install = meta { index = methods }
+        constructors[tag] =: fields
+            return install { ..fields, .tag }
+        end
+    end
+    return constructors
+end
+
+local shapes = variants with
+    circle = define ..Describable
+        area =: self
+            return 3 * self.r * self.r
+        end
+    end
+    square = define ..Describable
+        area =: self
+            return self.side * self.side
+        end
+    end
+end
+
+local circle, square = shapes.circle { r = 2 }, shapes.square { side = 3 }
+print(circle:describe())
+print(square:describe())
+
+-- The instance holds data only; the methods live on the tag's behavior.
+print(circle.r, circle.tag, rawget(circle, "area"))
+
+-- Instances of one tag share one metatable; different tags do not.
+print(getmetatable circle == getmetatable(shapes.circle { r = 1 }))
+print(getmetatable circle == getmetatable square)
+
+-- A name no behavior offers is nil, as for any Lua table.
+print circle.perimeter
+
+-- A behavior can be extended without touching the others: an explicit entry settles a name
+-- that two vocabularies offer.
+local Loud = define
+    describe =: self
+        return string.upper self.tag
+    end
+end
+local louder = variants with
+    circle = define
+        ..Describable
+        ..Loud
+        describe =: self
+            return "loud " .. string.upper self.tag
+        end
+        area =: self
+            return 0
+        end
+    end
+end
+print(louder.circle({}):describe())
+
+--[=[ output
+circle with area 12
+square with area 9
+2	circle	nil
+true
+false
+nil
+loud CIRCLE
+]=]
