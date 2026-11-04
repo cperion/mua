@@ -391,7 +391,9 @@ for _, f in ipairs(files) do
                 end
             end
             local pok, block = pcall(parse.parse, src, f)
-            if not pok then check('parses ' .. f, false, block)
+            if f:match('^tests/fixtures/syntax_error') then
+                check(f .. ' does not parse, by design', not pok)
+            elseif not pok then check('parses ' .. f, false, block)
             else
                 parsed = parsed + 1
                 local tok, text = pcall(emit.emit, block, { filename = f })
