@@ -202,7 +202,14 @@ local function checker(name, test)
     checkers[c] = { name = name, test = test }
     return c
 end
-R.checker = checker
+-- `checker(name, test)`: a predicate with a name, so a contract that fails says what it expected
+-- (`expects Node`) instead of `a predicate`
+function R.checker(name, test)
+    if type(name) ~= 'string' or type(test) ~= 'function' then
+        error('checker takes a name and a predicate: checker("Node", value -> …)', 2)
+    end
+    return checker(name, test)
+end
 R.Number = checker('Number', function(v) return type(v) == 'number' end)
 R.String = checker('String', function(v) return type(v) == 'string' end)
 R.Boolean = checker('Boolean', function(v) return type(v) == 'boolean' end)
@@ -401,7 +408,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'checker', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R

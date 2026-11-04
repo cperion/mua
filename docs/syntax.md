@@ -230,7 +230,8 @@ follows the same rule. Reads and writes allocate nothing and call nothing per ac
 
 Without a host, annotations are contracts, checked when a function is called, when it returns,
 and when a typed local is assigned. A checker is a built-in (`Number String Boolean Table
-Function Any Unit Optional(T)`), a predicate function, a closed structural type, a `struct`
+Function Any Unit Optional(T)`), a predicate function (`checker("Node", test)` gives one a name, so a
+failure says `expects Node`), a closed structural type, a `struct`
 or a `oneof`. A failure names what was expected and what was found at the caller's line:
 
 ```lua

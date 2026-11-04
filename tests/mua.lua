@@ -363,6 +363,10 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
+-- checker names a predicate
+errors('a named checker names what it expected', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nf(3)', 'expects Even')
+runs('a named checker accepts', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nreturn f(4)', 4)
+errors('checker takes a name and a predicate', 'local c = checker(1, 2)', 'takes a name and a predicate')
 -- meta installs a vocabulary as a metatable
 runs('meta installs methods and metamethods', [[
 local Counter = meta with

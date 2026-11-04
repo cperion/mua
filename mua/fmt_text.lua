@@ -788,7 +788,9 @@ function M.withize(source, unit, spread_beside)
         -- indentation is shifted only where every line is one the layout wrote: a block that had
         -- entries moved onto lines of their own (or has such a block inside) is already absolute
         local function has_moved(block)
-            if next(block.moved) then return true end
+            -- this block's own moved entries are written with their indentation already; the lines
+            -- the layout wrote between them still shift. A block inside that moved entries makes
+            -- every line in its range absolute.
             for _, inner in ipairs(selected) do
                 if inner ~= block and inner.open > block.open and inner.close < block.close and next(inner.moved) then
                     return true
