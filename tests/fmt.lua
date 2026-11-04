@@ -356,6 +356,9 @@ formatted('a list mixed with keys', 'local t = define\n    "a"\n    "b"\n    n =
 -- a block with an entry moved to its own line and one the layout already wrote is indented once
 formatted('a long table in a call is indented once', 'print(f(Mul { left = Num { value = 0 }, right = Add { left = Num { value = 5 }, right = Num { value = 5 } } }))\n', 'print(f(Mul with\n    left = Num { value = 0 }\n    right = Add { left = Num { value = 5 }, right = Num { value = 5 } }\nend))\n')
 
+-- a rest parameter has no colon spelling, and does not keep the rest of the file from one
+formatted('a rest parameter stays a do-form beside colon blocks', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n', 'local V = define\n    First =: node walk\n        return node\n    end\n    Second =: node walk\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n')
+
 -- a headless `with` is not a table in braces: no pass may give it a head or braces
 formatted('a headless with as an argument stays', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n')
 formatted('a one-line headless with stays', 'local w = with a = 1 end\n', 'local w = with a = 1 end\n')

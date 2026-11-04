@@ -335,6 +335,8 @@ local function untyped_head(tokens, i)
         if tk[1] == 'iden' then
             names[#names + 1] = tk[2]
         elseif tk[1] == '.' and tokens[k + 1] and tokens[k + 1][1] == '.' then
+            -- a rest parameter (`..arguments`) has no colon spelling
+            if tokens[k + 2] and tokens[k + 2][1] == 'iden' then return nil end
             if #names > 0 and tokens[k - 1][1] == 'iden' then names[#names] = names[#names] .. '..'
             else names[#names + 1] = '..' end
             k = k + 1

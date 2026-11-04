@@ -1098,6 +1098,14 @@ the problem: the names are not descriptive enough, or the design is wrong (a fun
 role-less argument, a chain that applies too much at once, a flag where a `oneof` or two
 functions belong). Rename or redesign until the line reads as a sentence.
 
+**No short names.** In Mua everything is vocabulary, so naming is part of designing: a name
+should read as what it is, not hide behind a shorthand. Write `node`, `scope`, `problems`,
+`register`, `condition`, `element_type`, never `n`, `ctx`, `d`, `dst`, `T`, `cfg`, `tmp`. Mua is
+concise enough that the words cost nothing; what a shorthand saves in typing, every reader pays
+back in decoding. A parameter is named for what it holds (a handler's node by its kind:
+`literal`, `application`), a function passed in for what it does (`check`, `evaluate`), and state
+for its role (`scope`, `lowering`, `facts`). Loop counters too: `index`, `position`, `line`.
+
 **Prefer long, descriptive names for declared things.** A declared part shares a namespace with
 its owner's methods, and a name that says what the part is (`increment_button`) never competes
 with one that says what a method does (`increment`). Instructions are read without their
@@ -1198,6 +1206,7 @@ a subtle engine saves the reader a reconstruction; write it.
 | a block that writes a context's fields to get around its verbs | the verb that is missing (§5.8) |
 | naming every context to reach outer names | `do(..)`, and let names fall through (§5.8) |
 | parentheses added so a line can be read | descriptive names, or a better split of the functions |
+| short names and shorthands (`n`, `ctx`, `cfg`, `dst`, `T`) | the full word for what the thing is (§13) |
 | a body that aborts by jumping out | an outcome the activity matches on |
 | an error used to carry an ordinary alternative | a `oneof` outcome |
 | silently discarding an outcome | propagate or handle it, or explicitly promise a best-effort result and test that contract |
@@ -1212,7 +1221,7 @@ a subtle engine saves the reader a reconstruction; write it.
   contracts?
 * **Structure:** which trigger (§3.2) justified each nominal type? Is anything grouped as a type
   that only names things?
-* **Names:** do calls read as sentences? Is the context a noun for what the body holds? Are
+* **Names:** do calls read as sentences? Is any name a shorthand that should be a word? Is the context a noun for what the body holds? Are
   unused opened receiver names omitted?
 * **Activities:** who sets up, who completes, and how does a body abort?
 * **DSLs:** do the sentences read without parentheses? Is each phrase the right kind? Are bad
