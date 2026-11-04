@@ -346,6 +346,13 @@ formatted('define as an argument', 'local n = closed define\n    op = "s"\n    p
 formatted('define is not contextual with', 'local w = with\n    x = 1\n    y = 2\n    z = 3\nend\nlocal d = define\n    x = 1\nend\n',
     'local w = with\n    x = 1\n    y = 2\n    z = 3\nend\nlocal d = define\n    x = 1\nend\n')
 
+-- define holds lists: positional entries, one per line, without commas
+formatted('a list of numbers', 'local t = define\n    1,\n    2,\n    3\nend\n', 'local t = define\n    1\n    2\n    3\nend\n')
+formatted('a list of tables', 'local t = define\n    { x = 1 },\n    { x = 2 }\nend\n', 'local t = define\n    { x = 1 }\n    { x = 2 }\nend\n')
+formatted('a list of functions', 'local t = define\n    do(x) = x + 1\n    x -> x * 2\nend\n', 'local t = define\n    x -> x + 1\n    x -> x * 2\nend\n')
+formatted('a list of calls', 'local t = define\n    f(1)\n    f(2)\nend\n', 'local t = define\n    f 1\n    f 2\nend\n')
+formatted('a list mixed with keys', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\n', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\n')
+
 -- spread_style: one `..base` among a table's entries is written first, beside the `with` or `define`
 formatted('a single spread stays beside the with', 'local d = define ..Document\n    length = 10\nend\n',
     'local d = define ..Document\n    length = 10\nend\n')

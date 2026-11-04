@@ -261,6 +261,18 @@ local text_width = doc -> doc.length - wide.left - wide.right
 assert(text_width document == 10 - 4 - 12)
 ```
 
+A `define` block holds lists too: positional entries, one per line, with no commas.
+
+```lua
+-- positional entries make a list
+local steps = define
+    "parse"
+    "check"
+    "emit"
+end
+assert(#steps == 3 and steps[2] == "check")
+```
+
 Overrides are explicit fields, never a second spread: two spreads that offer one name are
 rejected, an explicit field wins by intent.
 

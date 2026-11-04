@@ -347,11 +347,23 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
--- define entries end is a table
+-- define entries end is a table, and a list when its entries are positional
+runs('define makes a list of numbers', 'local t = define\n    1\n    2\n    3\nend\nreturn #t + t[3]', 6)
+runs('define makes a list of tables', 'local t = define\n    { x = 1 }\n    { x = 2 }\nend\nreturn t[1].x + t[2].x', 3)
+runs('define nests', 'local t = define\n    define\n        a = 1\n    end\n    define\n        a = 2\n    end\nend\nreturn t[1].a + t[2].a', 3)
+runs('define makes a list of functions', 'local t = define\n    x -> x + 1\n    do(x) = x * 2\nend\nreturn t[1](1) + t[2](5)', 12)
+runs('define makes a list of calls and names', 'local a, f = 5, function(x) return x * 2 end\nlocal t = define\n    a\n    f(4)\nend\nreturn t[1] + t[2]', 13)
+runs('define makes a list of negative numbers', 'local t = define\n    -1\n    -2\nend\nreturn t[1] + t[2]', -3)
+runs('define mixes a list and keys', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\nreturn t[1] .. t[2] .. t.n', 'ab2')
+runs('a list on one line takes commas', 'local t = define 1, 2, 3 end\nreturn #t', 3)
 runs('define is a table', 'local d = define\n    a = 1\n    b = 2\nend\nreturn d.a + d.b', 3)
 runs('define takes a spread', 'local base = define\n    a = 1\nend\nlocal d = define ..base\n    b = 2\nend\nreturn d.a + d.b', 3)
 runs('define is a name when no entry follows', 'local define = 5\nreturn define', 5)
-errors('define called as a function says what to write', 'local d = define { a = 1 }', 'write { … }')
+do
+    local ok, message = pcall(mua.translate, 'local d = define { a = 1 }', 'd.mua')
+    check('define takes entries and end, not braces', not ok and message:find('write { … }', 1, true), message)
+end
+errors('define called as a function says what to write', 'local define = nil\nlocal d = define(1)', 'attempt to call')
 runs('a program may bind its own define', 'local function define(x) return x * 2 end\nreturn define(4)', 8)
 -- the bytecode cache: a load writes bytecode that the next load reads; a different source, the
 -- contracts switch or a host without an id are different keys or uncached

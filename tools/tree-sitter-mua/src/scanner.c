@@ -126,6 +126,11 @@ bool tree_sitter_mua_external_scanner_scan(void *p, TSLexer *l, const bool *vali
         for (unsigned i = 0; i < sizeof(ends)/sizeof(*ends); ++i) if (!strcmp(next, ends[i])) block = false;
       } else if (l->lookahead == '.') {
         block = dots_ahead(l);
+      } else if ((l->lookahead >= '0' && l->lookahead <= '9') || l->lookahead == '"' || l->lookahead == '\'' || l->lookahead == '{') {
+        block = true;                                              // a list's first item
+      } else if (l->lookahead == '-') {
+        advance(l);
+        block = l->lookahead >= '0' && l->lookahead <= '9';        // a negative number
       }
       if (block) { l->result_symbol = DEFINE; return true; }
       return false;

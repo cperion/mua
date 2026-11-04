@@ -66,7 +66,7 @@ module.exports = grammar({
     // (`x: U32`), not a block. Positional entries are literals, tables and lambdas.
     with_entry: $ => choice($.handler, alias($.with_spread, $.spread_expression), seq('.', $.identifier), seq($.identifier, ':', $._expression), seq($.identifier, '=', $._value),
       seq('[', $._expression, ']', '=', $._value), $.number, $.string, $.boolean, $.nil, $.table_constructor,
-      $.parenthesized_expression, $.lambda, alias($.with_call, $.call_expression)),
+      $.parenthesized_expression, $.lambda, $.define_block, alias(seq('-', $.number), $.unary_expression), alias($.with_call, $.call_expression)),
     // A positional call entry (`recv a do(v) ... end`, `m with ... end`). Its first argument
     // cannot be a colon block, so `name: Type` after the name stays an annotation.
     with_call: $ => prec.right(seq(field("function", $.identifier), alias($.with_first_arguments, $.arguments), repeat(alias($.arguments, $.arguments)))),

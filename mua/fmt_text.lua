@@ -750,8 +750,14 @@ function M.withize(source, unit, spread_beside)
                         local newline = multiline or has_newline(k + 1, nx - 1)
                         local starts = first and first[1] == 'iden' and second and (second[1] == '='
                             or (second[1] == ':' and tokens[next_sig(nx) + 1] and tokens[next_sig(nx) + 1][1] == 'space'))
+                        -- an entry that begins a line is read as an entry whatever it starts with: a
+                        -- name, `.name`, a literal, a table, a bracket, a parenthesis, `-1`, `do`
+                        local begins = first and (first[1] == 'iden' or first[1] == '.' or first[1] == 'number'
+                            or first[1] == 'string' or first[1] == '{' or first[1] == '[' or first[1] == '('
+                            or first[1] == '-' or (first[1] == 'keyword' and (first[2] == 'do' or first[2] == 'true'
+                            or first[2] == 'false')))
                         -- entries on one line keep their commas; at a line end the reader writes it back
-                        if nx == close_of[i] or (newline and (starts or (first and (first[1] == 'iden' or first[1] == '.')))) then
+                        if nx == close_of[i] or (newline and (starts or begins)) then
                             block.drop[k] = true
                         end
                     end
@@ -812,7 +818,12 @@ function M.withize(source, unit, spread_beside)
         local out = {}
         for i, tk in ipairs(tokens) do
             local is_mark = tk[1] == 'comment' and (tk[2] == MARK or tk[2] == DEFINE)
-            if not is_mark then out[#out + 1] = tk end
+            if is_mark then
+                -- the spaces the layout put before a mark go with it
+                while out[#out] and out[#out][1] == 'space' and not out[#out][2]:find '\n' do out[#out] = nil end
+            else
+                out[#out + 1] = tk
+            end
         end
         return text_of(out)
     end

@@ -134,6 +134,25 @@ are exactly those of the expanded program.
 results or a table's array part. `define` followed by entries and `end` is a table (a plain one, never a host's contextual construction), so a definition reads as
 a definition; a **structural type** is the table it is given.
 
+**Lists.** A `define` block (like any `with` block) also takes positional entries: any expression,
+one per line, or separated by commas on a line, so it writes list-like tables without commas:
+
+```mua
+local steps = define
+    "parse"
+    "check"
+    "emit"
+end
+local shapes = define
+    { kind = "circle", r = 2 }
+    { kind = "rect", w = 3, h = 4 }
+end
+```
+
+An entry that begins a line is a new entry, so a literal, a table or a function on the next line is
+never an argument of the one before. Positional and keyed entries mix, a spread (`..base`) is for
+keyed entries only, and the empty table is `{}` (a bare `define` is a name).
+
 **Structural markers.** `required` and `optional` are values in a structural type: a keyed
 spread of the type fails (`required`) when a required field is not supplied and leaves an
 optional one out. `closed` marks a type whose spreads admit only its declared fields. Closed

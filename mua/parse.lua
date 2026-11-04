@@ -586,6 +586,7 @@ function P:subexpr(limit, hint, in_type)
         if not op or BINARY[op][1] <= limit then break end
         -- in a `with` block, `..` on a line of its own begins the next entry (a spread)
         if op == '..' and nt.nl and self.in_with then break end
+        if op == '-' and nt.nl and self.in_with and r:peek(2).t == 'number' and r:peek(2).ws == '' then break end
         r:next()
         self:binop(nt, op)
         local right = self:subexpr(BINARY[op][2], nil, in_type)
@@ -596,16 +597,35 @@ end
 
 -- does the token after `with` begin an entry (`name =`, `name =:`, `.name`, `[`, `..`, a
 -- literal)? Then `with` opens a block (§2.4 rule 12); otherwise it is a name.
-function P:entry_ahead(k)
+-- does a `with` block's first entry start at token k? `listish` (a `define` block) also takes
+-- the start of a list's items: a table, a function, a nested block, a negative number, or a
+-- name on a line of its own or before a comma.
+function P:entry_ahead(k, listish)
     local r = self.r
     local tk = r:peek(k)
     local nt = r:peek(k + 1)
     if tk.t == 'name' then
-        if nt.t == '(' then return self:handler_ahead(k) end         -- `done() = ...`
-        return nt.t == '=' or (nt.t == ':' and nt.ws ~= '')
+        if nt.t == '(' then
+            return self:handler_ahead(k) or (listish and nt.ws == '')    -- `done() = ...`; a call item
+        end
+        if nt.t == '=' or (nt.t == ':' and nt.ws ~= '') then return true end
+        if listish then
+            if nt.t == '->' then return true end                      -- `x -> e`
+            if tk.v == 'define' or tk.v == 'with' then return self:entry_ahead(k + 1, true) end
+            -- a name before a comma or the end of its line is an item, and so is a call item written
+            -- by juxtaposition (`f 1`): an argument on the same line
+            if nt.t == ',' then return true end
+            if nt.nl then return nt.t ~= 'eof' and not nt.kw end
+            return nt.t == 'number' or nt.t == 'string' or nt.t == 'name' or nt.kw == 'true' or nt.kw == 'false'
+        end
+        return false
     end
     if tk.t == '.' then return nt.t == 'name' and nt.ws == '' end
-    return tk.t == '[' or tk.t == '..' or tk.t == 'number' or tk.t == 'string' or tk.kw == 'true' or tk.kw == 'false'
+    if tk.t == '[' or tk.t == '..' or tk.t == 'number' or tk.t == 'string' or tk.kw == 'true' or tk.kw == 'false' then
+        return true
+    end
+    return listish and (tk.t == '{' or tk.kw == 'do' or tk.t == '|' or tk.t == '||'
+        or (tk.t == '-' and nt.t == 'number' and nt.ws == ''))
 end
 
 -- after an operand, `with` opens a block unless `=` follows or it touches `.` or `(`
@@ -624,7 +644,7 @@ end
 function P:define_block(tk, in_type)
     local r = self.r
     if not is_name(tk, 'define') or in_type then return nil end
-    if self:entry_ahead(2) then
+    if self:entry_ahead(2, true) then
         r:next()
         local items = self:with_entries(tk)
         return { k = 'table', items = items, line = tk.line, define = true }
@@ -792,7 +812,12 @@ function P:with_entries(wtk)
         return items
     end)
     self.kinds[#self.kinds] = nil
-    if r:peek(1).t == 'eof' then r:error('a `with` block is not closed (expected `end`)', wtk) end
+    if r:peek(1).t == 'eof' then
+        if wtk.v == 'define' then
+            r:error('a `define` block is not closed (expected `end`); to write a table in braces, write { … }', wtk)
+        end
+        r:error('a `with` block is not closed (expected `end`)', wtk)
+    end
     self:close_block('the `with` block')
     return items
 end
@@ -881,6 +906,10 @@ end
 function P:starts_argument(last)
     local r = self.r
     local tk = r:peek(1)
+    -- in a `with` block a literal or lambda on a line of its own is the next entry
+    if self.in_with and tk.nl and (tk.t == 'number' or tk.t == 'string' or tk.kw == 'true' or tk.kw == 'false' or tk.kw == 'do') then
+        return false
+    end
     if tk.t == 'number' or tk.t == 'string' then return true end
     if tk.kw == 'true' or tk.kw == 'false' then return true end
     if tk.kw == 'do' then return not self.in_header end
@@ -954,6 +983,9 @@ function P:suffixed_from(e, last, no_juxta, in_type, statement_head, argument)
     local r = self.r
     while true do
         local tk = r:peek(1)
+        -- in a `with` block, a table, a string, a bracket or a parenthesis that begins a line is
+        -- the next entry, not an argument or an index of the one before
+        if self.in_with and tk.nl and (tk.t == '{' or tk.t == '[' or tk.t == '(' or tk.t == 'string') then break end
         if tk.t == '.' then
             -- in a `with` block, `.name` on a line of its own begins the next entry
             if self.in_with and tk.nl then break end
