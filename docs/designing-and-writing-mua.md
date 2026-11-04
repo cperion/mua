@@ -450,7 +450,7 @@ end
 
 -- an activity that always commits: setup, the body speaking instructions, completion
 local edit = do(document)
-    return do(body)
+    return: body
         local draft = new_draft(document)
         body(draft)
         document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
@@ -503,7 +503,7 @@ the activity matches on it to choose its completion:**
 local Outcome = oneof { commit: Unit, abort: Number }
 
 local try_edit = do(document)
-    return do(body)
+    return: body
         local draft = new_draft(document)
         local committed = body(draft) {
             commit() = true,
@@ -546,7 +546,7 @@ Each policy is its own activity, and the order of the spine is the order of comp
 ```lua
 -- a policy that completes after the work inside it
 local clamp_length = do(document, max)
-    return do(body)
+    return: body
         body()
         if document.length > max then
             document.length = max
@@ -555,7 +555,7 @@ local clamp_length = do(document, max)
     end
 end
 local count_into = do(stats)
-    return do(body)
+    return: body
         body()
         stats.count = stats.count + 1
     end
@@ -707,7 +707,7 @@ spoke the instruction:
 ```lua
 -- the builder: one verb per method; sentences in, a checked description out
 local router = do(Verbs)
-    return do(body)
+    return: body
         local routes, seen, Routing = {}, {}, {}
         for name, code in pairs(Verbs) do
             Routing[name] = do(path)

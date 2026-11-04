@@ -3,7 +3,7 @@
 
 -- A function that takes a block is an activity: it sets up, runs the block, and completes.
 local with_log =: title
-    return do(body)
+    return: body
         print("begin " .. title)
         body
         print("end " .. title)
@@ -18,7 +18,7 @@ end
 
 -- Names after the colon are the block's parameters.
 local each =: items
-    return do(body)
+    return: body
         for i, item in ipairs items do body(i, item) end
     end
 end
@@ -29,7 +29,7 @@ end
 
 -- Activities stack, and `endall` closes the whole spine at once.
 local timed =: label
-    return do(body)
+    return: body
         print("start " .. label)
         body
         print("stop " .. label)

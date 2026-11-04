@@ -306,6 +306,14 @@ formatted('a short function with a block', 'local f=|x|->do\n    return x\nend\n
 formatted('a block with no parameters keeps its do', 'local f = do()\n    return 1\nend\nedit document do(..)\n    go\nend\n',
     'local f = do()\n    return 1\nend\nedit document:\n    go\nend\n')
 
+-- `return:` returns a block
+formatted('return do(names) is written return:', 'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n',
+    'local f =: a\n    return: body\n        go body\n    end\nend\n')
+formatted('return: stays', 'local f =: a\n    return: body\n        go body\n    end\nend\n',
+    'local f =: a\n    return: body\n        go body\n    end\nend\n')
+formatted('return with an expression body keeps its form', 'local f = do(a)\n    return do(x) = x + a\nend\n',
+    'local f =: a\n    return do(x) = x + a\nend\n')
+
 -- def and define: `define` entries `end` is `def with … end`
 formatted('define is a block and stays one', 'local d = define\n    length = 0\n    cursor = 0\nend\n',
     'local d = define\n    length = 0\n    cursor = 0\nend\n')

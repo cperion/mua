@@ -27,7 +27,8 @@ module.exports = grammar({
     assignment_statement: $ => seq(sep($._expression), '=', sep($._value)),
     expression_statement: $ => choice($.call_expression, $.lambda, $.identifier, $.member_expression, $.bare_method_call),
     bare_method_call: $ => seq(field('function', choice($.identifier, $.member_expression)), ':', field('method', $.identifier)),
-    return_statement: $ => prec.right(seq('return', optional(sep($._expression)))),
+    // `return: names` then a block returns the block as a function
+    return_statement: $ => prec.right(seq('return', optional(choice(sep($._expression), alias($.colon_lambda, $.lambda))))),
     break_statement: _ => choice('break', 'continue'),
     goto_statement: $ => seq('goto', $.identifier),
     label_statement: $ => seq('::', $.identifier, '::'),

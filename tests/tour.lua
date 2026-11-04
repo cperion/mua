@@ -1,5 +1,5 @@
--- docs/reading-mua.md cannot drift: its first five `mua` blocks (the function as written and
--- the four steps of undoing its sugar) print what the page says, every other `mua` block runs,
+-- docs/reading-mua.md cannot drift: its first six `mua` blocks (the function as written and
+-- the five steps of undoing its sugar) print what the page says, every other `mua` block runs,
 -- and the translation listing is what `mua -d` writes for the first block.
 local root = arg[0]:match('^(.*)/tests/[^/]*$') or '.'
 package.path = root .. '/?.lua;' .. root .. '/?/init.lua;' .. package.path
@@ -29,7 +29,7 @@ local blocks = {}
 for block in doc:gmatch('```mua\n(.-)```') do blocks[#blocks + 1] = block end
 local texts = {}
 for block in doc:gmatch('```text\n(.-)```') do texts[#texts + 1] = block end
-check('the page has its blocks', #blocks >= 6, #blocks)
+check('the page has its blocks', #blocks >= 7, #blocks)
 
 local expected
 for _, t in ipairs(texts) do
@@ -39,7 +39,7 @@ check('the page says what the function prints', expected ~= nil)
 for i, block in ipairs(blocks) do
     local out, err = run(block, 'block ' .. i)
     check('block ' .. i .. ' runs', out ~= nil, err)
-    if i <= 5 then check('block ' .. i .. ' prints the same four lines', out == expected, out) end
+    if i <= 6 then check('block ' .. i .. ' prints the same four lines', out == expected, out) end
 end
 
 -- the translation listing, compared token by token

@@ -177,7 +177,12 @@ function P:retstat()
     local tk = r:next()
     local exprs = {}
     local nt = r:peek(1)
-    if not (ends_block(nt) or nt.t == ';') then exprs = self:exprlist() end
+    if nt.t == ':' then
+        -- `return: names` then a block and `end`: returns the block as a function (the colon
+        -- always opens a block; here the block is the value returned)
+        local c = r:next()
+        exprs = { self:colon_lambda(c, nil) }
+    elseif not (ends_block(nt) or nt.t == ';') then exprs = self:exprlist() end
     while r:accept(';') do end                 -- semicolons anywhere (L1)
     return { k = 'return', exprs = exprs, line = tk.line }
 end

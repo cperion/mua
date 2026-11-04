@@ -9,7 +9,7 @@ which is the one that looks strangest.
 
 ```mua
 local with_log =: title
-    return do(body)
+    return: body
         print("begin " .. title)
         body
         print("end " .. title)
@@ -47,6 +47,25 @@ it are the block's parameters. So the first line says: `with_log` is a function 
 
 ```mua
 local with_log = do(title)
+    return: body
+        print("begin " .. title)
+        body
+        print("end " .. title)
+    end
+end
+
+with_log "import":
+    print("  reading")
+    print("  writing")
+end
+```
+
+**2. `return: body` is `return do(body)`.** The block colon always means a block, and after
+`return` the block is the value returned: a function of `body`. So the second line says that
+`with_log` returns a function that takes a block.
+
+```mua
+local with_log = do(title)
     return do(body)
         print("begin " .. title)
         body
@@ -60,7 +79,7 @@ with_log "import":
 end
 ```
 
-**2. A name alone on a line is a call.** `body` as a whole statement means `body()`: calling a
+**3. A name alone on a line is a call.** `body` as a whole statement means `body()`: calling a
 function with no arguments needs no parentheses. (In an expression the name is still the
 function itself: `local f = body` keeps it.)
 
@@ -79,11 +98,11 @@ with_log "import":
 end
 ```
 
-**3. The call site is two applications.** In Mua, application is curried: `f a b` is
+**4. The call site is two applications.** In Mua, application is curried: `f a b` is
 `f(a)(b)`. And a colon at the end of a line passes the block that follows as the next
 argument. So `with_log "import":` followed by a block is `with_log("import")(block)`: first
 give the title, getting back the function that wants a block, then give it the block. That is
-why `with_log` returns a function.
+why `with_log` returns a function (step 2).
 
 ```mua
 local with_log = do(title)
@@ -100,7 +119,7 @@ with_log("import")(do(..)
 end)
 ```
 
-**4. `do(...) ... end` is `function(...) ... end`.** A lambda is a Lua function. This is plain
+**5. `do(...) ... end` is `function(...) ... end`.** A lambda is a Lua function. This is plain
 Lua except for the `do(..)` of the block, which says that the block opens whatever it is given
 (see below).
 
@@ -133,11 +152,12 @@ local n: Number = 1     an annotation: a type after a name, in a declaration or 
 do(x: Number): Number    an annotation: the result type after a parameter list
 ::label::                a label, in goto
 with_log "import":       a block: the colon ends the line (names may follow it)
-local f =: x             a block: the colon follows `=`
+local f =: x             a block: the colon follows `=`, and the block is the value assigned
+return: body             a block: the colon follows `return`, and the block is the value returned
 ```
 
 The block colon only applies where nothing else could mean a colon: at the end of a line (after
-an expression) or right after `=`. Anything after it on the same line must be parameter names.
+an expression), right after `=`, or right after `return`. Anything after it on the same line must be parameter names.
 
 ```text
 xs:each: key value       `xs:each` is a method access, then the colon ends the line: the block
@@ -186,7 +206,7 @@ with_log("import")(function(__home) local __o1n, __o1 = __mua.open(__home);
 end);
 ```
 
-The first function is step 4 above. The call site shows the block opening: `__mua.open`
+The first function is step 5 above. The call site shows the block opening: `__mua.open`
 records what the block was handed, and each free name in the block reads as
 `(opened.name ? opened.name : name)`, a check for a key of the opened table first. It costs
 nothing when the block opens nothing, and no table or closure is built for the lookup.
@@ -197,6 +217,7 @@ nothing when the block opens nothing, and no table or closure is built for the l
 f x y                    f(x)(y)                       application is curried
 f x:  ...  end           f(x)(do(..) ... end)          a trailing block is the next argument
 local f =: a b  ... end  local f = do(a, b) ... end     a block assigned to a name
+return: b  ... end       return do(b) ... end          a block returned as the value
 name                     name()                        a bare name as a statement is a call
 a ? b : c                a conditional                 LuaJIT 3.0 syntax
 x -> x + 1               function(x) return x + 1 end  a short function

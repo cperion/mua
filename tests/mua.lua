@@ -344,6 +344,9 @@ errors('a ctype contract rejects another value', 'local P = ffistruct { x: doubl
     "parameter 'p' of f expects P, got number 5")
 errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type")
 
+-- return: returns a block
+runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
+runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
 -- def is the identity, and define entries end is def with ... end
 runs('def is the identity', 'return def({ a = 1 }).a + def(2)', 3)
 runs('define is def with', 'local d = define\n    a = 1\n    b = 2\nend\nreturn d.a + d.b', 3)

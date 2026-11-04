@@ -100,7 +100,11 @@ end
 ```
 
 `=:` assigns a block: `local f =: x`, and in a table `found =: v`. It works inside brackets,
-because `=:` occurs nowhere else. A colon is a block opener only where there is no annotation
+because `=:` occurs nowhere else.
+`return:` returns a block: `return: body` then a block and `end` is `return do(body) … end`, a
+function of `body` (the idiom of an activity that returns the function that takes its block).
+The colon always means a block: it passes it to what is on its left, or, after `=` or `return`,
+makes it the value assigned or returned. A colon is a block opener only where there is no annotation
 colon: not the result type after a parameter list, not the names of a `local`, not a field
 inside brackets, not `::label::`, and not a method call (`xs:each`).
 

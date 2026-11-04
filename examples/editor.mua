@@ -26,7 +26,7 @@ end
 -- `edit` always commits when the body returns normally. The block speaks instructions: calls
 -- without a receiver, resolved by the draft it is given.
 local edit =: document
-    return do(body)
+    return: body
         local draft = new_draft document
         body draft
         commit(document, draft)
@@ -38,7 +38,7 @@ end
 local Outcome = oneof { commit: Unit, abort: Number }
 
 local try_edit =: document
-    return do(body)
+    return: body
         local draft = new_draft document
         local accepted = body(draft) {
             commit() = true,
@@ -77,7 +77,7 @@ show("rejected", document)
 -- Policies are activities too, and they stack. The order of the spine is the order of completion:
 -- the edit commits first, then the clamp applies, then the count is recorded.
 local clamp_length =: document max
-    return do(body)
+    return: body
         body
         if document.length > max then
             document.length = max
@@ -86,7 +86,7 @@ local clamp_length =: document max
     end
 end
 local count_into =: stats
-    return do(body)
+    return: body
         body
         stats.count = stats.count + 1
     end

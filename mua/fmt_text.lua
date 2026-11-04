@@ -367,6 +367,7 @@ function M.colonize(source)
         local p = is_do(tk) and skip_back(tokens, i)
         if is_do(tk) and (#openers == 0 or (p >= 1 and tokens[p][1] == '=')) then
             local operand = p >= 1 and (OPERAND[tokens[p][1]] or tokens[p][1] == '='
+                or (tokens[p][1] == 'keyword' and tokens[p][2] == 'return')
                 or (tokens[p][1] == 'keyword' and LITERAL[tokens[p][2]]))
             local after_params = p >= 1 and tokens[p][1] == ')' and closer_of[p]
                 and parameter_list(tokens, closer_of[p])

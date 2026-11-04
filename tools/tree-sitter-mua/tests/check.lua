@@ -278,5 +278,19 @@ end
 ]], 'define blocks and the name define')
 local defined_sexpr = defined:root():sexpr()
 assert(select(2, defined_sexpr:gsub('define_block', '')) == 2, 'define blocks missing: ' .. defined_sexpr)
+-- `return:` returns a block
+local returned = parse([[
+local with_log =: title
+    return: body
+        go title
+        body
+    end
+end
+local plain = do(x)
+    return x
+end
+]], 'return: returns a block')
+local returned_sexpr = returned:root():sexpr()
+assert(select(2, returned_sexpr:gsub('%(lambda', '')) == 3, 'return: block is not a lambda: ' .. returned_sexpr)
 print(('Mua Tree-sitter: %d parse cases passed; highlight captures, filetype, startup, and incremental edits passed'):format(count))
 vim.cmd('qa!')
