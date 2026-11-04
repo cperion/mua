@@ -128,7 +128,7 @@ A first proposal is to call `insert` on the document, then test its length. Draw
 rejection path exposes the problem: the document has already changed. We could undo each write,
 but that gives every new instruction another rollback obligation. Instead, revise ownership:
 keep a private draft, run the instructions there, and copy it back only on acceptance. This
-discovers the `attempt` activity (§5.6), rather than assuming a transaction because
+discovers the `try_edit` activity (§5.6), rather than assuming a transaction because
 transactions are a familiar pattern.
 
 ```text
@@ -388,7 +388,7 @@ Drawing the rejected path tests whether that division is complete:
 ```text
 sequenceDiagram
     participant Caller as type_capped
-    participant A as attempt (activity)
+    participant A as try_edit (activity)
     participant D as document (entity)
     participant W as draft (context)
     Caller->>A: bounded edit body
@@ -419,11 +419,11 @@ responsibility, not access control: fields remain public.
 
 | Kind | Setup | Completion | Example |
 |---|---|---|---|
-| working copy | copy the entity into a context | commit, or conditionally discard | `transaction`, `attempt` |
+| working copy | copy the entity into a context | commit, or conditionally discard | `edit`, `try_edit` |
 | in place | open a place | nothing; writes went through | `local node.. = graph.nodes[id]` |
 | scoped resource | acquire | release | `with_file` |
 | accumulator | create the state | return a result from it | `counting` |
-| policy | nothing, or a measurement | record, check, clamp, retry | `counted`, `clamped` |
+| policy | nothing, or a measurement | record, check, clamp, retry | `count_into`, `clamp_length` |
 | builder | a vocabulary | return a description | `keymap`, `router` (§5.9) |
 
 ### 5.3 Enter an activity and speak its instructions
@@ -447,7 +447,7 @@ local new_draft = do(document)
 end
 
 -- an activity that always commits: setup, the body speaking instructions, completion
-local transaction = do(document)
+local edit = do(document)
     return do(body)
         local draft = new_draft(document)
         body(draft)
@@ -457,7 +457,7 @@ end
 
 local fresh = { length = 0, cursor = 0, edits = 0 }
 local moved = 0
-transaction fresh:
+edit fresh:
     insert 5
     local before = cursor
     move_left
@@ -481,7 +481,7 @@ remember.**
 
 ### 5.5 The activity owns completion
 
-`transaction` commits a working copy at the end. Its contract is its own: write through, commit,
+`edit` commits a working copy at the end. Its contract is its own: write through, commit,
 roll back, retry. Three boundaries hold:
 
 * the body's `return` leaves the body, not the activity;
@@ -500,7 +500,7 @@ the activity matches on it to choose its completion:**
 ```lua
 local Outcome = oneof { commit: Unit, abort: Number }
 
-local attempt = do(document)
+local try_edit = do(document)
     return do(body)
         local draft = new_draft(document)
         local committed = body(draft) {
@@ -515,7 +515,7 @@ local attempt = do(document)
 end
 
 local type_capped = do(document, n, cap)
-    return attempt document:
+    return try_edit document:
         insert n
         if length > cap then return Outcome.abort(length) end
         return Outcome.commit()
@@ -532,7 +532,7 @@ The rule "the activity owns completion" covers the body's ordinary outcomes too:
 what happened, and the activity decides what that means for the entity. The outcome type is part
 of the activity's contract, so give it outcome names (`commit`, `abort`, `retry`), not
 unexplained flags. This completes the bounded-edit design begun in §2.2: `abort` carries the
-tentative length to the activity; `attempt` deliberately projects that richer outcome to
+tentative length to the activity; `try_edit` deliberately projects that richer outcome to
 acceptance or rejection. A caller that needs the reason would need a richer outer result. Test
 both paths: successful commit changes the document, while rejection must preserve length, cursor
 and edit count.
@@ -543,7 +543,7 @@ Each policy is its own activity, and the order of the spine is the order of comp
 
 ```lua
 -- a policy that completes after the work inside it
-local clamped = do(document, max)
+local clamp_length = do(document, max)
     return do(body)
         body()
         if document.length > max then
@@ -552,7 +552,7 @@ local clamped = do(document, max)
         end
     end
 end
-local counted = do(stats)
+local count_into = do(stats)
     return do(body)
         body()
         stats.count = stats.count + 1
@@ -560,15 +560,15 @@ local counted = do(stats)
 end
 
 local stats, big = { count = 0 }, { length = 0, cursor = 0, edits = 0 }
-counted stats do
-clamped(big, 100) do
-transaction big:
+count_into stats do
+clamp_length(big, 100) do
+edit big:
     insert 250
 endall
 assert(big.length == 100 and stats.count == 1)
 ```
 
-The transaction commits first, then the clamp applies, then the count is recorded, exactly as the
+The edit commits first, then the clamp applies, then the count is recorded, exactly as the
 spine reads from the inside out. `endall` closes a spine written flat; it adds no semantics.
 
 ### 5.8 Nesting composes, and design the context's vocabulary
@@ -579,7 +579,7 @@ once:
 
 ```lua
 -- nested activities compose: a name the inner context lacks reaches the outer one
-local logged = do(body)
+local collect_notes = do(body)
     local log = { notes = 0 }
     log.note = do(count) log.notes = log.notes + count end
     body(log)
@@ -587,8 +587,8 @@ local logged = do(body)
 end
 
 local type_logged = do(document, n)
-    return logged:
-        transaction document:
+    return collect_notes:
+        edit document:
             insert n
             note 1
         end
@@ -905,7 +905,7 @@ is not visible to an earlier function definition. Put dependencies before their 
 deliberate forward bindings.
 
 For the bounded edit, the skeleton is the document, `new_draft`, the draft verbs, `Outcome`,
-`attempt` and `type_capped`. A successful scenario must commit the expected fields; a rejected
+`try_edit` and `type_capped`. A successful scenario must commit the expected fields; a rejected
 one must preserve all of them (§5.6).
 
 **Tests.** Test the pure core with plain asserts next to the functions. Test an activity's
@@ -950,7 +950,7 @@ cursor:move_left()
 assert(cursor.position == 1 and not cursor:at_end())
 ```
 
-Put the body last when the function establishes structure: `transaction document: … end`. Name
+Put the body last when the function establishes structure: `edit document: … end`. Name
 the opened parameter only when its name is used.
 
 ## 10. A match reads as a protocol
@@ -1033,7 +1033,7 @@ signature decides where the activity completes, not the parser.
 | transformation | participle or adjective | `trimmed`, `translated` |
 | query | the thing returned | `line_count`, `text_width` |
 | predicate | proposition | `at_end`, `has_selection` |
-| activity function | purposeful word, or `with_` + resource | `transaction`, `attempt`, `counted`, `with_file` |
+| activity function | a verb phrase for what it does to its destination, or `with_` + resource | `edit`, `try_edit`, `count_into`, `with_file` |
 | activity block parameter | snake_case noun, matching the context | `draft`, `batch`, `file` |
 | declared part (a field a builder declares) | long, descriptive snake_case: what it is | `increment_button`, `question_label` |
 | builder instruction | the domain's own vocabulary | `bind`, `button`, `get` |
@@ -1045,13 +1045,22 @@ signature decides where the activity completes, not the parser.
 
 The forms are lowercase so that the capitals are the user's types, not the language's keywords.
 
+**Name an activity for what it does to its destination.** An activity is a verb phrase that takes
+the destination first, so the call reads as a sentence: `edit document:`, `try_edit document:`,
+`clamp_length document 100 do`, `count_into stats do`, `collect_notes:`. The verb tells the
+relationship: `edit` always completes by committing, `try_edit` commits only on acceptance,
+`count_into` records into its destination after the work. A scoped resource is `with_` + the
+resource (`with_file path:`). Avoid a noun borrowed from another domain (`transaction`,
+`session`): it promises a guarantee the activity may not give, and says nothing about what it
+acts on.
+
 **Activity functions say what completion means; contexts are nouns for what the body holds.**
-`transaction` commits after the body returns normally; `attempt` commits only on acceptance. The
+`edit` commits after the body returns normally; `try_edit` commits only on acceptance. The
 body holds a draft. When an opened parameter needs a name, use the context's noun: `draft`,
 `do(draft..)`. Otherwise use `do(..)`.
 
 **Names carry the reading, not parentheses.** The house style drops call parentheses wherever
-the grammar permits: `release slot`, `bind "h" (...)`, `counted stats: … end`. That works only
+the grammar permits: `release slot`, `bind "h" (...)`, `count_into stats do … end`. That works only
 when names are descriptive. If a line is confusing without parentheses, adding them back hides
 the problem: the names are not descriptive enough, or the design is wrong (a function with a
 role-less argument, a chain that applies too much at once, a flag where a `oneof` or two
