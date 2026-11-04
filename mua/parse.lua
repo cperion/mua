@@ -22,7 +22,7 @@
 --   name{name}  num{text}  str{text}  nil  true  false  vararg  home  spread{e}  paren{e}
 --   field{obj, name}  index{obj, key}  call{fn, args, juxta?, boundary?}  method{obj, name, args}
 --   lambda{fn}  table{items={kind=pos|named|keyed|spread, name, key, e}, with?}
---   call{define=true} (`define` entries `end`: `def with … end`)  with{items} (contextual)  binop{op, a, b, spelling?}  unop{op, a, spelling?}
+--   table{define=true} (`define` entries `end`: a plain table)  with{items} (contextual)  binop{op, a, b, spelling?}  unop{op, a, spelling?}
 --   cond{c, a, b} (`c ? a : b`)  struct{sum?, ffi?, fields={name,type}, name}
 -- `field`, `index`, `call` and `method` carry `safe` for `?.`; a method `safe_call` for
 -- `o:m?.(...)`. The customary operators are normalized: `!`, `&&`, `||`, `!=` arrive as
@@ -617,19 +617,17 @@ function P:with_block_ahead()
     return true
 end
 
--- `define` then entries and `end` is `def with … end`: the definition of a vocabulary or a
--- structural type (the identity function is `def`, and takes tables and values as they are).
--- Returns the node, or nil when `define` here is an ordinary name.
+-- `define` then entries and `end` is a table: the definition of a vocabulary or a structural
+-- type, with the entries separated by lines or commas. It is a plain table (never a host's
+-- contextual construction, as a headless `with` may be) and is written `{ … }` where braces
+-- fit. Returns the node, or nil when `define` here is an ordinary name.
 function P:define_block(tk, in_type)
     local r = self.r
     if not is_name(tk, 'define') or in_type then return nil end
-    local nt = r:peek(2)
     if self:entry_ahead(2) then
         r:next()
         local items = self:with_entries(tk)
-        local fn = { k = 'name', name = 'def', line = tk.line, col = tk.col }
-        return { k = 'call', fn = fn, args = { { k = 'table', items = items, with = true, line = tk.line } },
-                 line = tk.line, define = true }
+        return { k = 'table', items = items, line = tk.line, define = true }
     end
 end
 

@@ -182,7 +182,7 @@ parses('trailing colon opening a name', 'tasks: scope..\n  go\nend', 'tasks(colo
 parses('a block argument goes on applying', 'r = apply: v\n  return v\nend x', 'r = apply(colon(v){return v})(x)')
 parses('=: assigns a block', 'local f =: x\n  return x\nend', 'local f = colon(x){return x}')
 parses('with block', 'p = P with\n  x = 1\n  .y\n  z = f a\nend', 'p = P(with{x=1, y=y, z=f(a)})')
-parses('a spread on its own line is the next entry', 't = define\n  ..a\n  ..b\nend', 't = def(with{..a, ..b})')
+parses('a spread on its own line is the next entry', 't = define\n  ..a\n  ..b\nend', 't = {..a, ..b}')
 parses('with entries stop at the next entry', 'p = P with x = a y = b end', 'p = P(with{x=a, y=b})')
 parses('contextual with', 'return with\n  x = 1\nend', 'return ctx{x=1}')
 parses('with as a name', 'x = with + 1', 'x = (with + 1)')
@@ -243,7 +243,7 @@ runs('=: assigns a block', 'local f =: x\n  return x * 3\nend\nreturn f(5)', 15)
 runs('zero-argument call statement', 'local n = 0\nlocal function bump() n = n + 1 end\nbump\nbump\nreturn n', 2)
 runs('with block', 'local function P(t) return t end\nlocal p = P with\n  x = 1\n  y = 2\nend\nreturn p.x + p.y', 3)
 runs('field shorthand', 'local x, y = 3, 4\nlocal t = { .x, .y }\nreturn t.x * t.y', 12)
-runs('keyed spread', 'local base = def { a = 1, b = 2 }\nlocal t = { ..base, b = 5 }\nreturn t.a + t.b', 6)
+runs('keyed spread', 'local base = { a = 1, b = 2 }\nlocal t = { ..base, b = 5 }\nreturn t.a + t.b', 6)
 parse_rejects = parse_rejects
 do
     local ok, e = pcall(mua.translate, 't = { ..a, x = 1, x = 2 }', 't')
@@ -308,14 +308,14 @@ end
 
 -- structural markers
 runs('required and optional', 'local Node = closed define\n  op = "store"\n  place = required\n  what = optional\nend\nlocal n = { ..Node, place = 1 }\nreturn n.op .. n.place .. tostring(n.what)', 'store1nil')
-errors('a missing required field', 'local Node = closed def { op = "s", place = required }\nlocal n = { ..Node }',
+errors('a missing required field', 'local Node = closed { op = "s", place = required }\nlocal n = { ..Node }',
     "required: the field 'place' is not supplied")
-errors('an unknown field of a closed type', 'local Node = closed def { op = "s" }\nlocal n = { ..Node, plcae = 1 }',
+errors('an unknown field of a closed type', 'local Node = closed { op = "s" }\nlocal n = { ..Node, plcae = 1 }',
     "closed: 'plcae' is not a field")
-errors('instances stay closed', 'local Node = closed def { op = "s" }\nlocal a = { ..Node }\nlocal b = { ..a, x = 1 }',
+errors('instances stay closed', 'local Node = closed { op = "s" }\nlocal a = { ..Node }\nlocal b = { ..a, x = 1 }',
     "closed: 'x' is not a field")
-runs('a closed type is a checker', 'local P = closed def { x = required, y = 0 }\nlocal f = do(p: P): Number = p.x + p.y\nreturn f({ x = 2, y = 3 })', 5)
-errors('a closed type rejects an extra field', 'local P = closed def { x = required }\nlocal f = do(p: P): Number = p.x\nreturn f({ x = 2, z = 1 })',
+runs('a closed type is a checker', 'local P = closed { x = required, y = 0 }\nlocal f = do(p: P): Number = p.x + p.y\nreturn f({ x = 2, y = 3 })', 5)
+errors('a closed type rejects an extra field', 'local P = closed { x = required }\nlocal f = do(p: P): Number = p.x\nreturn f({ x = 2, z = 1 })',
     "has the undeclared field 'z'")
 
 -- struct
@@ -347,12 +347,11 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
--- def is the identity, and define entries end is def with ... end
-runs('def is the identity', 'return def({ a = 1 }).a + def(2)', 3)
-runs('define is def with', 'local d = define\n    a = 1\n    b = 2\nend\nreturn d.a + d.b', 3)
+-- define entries end is a table
+runs('define is a table', 'local d = define\n    a = 1\n    b = 2\nend\nreturn d.a + d.b', 3)
 runs('define takes a spread', 'local base = define\n    a = 1\nend\nlocal d = define ..base\n    b = 2\nend\nreturn d.a + d.b', 3)
 runs('define is a name when no entry follows', 'local define = 5\nreturn define', 5)
-errors('define called as a function says what to write', 'local d = define { a = 1 }', 'write `def { … }`')
+errors('define called as a function says what to write', 'local d = define { a = 1 }', 'write { … }')
 runs('a program may bind its own define', 'local function define(x) return x * 2 end\nreturn define(4)', 8)
 -- the bytecode cache: a load writes bytecode that the next load reads; a different source, the
 -- contracts switch or a host without an id are different keys or uncached

@@ -30,7 +30,7 @@ examples work, not the prose's claims or the quality of the design. Diagrams use
 | `x -> e`, `|a, b| -> e`, `do(x) … end` | lambdas: an arrow for an expression, `do` for statements, types and opening |
 | `=: x`, `return: x` (then a block and `end`) | a block assigned to a name, a block returned: the colon always means a block |
 | `f a b`, `f x do … end`, `f a: x … end` | juxtaposed, **curried** application: `f a b` is `f(a)(b)` |
-| `define … end`, `def { … }` | a vocabulary: names bound with no layout (`define` entries `end` is `def with … end`; `def` is the identity) |
+| `define … end`, `{ … }` | a vocabulary: names bound with no layout (`define` entries `end` is a table, written without commas) |
 | `{ ..base, name = v }`, `..base` in a `with` block | keyed spread: a vocabulary extended, entries overriding |
 | `.name` | `name = name` in a table or `with` block |
 | `do(ctx..)`, `do(..)`, `local ctx.. = e` | opening a table: its string keys become names |
@@ -225,7 +225,7 @@ Editing.left document
 assert(document.length == 5 and document.cursor == 4)
 ```
 
-`def` is the identity and `define` is `def with`; what a definition means comes from where it sits. `with` supplies keyed entries,
+`define` is a table written as a block; what a definition means comes from where it sits. `with` supplies keyed entries,
 and keyed spread composes (syntax §5): explicit entries override, and two spreads that offer the
 same name are rejected (`spread-overlap`) rather than silently shadowing. A function takes a
 vocabulary as a parameter and calls its members, or opens it:
@@ -255,8 +255,8 @@ is needed, and an instance can serve as the type of further instances:
 
 ```lua
 -- a structural type carries its defaults; an instance is the type spread with overrides
-local Margins = def { left = 4, right = 4 }
-local wide = def { ..Margins, right = 12 }
+local Margins = { left = 4, right = 4 }
+local wide = { ..Margins, right = 12 }
 local text_width = doc -> doc.length - wide.left - wide.right
 assert(text_width document == 10 - 4 - 12)
 ```
@@ -310,7 +310,7 @@ to consume.
 declared, a match handles each one, and adding an alternative makes every match that must learn
 it fail where it is written. Use it where completeness is part of the meaning: a connection's
 states, an operation's outcomes, the commands an editor understands. A vocabulary of known values
-is an open set: an enumeration is names for codes (`def { get = 1, post = 2 }`), and anyone may
+is an open set: an enumeration is names for codes (`{ get = 1, post = 2 }`), and anyone may
 extend it by spread, so code that meets an unknown member needs a default. Use it where extension
 is expected: protocol methods, opcodes, tokens, plugin points. Ask whether someone else may
 legitimately add a member: if so, keep the set open; if adding one should make every user
@@ -638,11 +638,11 @@ instruction.
 -- a builder: the block declares, the builder returns a description
 local keymap =: body
     local bindings = {}
-    body(define
+    body define
         bind = do(key) = do(command)
             bindings[#bindings + 1] = { .key, .command }
         end
-    end)
+    end
     return bindings
 end
 
@@ -697,7 +697,7 @@ known values:
 
 ```lua
 -- the methods a router speaks: a structural vocabulary of known values
-local Methods = def { get = 1, post = 2 }
+local Methods = { get = 1, post = 2 }
 ```
 
 **4. Make the builder check its sentences, and report at the user's line.** A structural mistake
@@ -780,7 +780,7 @@ qualify a homonym rather than letting one shadow the other (§13):
 
 ```lua
 -- a dialect: the same builder over a vocabulary extended by spread
-local Dav = def { ..Methods, propfind = 7 }
+local Dav = { ..Methods, propfind = 7 }
 local dav_routes = router Dav
 local share = dav_routes:
     propfind "/":
@@ -1043,7 +1043,7 @@ signature decides where the activity completes, not the parser.
 | `oneof` alternative | snake_case outcome | `found`, `missing`, `done`, `timed_out` |
 | vocabulary describing a structure (interface, capability set, namespace) | PascalCase, like a type | `Editing`, `Moves`, `Storage` |
 | vocabulary holding data (configuration, fixture, values in flight) | snake_case, like a value | `config`, `span` |
-| Mua's own forms | lowercase keywords | `struct`, `oneof`, `define`, `def`, `ffistruct` |
+| Mua's own forms | lowercase keywords | `struct`, `oneof`, `define`, `ffistruct` |
 
 The forms are lowercase so that the capitals are the user's types, not the language's keywords.
 
@@ -1093,7 +1093,7 @@ generic or a homonym should stay qualified.
 | instruction | inside an opened block, a call without a receiver: `insert n`, `note 1` |
 | `with` blocks | keyed data that spans lines; a `struct` or `oneof` declaration; matching |
 | `{ }` braces | Lua tables, compact one-liners |
-| `define` entries `end` | a vocabulary or a structural type; `def { … }` for a one-line table |
+| `define` entries `end` | a vocabulary or a structural type; `{ … }` for a one-line table |
 | `x -> e`, `|a, b| -> e` | a small expression lambda (one name needs no bars; several names after an operand are bracketed) |
 | `do(x) … end` | a callback with statements, when a colon block does not fit |
 | `do(x: T): R = e` | a lambda with types, or with an opened parameter (`do(ctx..)`): arrows have no spelling for these |

@@ -45,6 +45,9 @@ end
 
 local MARK = '--[=[mua:with]=]'
 M.MARK = MARK
+-- a `define` block is also marked, so it is written back as one (a table, never a contextual `with`)
+local DEFINE = '--[=[mua:define]=]'
+M.DEFINE = DEFINE
 
 -- `do ( ... ) :` a typed lambda: a word's body, which `endall` never closes
 local function typed_lambda(tokens, i)
@@ -179,8 +182,8 @@ function M.expand(source, mark, full, filename)
     local frames = {}                                  -- the `with` blocks being read
     local function open_with(wtk, contextual)
         frames[#frames + 1] = { entries = {}, contextual = contextual }
-        replace[wtk.index] = wtk.v == 'define' and 'def {' or ((contextual and not mark) and 'with {' or '{')
-        after[wtk.index] = mark and M.MARK or nil
+        replace[wtk.index] = (contextual and not mark and wtk.v ~= 'define') and 'with {' or '{'
+        after[wtk.index] = mark and (M.MARK .. (wtk.v == 'define' and M.DEFINE or '')) or nil
     end
     local function close_with(frame)
         local closer = toks[last]
@@ -523,7 +526,6 @@ local function inline_pass(source, limit, width, keep_spreads)
             local p = skip_back(tokens, i)
             local head = p >= 1 and OPERAND[tokens[p][1]] and tokens[p][1] ~= 'string'
                 and not (tokens[p][1] == 'iden' and tokens[p][2] == 'with')
-                and not (tokens[p][1] == 'iden' and tokens[p][2] == 'def')   -- a definition stays a block
             local n = head and entries(i)
             if n and n >= 1 and n <= limit and nested_within_limit(i) and not line_used[line_start] then
                 -- the table on one line: newlines inside become single spaces
@@ -637,14 +639,14 @@ function M.withize(source, unit, spread_beside)
             while tokens[j] and tokens[j][1] == 'space' do j = j + 1 end
             if tokens[j] and tokens[j][1] == 'comment' and tokens[j][2] == MARK then
                 local block = { open = i, close = close_of[i], drop = {} }
-                blocks[#blocks + 1] = block
-                -- `def { … }` written as a block is `define … end`: the head word goes, the brace
-                -- becomes `define`
-                local hp = skip_back(tokens, i)
-                if hp >= 1 and tokens[hp][1] == 'iden' and tokens[hp][2] == 'def' then
+                -- a `define` block carries a second mark right after the first
+                local d = j + 1
+                while tokens[d] and tokens[d][1] == 'space' and not tokens[d][2]:find '\n' do d = d + 1 end
+                if tokens[d] and tokens[d][1] == 'comment' and tokens[d][2] == DEFINE then
                     block.define = true
-                    for k = hp, i - 1 do block.drop[k] = true end
+                    j = d
                 end
+                blocks[#blocks + 1] = block
                 for k = i + 1, j do block.drop[k] = true end
                 local f = opened[i]
                 local function has_newline(a, b)
@@ -755,7 +757,7 @@ function M.withize(source, unit, spread_beside)
                     end
                 end
             end
-        elseif tk[1] == 'comment' and tk[2] == MARK then
+        elseif tk[1] == 'comment' and (tk[2] == MARK or tk[2] == DEFINE) then
             plain[i] = true
         end
     end
@@ -809,7 +811,7 @@ function M.withize(source, unit, spread_beside)
     local function plain_text()
         local out = {}
         for i, tk in ipairs(tokens) do
-            local is_mark = tk[1] == 'comment' and tk[2] == MARK
+            local is_mark = tk[1] == 'comment' and (tk[2] == MARK or tk[2] == DEFINE)
             if not is_mark then out[#out + 1] = tk end
         end
         return text_of(out)

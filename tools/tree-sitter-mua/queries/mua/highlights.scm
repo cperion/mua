@@ -42,6 +42,6 @@
 
 ; Mua's own forms and checkers, by spelling (not semantic resolution)
 ((identifier) @keyword
- (#any-of? @keyword "struct" "oneof" "ffistruct" "def" "closed" "required" "optional"))
+ (#any-of? @keyword "struct" "oneof" "ffistruct" "closed" "required" "optional"))
 ((identifier) @type.builtin
  (#any-of? @type.builtin "Number" "String" "Boolean" "Table" "Function" "Any" "Unit" "Optional"))

@@ -329,24 +329,24 @@ check('an invalid lambda_style is rejected', not pcall(fmt.format, 'local x=1', 
 
 -- a with or define block as a call argument: no space after the bracket, entries one unit in
 formatted('a define block as the argument', 'local keymap = do(body)\n    body(define\n        bind = do(key) = do(command)\n            go key\n        end\n    end)\nend\n',
-    'local keymap =: body\n    body(define\n        bind = do(key) = do(command)\n            go key\n        end\n    end)\nend\n')
+    'local keymap =: body\n    body define\n        bind = do(key) = do(command)\n            go key\n        end\n    end\nend\n')
 formatted('a with block as the argument', 'local x = f(Point with\n    x = 1\n    y = 2\n    z = 3\nend)\n',
     'local x = f(Point with\n    x = 1\n    y = 2\n    z = 3\nend)\n')
 formatted('a define block among arguments', 'local x = f(a, define\n    x = 1\n    y = 2\nend, b)\n',
     'local x = f(a, define\n    x = 1\n    y = 2\nend, b)\n')
 
--- def and define: `define` entries `end` is `def with … end`
+-- define: `define` entries `end` is a table
 formatted('define is a block and stays one', 'local d = define\n    length = 0\n    cursor = 0\nend\n',
     'local d = define\n    length = 0\n    cursor = 0\nend\n')
-formatted('def with is written as define', 'local d = def with\n    length = 0\n    cursor = 0\nend\n',
-    'local d = define\n    length = 0\n    cursor = 0\nend\n')
-formatted('a multi-line def table is written as define', 'local d = def {\n    length = 0,\n    cursor = 0,\n}\n',
-    'local d = define\n    length = 0\n    cursor = 0\nend\n')
-formatted('a one-line def table is left alone', 'local d = def { length = 0, cursor = 0 }\n', 'local d = def { length = 0, cursor = 0 }\n')
+formatted('a short define is not collapsed', 'local d = define\n    length = 0\nend\n', 'local d = define\n    length = 0\nend\n')
+formatted('a table in braces stays in braces', 'local d = {\n    length = 0,\n    cursor = 0,\n}\n',
+    'local d = {\n    length = 0,\n    cursor = 0,\n}\n')
 formatted('define as an argument', 'local n = closed define\n    op = "s"\n    place = required\nend\n',
     'local n = closed define\n    op = "s"\n    place = required\nend\n')
+formatted('define is not contextual with', 'local w = with\n    x = 1\n    y = 2\n    z = 3\nend\nlocal d = define\n    x = 1\nend\n',
+    'local w = with\n    x = 1\n    y = 2\n    z = 3\nend\nlocal d = define\n    x = 1\nend\n')
 
--- spread_style: one `..base` among a table's entries is written first, beside the `with`
+-- spread_style: one `..base` among a table's entries is written first, beside the `with` or `define`
 formatted('a single spread stays beside the with', 'local d = define ..Document\n    length = 10\nend\n',
     'local d = define ..Document\n    length = 10\nend\n')
 formatted('a single spread moves to the top', 'local d = define\n    length = 10\n    ..Document\n    cursor = 2\nend\n',

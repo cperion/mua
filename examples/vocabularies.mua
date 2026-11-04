@@ -1,7 +1,7 @@
 -- Vocabularies: names bound with no layout, composed by spread, opened by a block.
 --   luajit mua.lua examples/vocabularies.mua
 
--- `define` entries `end` is `def with ... end`: a table of names.
+-- `define` entries `end` is a table of names, written as a block.
 local Moves = define
     left =: document
         if document.cursor > 0 then document.cursor = document.cursor - 1 end

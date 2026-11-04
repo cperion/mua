@@ -126,9 +126,9 @@ the result gives the same program as the braces.
 
 ## Definitions
 
-`define` followed by entries and `end` is `def with … end`. The formatter writes a multi-line
-`def { … }` or `def with … end` as `define`, and never collapses a `define` block onto one line;
-a `def { … }` already on one line is left alone.
+`define` followed by entries and `end` is a table, written without commas. The formatter keeps a
+`define` block a block (it never collapses it onto one line); a table written in braces stays in
+braces.
 
 ## Spreads
 

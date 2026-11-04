@@ -563,7 +563,7 @@ function M.emit(block, opts)
                              uses_runtime = false, open_id = 0, words = {} }, E)
     e:block(block)
     local text = table.concat(e.out)
-    -- runtime words free in the chunk (def, Number, Optional, ...): a global of that name,
+    -- runtime words free in the chunk (define, Number, Optional, ...): a global of that name,
     -- else the runtime's word; all on the first line
     local words = {}
     for w in pairs(e.words) do words[#words + 1] = w end

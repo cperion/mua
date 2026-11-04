@@ -54,7 +54,7 @@ module.exports = grammar({
     colon_parameters: $ => repeat1(alias($.colon_parameter, $.parameter)),
     colon_parameter: $ => prec.right(choice(seq(alias($._header_name, $.identifier), optional(alias($._header_dots, '..'))), alias($._header_dots, '..'))),
     function_expression: $ => seq('function', $.parameters, optional($.block), 'end'),
-    // `define entries end` is `def with entries end`: a definition, the entries need no separators.
+    // `define entries end` is a table: a definition, the entries need no separators.
     define_block: $ => seq(alias($._define, 'define'), repeat(choice(seq(alias($.with_entry, $.field), choice(',', ';')), alias($.with_entry, $.field))), choice('end', alias($._endall, 'endall'), $._implicit_end)),
     // `T with entries end` is `T { entries }`: entries need no separators.
     with_block: $ => seq(alias($._with, 'with'), repeat(choice(seq(alias($.with_entry, $.field), choice(',', ';')), alias($.with_entry, $.field))), choice('end', alias($._endall, 'endall'), $._implicit_end)),

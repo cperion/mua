@@ -4,7 +4,7 @@
 local reason = message -> (tostring(message):gsub("^[^:]+:%d+: ", ""))
 
 -- The vocabulary of known values the sentences are built from.
-local Methods = def { get = 1, post = 2 }
+local Methods = { get = 1, post = 2 }
 
 -- The builder: one verb per method. It checks each sentence and reports at the line that spoke
 -- it (error level 3: the verb, the block's call, the line in the block).
@@ -60,7 +60,7 @@ end
 print(reason(select(2, pcall(routes, bad_sentence))))
 
 -- A dialect is the same builder over an extended vocabulary.
-local Dav = def { ..Methods, propfind = 7 }
+local Dav = { ..Methods, propfind = 7 }
 local share = router Dav:
     propfind "/":
         return 207

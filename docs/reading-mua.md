@@ -222,7 +222,7 @@ return: b  ... end       return do(b) ... end          a block returned as the v
 name                     name()                        a bare name as a statement is a call
 a ? b : c                a conditional                 LuaJIT 3.0 syntax
 x -> x + 1               function(x) return x + 1 end  a short function
-define ... end           def with ... end              a table of names, closed by `end`
+define ... end           { ... }                       a table of names, written as a block
 ```
 
 Next: [the syntax reference](syntax.md) for every rule, [the guide](designing-and-writing-mua.md)
