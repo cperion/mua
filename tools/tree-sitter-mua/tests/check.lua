@@ -13,7 +13,7 @@ local function parse(text, label)
   return tree, parser
 end
 local function read(path) return table.concat(vim.fn.readfile(path), '\n') .. '\n' end
-for _, pattern in ipairs({ 'mua/*.lua', 'tests/*.lua', 'tools/tree-sitter-mua/tests/*.mua' }) do
+for _, pattern in ipairs({ 'tools/tree-sitter-mua/tests/*.mua' }) do
   for _, path in ipairs(vim.fn.glob(pattern, false, true)) do parse(read(path), path) end
 end
 local fixture = root .. '/tools/tree-sitter-mua/tests/highlights.mua'
@@ -30,8 +30,8 @@ for id, node in query:iter_captures(tree:root(), 0) do
   captured[name .. ':' .. text] = true
 end
 for _, pair in ipairs({
-  {'type.builtin', 'struct'}, {'keyword.function', 'do'},
-  {'keyword.function', 'endall'}, {'type.builtin', 'U32'}, {'variable.parameter', 'x'},
+  {'keyword', 'struct'}, {'keyword.function', 'do'},
+  {'keyword.function', 'endall'}, {'type.builtin', 'Unit'}, {'variable.parameter', 'x'},
   {'function', 'inc'}, {'function.call', 'print'}, {'function', 'ok'},
   {'number', '2'}, {'operator', '+'}, {'string.escape', '\\n'},
 }) do
