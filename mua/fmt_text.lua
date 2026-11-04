@@ -762,16 +762,29 @@ function M.withize(source, unit, spread_beside)
     -- the source with the selected blocks written as `with ... end`
     local function build(selected)
         local drop, replace, before, shift = {}, {}, {}, {}
+        -- indentation is shifted only where every line is one the layout wrote: a block that had
+        -- entries moved onto lines of their own (or has such a block inside) is already absolute
+        local function has_moved(block)
+            if next(block.moved) then return true end
+            for _, inner in ipairs(selected) do
+                if inner ~= block and inner.open > block.open and inner.close < block.close and next(inner.moved) then
+                    return true
+                end
+            end
+            return false
+        end
         for _, block in ipairs(selected) do
             for k in pairs(block.drop) do drop[k] = true end
             for k, text in pairs(block.before) do before[k] = text end
             replace[block.open], replace[block.close] = block.define and 'define' or 'with', 'end'
-            for k = block.open + 1, block.close - 1 do
-                if tokens[k][1] == 'space' and tokens[k][2]:find '\n' and k ~= block.close_space then
-                    shift[k] = (shift[k] or 0) + (block.delta or 0)
+            if not has_moved(block) then
+                for k = block.open + 1, block.close - 1 do
+                    if tokens[k][1] == 'space' and tokens[k][2]:find '\n' and k ~= block.close_space then
+                        shift[k] = (shift[k] or 0) + (block.delta or 0)
+                    end
                 end
+                if block.close_space then shift[block.close_space] = (shift[block.close_space] or 0) + block.close_delta end
             end
-            if block.close_space then shift[block.close_space] = (shift[block.close_space] or 0) + block.close_delta end
         end
         local out = {}
         for i, tk in ipairs(tokens) do
