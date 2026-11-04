@@ -1,0 +1,201 @@
+# Mua: the surface language
+
+Mua is sugared Lua: every Mua program is read by Mua's lexer and parser and written back as
+plain Lua that LuaJIT runs. It knows nothing about any host that gives its forms more meaning
+(Nua is one). This document owns Mua's surface syntax and runtime semantics; a host's own
+documents say what a host adds.
+
+```
+Lua  →  Mua  →  Nua
+```
+
+## 1. Lua, and what Mua reads
+
+Mua is **LuaJIT 2.1 with LuaJIT 3.0's syntax backport**, emitted verbatim: short functions
+`|a, b| -> e`, `x -> e`, `|| -> e`, `-> do … end`; `c ? a : b`; `?.` in all its forms; `??`;
+`! && || !=`; `~ & | << >> ~>>`; compound assignment `+= -= *= /= %= &= |= ~= <<= >>= ~>>= ..=`;
+`const`; `continue`; `_` in numbers; `0b` literals; `;;`; the line directive `# n "name"`. Not in
+LuaJIT 2.1, so not in Mua: `//`, `^=`, `??=`, `...name`. Precedences are LuaJIT's.
+
+Where LuaJIT's syntax meets Mua's, one reading wins:
+
+- a `:` closes an open `?` (the conditional's middle operand takes no block colon or method colon);
+- a name followed by `->` always begins a short function, also as a juxtaposed argument;
+- `|` and `||` begin a short function where an expression starts, and are operators between
+  operands;
+- at the start of a statement, `const` and `continue` followed by a name (or `function`) are
+  LuaJIT's declaration and statement; a `~=` statement is the xor-assignment;
+- `local ctx..=value` is an opening with an initializer (§6), not `..=`.
+
+The customary spellings `! && || !=` are the same operators as `not and or ~=`.
+
+## 2. Application
+
+Application is juxtaposition:
+
+```lua
+local fifteen = triangular 5
+local twice = map xs x -> x * 2
+```
+
+1. **What can be an argument.** After a callable expression, these start an argument: a number,
+   a string, `true` or `false`, a table constructor, a `do` lambda or a short function — on any
+   line — and a **name**, only on the same line and only directly after a name, a name
+   argument (with its member chain: `f a.b x` is `f(a.b)(x)`), a number, string or boolean
+   argument (`f 1 x` is `f(1)(x)`) or a spaced group (rule 3). A name does not continue an
+   application after an attached call (`f a(b) x` is `f(a(b))` followed by `x`, rule 7) or
+   after a table.
+2. **The newline rule.** A newline ends an application chain before any token that can begin a
+   statement. Names and `(` can begin statements, so `local y = x` followed by `y = y + 1` on
+   the next line stays two statements. Literals, tables and lambdas cannot begin statements, so
+   they still attach across lines.
+3. **What an argument is.** A primary expression with its postfix chain, as Lua parses it:
+   `.name`, `[i]`, `:m args`, `(args)`, and for a name, a table constructor or string. So
+   `f a.b` is `f(a.b)` and `f a(b)` is `f(a(b))`. A literal's chain stops at a table or string
+   (`f 21 {}` is `f(21)({})`). Only an attached `(` continues an argument's chain: a `(` with
+   whitespace before it on the same line is the **next argument group**, so `f a (b + 1)` is
+   `f(a)(b + 1)`. Such a spaced group is itself an argument, so names after it go on applying:
+   `f (g x) y` is `f(g(x))(y)`. After the callee itself the spacing makes no difference.
+4. **Left associativity.** `f a b` is `f(a)(b)`. Application binds more tightly than infix
+   operators: `f a + 1` is `f(a) + 1`, and `f -1` is subtraction.
+5. **Brackets** group, delimit argument lists and resolve ambiguity; a compound argument is
+   written as a spaced group: `f (x + 1) y`.
+6. **Loop headers.** The `do` of a `while` or `for` header ends the header; a lambda inside a
+   header goes in brackets.
+7. **Statements on one line.** Two statements on one line where the first ends with a name and
+   the second begins with one (`a = b c = d`) form an application; separate them with `;`.
+   `f() g()` is unaffected: a name after an attached call's `)` is not an argument.
+8. **Zero-argument call statements.** A bare name or qualified name used as a whole statement
+   invokes it with no arguments: `refresh`, `screen.refresh` and `screen:refresh` are
+   `refresh()`, `screen.refresh()` and `screen:refresh()`. This is statement-only: `local f =
+   refresh` and `return refresh` refer to the value. Use separate lines or `;` between calls
+   (`refresh; save`); `refresh save` supplies an argument. Parenthesized or indexed callees keep
+   explicit invocation.
+
+## 3. Lambdas
+
+```lua
+do(a, b) = a + b            -- an expression body
+do(a, b) return a + b end   -- a block body
+do ... end                  -- no parameters
+|a, b| -> a + b             -- short functions (LuaJIT 3.0 syntax)
+```
+
+A lambda is a Lua function. A parameter or result may carry an annotation (§7). A `do` that
+begins a statement is Lua's own block; a `do` after an operand, `=`, `(`, `,`, `{` or `return`
+is a lambda.
+
+## 4. Blocks as arguments
+
+**The trailing colon.** A colon that ends a line, optionally after parameter names, opens an
+untyped block lambda closed by `end`:
+
+```lua
+with_buffer n:                -- with_buffer n do(..)
+    ...
+end
+words:each: key value         -- words:each do(key, value)
+    ...
+end
+```
+
+`=:` assigns a block: `local f =: x`, and in a table `found =: v`. It works inside brackets,
+because `=:` occurs nowhere else. A colon is a block opener only where there is no annotation
+colon: not the result type after a parameter list, not the names of a `local`, not a field
+inside brackets, not `::label::`, and not a method call (`xs:each`).
+
+**`with` blocks.** `T with entries end` is `T { entries }`: keyed data without commas, closed
+by `end`. Entries are `name = value`, `.name` (which is `name = name`), `[k] = v`, `..spread`,
+positional values on lines of their own, and handlers `name =: params …`. With no head,
+`with` where an expression starts (after `return`, `=`, `(`, `,` or `{`) is the table itself,
+unless a host gives it meaning.
+
+**`endall`** closes every open block (`do`, colon, `=:` and `with`) back to the nearest
+enclosing Lua control block or typed function body: `if`, `while`, `for`, `function`,
+`repeat`, a bare `do … end`, or a typed function. Those keep their own `end`. Nothing may
+follow `endall` inside the blocks it closes. It returns nothing and calls nothing: its effects
+are exactly those of the expanded program.
+
+## 5. Data: entries, spread, `define`
+
+`{ ..base, extra = true }` spreads the string keys of a table:
+
+- explicit fields override spread fields regardless of position;
+- duplicate explicit fields are rejected;
+- two spreads contributing the same field are rejected (`spread-overlap`);
+- all operands evaluate in source order;
+- a spread source must be a table (`spread-source`).
+
+`..e` in an argument list, a return list or an initializer list expands a call's several
+results or a table's array part. `define` returns its argument, so `define with … end` reads as
+a definition; a **structural type** is the table it is given.
+
+**Structural markers.** `required` and `optional` are values in a structural type: a keyed
+spread of the type fails (`required`) when a required field is not supplied and leaves an
+optional one out. `closed` marks a type whose spreads admit only its declared fields. Closed
+types are checkers (§7).
+
+## 6. Opening
+
+An opened Lua table introduces its string keys, as they are when it is opened:
+
+| Form | Meaning |
+|---|---|
+| `do(ctx..)` | receive one argument, then open it |
+| `do(..)` | the same, without a name; `(..)` reads the home |
+| `local ctx..` | open an existing binding |
+| `local ctx.. = e` | evaluate once, bind, then open |
+
+Opening follows lexical shadowing: introduced names shadow earlier visible bindings, later
+declarations and openings shadow them in turn, and leaving a scope restores the enclosing
+bindings. Initializers resolve names before the new binding is introduced. A name read in an
+opened region is the opened table's key if it has one, else the enclosing binding; a write
+follows the same rule. Reads and writes allocate nothing and call nothing per access.
+
+## 7. Typed forms: contracts, `Struct`, `Sum`
+
+Without a host, annotations are contracts, checked when a function is called, when it returns,
+and when a typed local is assigned. A checker is a built-in (`Number String Boolean Table
+Function Any Unit Optional(T)`), a predicate function, a closed structural type, a `Struct`
+or a `Sum`. A failure names what was expected and what was found at the caller's line:
+
+```lua
+local area = do(w: Number, h: Number): Number = w * h
+area("3", 4)   -- contract: parameter 'w' of area expects Number, got a string "3"
+```
+
+The translator's `contracts = false` removes the checks.
+
+**`Struct`** is a nominal record type: closed, with typed fields, instances branded by a
+metatable through which methods (`function P:m() … end`) are reached:
+
+```lua
+local Point = Struct with
+    x: Number
+    y: Number
+end
+local p = Point { x = 1, y = 2 }
+```
+
+**`Sum`** is a tagged union with a constructor per alternative. A value is matched by calling
+it with one handler per alternative, and **every match checks** that the handlers name exactly
+the alternatives: a missing or unknown handler is an error at the match.
+
+```lua
+local Shape = Sum with
+    circle: Number
+    rect: Table
+end
+local area = do(s: Shape): Number = s with
+    circle = do(r) = r * r
+    rect = do(t) = t.w * t.h
+end
+```
+
+## 8. For hosts
+
+A host gives the typed forms and other forms meaning through a table passed to the translator:
+`typed_lambda`, `typed_function`, `opened_lambda`, `struct`, `sum`, statement and prefix
+keywords the parser consults, a fact provider for analysis, and runtime overrides. A form goes
+through the host's meaning or Mua's, never both. A host receives parsed nodes, never source to
+reparse. See the design document for the interface.
