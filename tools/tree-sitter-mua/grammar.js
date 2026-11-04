@@ -5,7 +5,7 @@ module.exports = grammar({
   extras: $ => [/\s/, $.comment, $._endall_reset],
   externals: $ => [$.long_string, $.long_comment, $.name_argument, $._endall, $._implicit_end, $._error_sentinel, $._endall_reset, $._attached_paren, $._block_colon, $._header_name, $._header_dots, $._with],
   word: $ => $.identifier,
-  conflicts: $ => [[$.expression_statement, $._expression], [$.bare_method_call, $._expression], [$.parameter, $._expression], [$.field, $._expression], [$.parameter, $.vararg_expression], [$.handler, $._expression]],
+  conflicts: $ => [[$.with_spread, $._expression], [$.expression_statement, $._expression], [$.bare_method_call, $._expression], [$.parameter, $._expression], [$.field, $._expression], [$.parameter, $.vararg_expression], [$.handler, $._expression]],
   rules: {
     source_file: $ => repeat($._statement),
     comment: $ => choice(token(seq('--', /[^\r\n]*/)), $.long_comment),
@@ -55,9 +55,13 @@ module.exports = grammar({
     function_expression: $ => seq('function', $.parameters, optional($.block), 'end'),
     // `T with entries end` is `T { entries }`: entries need no separators.
     with_block: $ => seq(alias($._with, 'with'), repeat(choice(seq(alias($.with_entry, $.field), choice(',', ';')), alias($.with_entry, $.field))), choice('end', alias($._endall, 'endall'), $._implicit_end)),
+    // `..base` is an entry of its own: its operand is a name with its postfix chain, never an
+    // operator expression, so a `..` that follows (on a line of its own) begins the next entry
+    // instead of concatenating.
+    with_spread: $ => seq('..', choice($.identifier, $.member_expression, $.index_expression, $.call_expression, $.parenthesized_expression)),
     // A named entry never starts a call, so a colon after the name is its annotation
     // (`x: U32`), not a block. Positional entries are literals, tables and lambdas.
-    with_entry: $ => choice($.handler, seq('.', $.identifier), seq($.identifier, ':', $._expression), seq($.identifier, '=', $._value),
+    with_entry: $ => choice($.handler, alias($.with_spread, $.spread_expression), seq('.', $.identifier), seq($.identifier, ':', $._expression), seq($.identifier, '=', $._value),
       seq('[', $._expression, ']', '=', $._value), $.number, $.string, $.boolean, $.nil, $.table_constructor,
       $.parenthesized_expression, $.lambda, alias($.with_call, $.call_expression)),
     // A positional call entry (`recv a do(v) ... end`, `m with ... end`). Its first argument
