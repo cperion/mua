@@ -217,8 +217,8 @@ local clash = pcall(function() return define with ..Edits ..Edits end end)
 assert(not clash)
 
 local document = { length = 0, cursor = 0, edits = 0 }
-Editing.insert(document)(5)
-Editing.left(document)
+Editing.insert document 5
+Editing.left document
 assert(document.length == 5 and document.cursor == 4)
 ```
 
@@ -230,8 +230,8 @@ vocabulary as a parameter and calls its members, or opens it:
 ```lua
 -- a function that takes a vocabulary calls its members
 local type_and_step_back = do(ops, document, n)
-    ops.insert(document)(n)
-    ops.left(document)
+    ops.insert document n
+    ops.left document
 end
 type_and_step_back(Editing, document, 3)
 assert(document.length == 8 and document.cursor == 6)
@@ -239,8 +239,8 @@ assert(document.length == 8 and document.cursor == 6)
 -- opening a vocabulary brings its names into scope
 local type_twice = do(document, n)
     local Editing..
-    insert(document)(n)
-    insert(document)(n)
+    insert document n
+    insert document n
 end
 type_twice(document, 1)
 assert(document.length == 10)
@@ -457,12 +457,12 @@ end
 
 local fresh = { length = 0, cursor = 0, edits = 0 }
 local moved = 0
-transaction(fresh)(do(..)
-    insert(5)
+transaction fresh:
+    insert 5
     local before = cursor
-    move_left()
+    move_left
     moved = before - cursor
-end)
+end
 assert(moved == 1 and fresh.length == 5 and fresh.cursor == 4 and fresh.edits == 1)
 ```
 
@@ -515,11 +515,11 @@ local attempt = do(document)
 end
 
 local type_capped = do(document, n, cap)
-    return attempt(document)(do(..)
-        insert(n)
+    return attempt document:
+        insert n
         if length > cap then return Outcome.abort(length) end
         return Outcome.commit()
-    end)
+    end
 end
 
 local doc = { length = 0, cursor = 0, edits = 0 }
@@ -560,11 +560,11 @@ local counted = do(stats)
 end
 
 local stats, big = { count = 0 }, { length = 0, cursor = 0, edits = 0 }
-counted(stats)(do()
-    clamped(big, 100)(do()
-        transaction(big)(do(..) insert(250) end)
-    end)
-end)
+counted stats do
+clamped(big, 100) do
+transaction big:
+    insert 250
+endall
 assert(big.length == 100 and stats.count == 1)
 ```
 
@@ -587,12 +587,12 @@ local logged = do(body)
 end
 
 local type_logged = do(document, n)
-    return logged(do(..)
-        transaction(document)(do(..)
-            insert(n)
-            note(1)
-        end)
-    end)
+    return logged:
+        transaction document:
+            insert n
+            note 1
+        end
+    end
 end
 assert(type_logged({ length = 0, cursor = 0, edits = 0 }, 3) == 1)
 ```
@@ -643,11 +643,11 @@ local keymap = do(body)
     return bindings
 end
 
-local editor_keys = keymap(do(..)
+local editor_keys = keymap:
     bind "h" (Command.move(Direction.left()))
     bind "l" (Command.move(Direction.right()))
     bind "u" (Command.undo())
-end)
+end
 assert(#editor_keys == 3 and editor_keys[1].key == "h")
 ```
 
@@ -722,7 +722,7 @@ local router = do(Verbs)
         return routes
     end
 end
-local routes = router(Methods)
+local routes = router Methods
 assert(not pcall(routes, do(..) get "notes" (do() = 1) end))      -- a path starts with '/'
 ```
 
@@ -739,10 +739,14 @@ a handler speaks the request's fields directly, as an activity body speaks its c
 
 ```lua
 -- the sentences: each handler opens the request it is given
-local site = routes(do(..)
-    get "/" (do(..) return 200 end)
-    post "/notes" (do(..) return 200 + #path end)
-end)
+local site = routes:
+    get "/":
+        return 200
+    end
+    post "/notes":
+        return 200 + #path
+    end
+end
 
 -- the engine over the description
 local dispatch = do(table, request)
@@ -774,10 +778,12 @@ qualify a homonym rather than letting one shadow the other (§13):
 ```lua
 -- a dialect: the same builder over a vocabulary extended by spread
 local Dav = define { ..Methods, propfind = 7 }
-local dav_routes = router(Dav)
-local share = dav_routes(do(..)
-    propfind "/" (do(..) return 207 end)
-end)
+local dav_routes = router Dav
+local share = dav_routes:
+    propfind "/":
+        return 207
+    end
+end
 assert(share[1].method == 7)
 ```
 
@@ -976,7 +982,7 @@ local apply = do(document, c: Command): Unit
             end
         end
         insert =: n
-            Editing.insert(document)(n)
+            Editing.insert document n
         end
         undo() = nil
         quit() = nil
@@ -1001,7 +1007,7 @@ implementation of the engine.
 | ordinary result | a computation producing a value: the default |
 | subject block | a block receiving a thing to act on: `each(items): item … end` |
 | activity block | a block receiving a context and speaking its instructions: `do(..)`, or `do(draft..)` when the name is used |
-| builder block | a block declaring a structure while building: `keymap(do(..) … end)` (§5.9) |
+| builder block | a block declaring a structure while building: `keymap: … end` (§5.9) |
 | keyed handlers | one behavior per outcome: matching a `oneof` |
 
 Application is curried, so an activity that takes setup and then a block is a function returning
