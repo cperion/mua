@@ -353,6 +353,9 @@ formatted('a list of functions', 'local t = define\n    do(x) = x + 1\n    x -> 
 formatted('a list of calls', 'local t = define\n    f(1)\n    f(2)\nend\n', 'local t = define\n    f 1\n    f 2\nend\n')
 formatted('a list mixed with keys', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\n', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\n')
 
+-- a block with an entry moved to its own line and one the layout already wrote is indented once
+formatted('a long table in a call is indented once', 'print(f(Mul { left = Num { value = 0 }, right = Add { left = Num { value = 5 }, right = Num { value = 5 } } }))\n', 'print(f(Mul with\n    left = Num { value = 0 }\n    right = Add { left = Num { value = 5 }, right = Num { value = 5 } }\nend))\n')
+
 -- a headless `with` is not a table in braces: no pass may give it a head or braces
 formatted('a headless with as an argument stays', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n')
 formatted('a one-line headless with stays', 'local w = with a = 1 end\n', 'local w = with a = 1 end\n')

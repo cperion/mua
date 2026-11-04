@@ -185,6 +185,40 @@ until the block names it itself.
 
 `meta` brands nothing and checks nothing: it is the plain Lua counterpart of a `struct`'s methods.
 
+**`family`** is a closed set of structs with passes over it, the shape of an AST and its
+compiler passes. The family is declared first, so the structs' fields can be typed with it, and
+sealed with its kinds once they exist:
+
+```mua
+local Expr = family "Expr"
+local Num = struct { value: Number }
+local Add = struct { left: Expr, right: Expr }
+Expr { Num, Add }
+
+local Eval = define
+    Num =: n go
+        return n.value
+    end
+    Add =: n go
+        return go(n.left) + go(n.right)
+    end
+end
+local eval = Expr.pass "eval" with ..Eval end
+print(eval(Add { left = Num { value = 1 }, right = Num { value = 2 } }))   -- 3
+```
+
+- `Expr` is a checker named `Expr`: a field typed `left: Expr` fails with `expects Expr` for a
+  value that is no member. Using it before it is sealed is an error.
+- `Expr.pass name handlers` returns a function over the family's values. A handler is keyed by
+  the struct's name and called as `handler(node, pass)`, so it can recurse. The pass is checked
+  when it is made: a kind with no handler, a handler for a name that is no kind, and a handler
+  that is not a function are errors that name it. A value that is no member is named when the
+  pass meets it.
+- `Expr.is(node, Num)` tests a kind (a struct that is not a member is an error, not `false`);
+  `Expr.kinds` lists the names in order.
+- Passes are vocabularies, so they compose by spread, and an explicit entry settles a clash
+  between two of them.
+
 **Lists.** A `define` block (like any `with` block) also takes positional entries: any expression,
 one per line, or separated by commas on a line, so it writes list-like tables without commas:
 
