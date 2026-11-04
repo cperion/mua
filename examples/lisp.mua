@@ -601,10 +601,11 @@ local programs = {
 }
 for _, program in ipairs programs do
     local compiled_value, evaluated_value, compiled = run program.source
-    local before, after = instruction_count compiled.instructions, instruction_count compiled.optimized
-    local sizes = before .. " -> " .. after
-    local values = "compiled " .. tostring compiled_value .. ", evaluated " .. tostring evaluated_value
-    print(program.title .. ": " .. values .. ", " .. sizes .. " instructions")
+    local before = instruction_count compiled.instructions
+    local after = instruction_count compiled.optimized
+    local values = ("compiled %s, evaluated %s"):format(tostring compiled_value,
+        tostring evaluated_value)
+    print(("%s: %s, %d -> %d instructions"):format(program.title, values, before, after))
 end
 
 local folded = compile programs[1].source
