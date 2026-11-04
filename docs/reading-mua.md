@@ -200,16 +200,17 @@ print("end " .. title);
 end;
 end;
 
-with_log("import")(function(__home) local __o1n, __o1 = __mua.open(__home);
-(__o1n.print ? __o1.print : print)("  reading");
-(__o1n.print ? __o1.print : print)("  writing");
+with_log("import")(function(__home) local __o1 = __mua.open(__home); local __o1_print = __o1.print ~= nil;
+(__o1_print ? __o1.print : print)("  reading");
+(__o1_print ? __o1.print : print)("  writing");
 end);
 ```
 
-The first function is step 5 above. The call site shows the block opening: `__mua.open`
-records what the block was handed, and each free name in the block reads as
-`(opened.name ? opened.name : name)`, a check for a key of the opened table first. It costs
-nothing when the block opens nothing, and no table or closure is built for the lookup.
+The first function is step 5 above. The call site shows the block opening: `__mua.open` checks
+that the block was handed something it can open, one flag per name the block mentions records
+whether the opened table has it (`__o1_print`), and each free name in the block reads as
+`(flag ? opened.name : name)`. Opening allocates nothing, and reading a name costs a test and a
+lookup.
 
 ## A short reading table
 

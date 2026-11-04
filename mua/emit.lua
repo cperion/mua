@@ -18,11 +18,12 @@
 -- declared at the start of the first line when the chunk uses it: an environment that
 -- defines a global `__mua` supplies its own.
 --
--- Opening (design §4.4, E1): each opening is two locals, `local __o1n, __o1 =
--- __mua.open(v)` (the names it introduces, its members); a free name inside the opened
--- region (one no scope binds after the opening) reads as (__o2n.x ? __o2.x : __o1n.x ?
--- __o1.x : x), over the openings newer than its nearest binding, innermost first. Nothing is
--- allocated and nothing is called per access (lean emission: E1).
+-- Opening (design §4.4, E1): an opening is `local __o1 = __mua.open(v)` (the context) and one
+-- boolean per name the region mentions, `local __o1_x, __o1_y = __o1.x ~= nil, __o1.y ~= nil`
+-- (which of them the context introduces, as it is when opened); a free name inside the opened
+-- region (one no scope binds after the opening) reads as (__o2_x ? __o2.x : __o1_x ? __o1.x :
+-- x), over the openings newer than its nearest binding, innermost first. Opening allocates
+-- nothing, and nothing is allocated or called per access (lean emission: E1).
 
 local M = {}
 local WORDS = {}
@@ -65,7 +66,8 @@ function E:bound(name)
     for i = #self.scopes, 1, -1 do if self.scopes[i].names[name] then return true end end
     return false
 end
--- the opened contexts newer than the nearest binding of `name`, innermost first
+-- the opened contexts newer than the nearest binding of `name`, innermost first (each is
+-- { alias, flags = name -> the local holding whether it introduces the name })
 function E:opens_for(name)
     local out = {}
     for i = #self.scopes, 1, -1 do
@@ -82,17 +84,45 @@ function E:resolved(name)
     local opens = self:opens_for(name)
     for i = #opens, 1, -1 do
         local o = opens[i]
-        text = ('%sn.%s ? %s.%s : %s'):format(o, name, o, name, text)
+        text = ('%s ? %s.%s : %s'):format(o.flags[name] or (o.alias .. '.' .. name .. ' ~= nil'), o.alias, name, text)
     end
     return '(' .. text .. ')'
 end
--- open the value of the local `var` in the current scope
-function E:open(var, line)
+-- the names a region of the program mentions: the ones an opening there may have to resolve
+local function collect_names(node, out, seen)
+    if type(node) ~= 'table' or seen[node] then return end
+    seen[node] = true
+    if node.k == 'name' and node.name then out[node.name] = true end
+    if node.k == 'function' and node.path then out[node.path[1]] = true end
+    for _, child in pairs(node) do
+        if type(child) == 'table' then collect_names(child, out, seen) end
+    end
+end
+
+-- open the value of the local `var` in the current scope; `region` is what the opening covers
+-- (the statements after it, or a function's body), whose names it will have to resolve
+function E:open(var, line, region)
     self.open_id = self.open_id + 1
     local alias = '__o' .. self.open_id
-    self:put(('local %sn, %s = %s(%s); '):format(alias, alias, self:rt('open'), var), line)
+    self:put(('local %s = %s(%s); '):format(alias, self:rt('open'), var), line)
+    local names = {}
+    collect_names(region, names, {})
+    local list = {}
+    for name in pairs(names) do list[#list + 1] = name end
+    table.sort(list)
+    local flags = {}
+    -- (a region naming very many things falls back to testing the context where it is read:
+    -- Lua allows 200 locals to a function)
+    if #list > 0 and #list <= 60 then
+        local locals, tests = {}, {}
+        for i, name in ipairs(list) do
+            flags[name] = alias .. '_' .. name
+            locals[i], tests[i] = flags[name], ('%s.%s ~= nil'):format(alias, name)
+        end
+        self:put(('local %s = %s; '):format(table.concat(locals, ', '), table.concat(tests, ', ')))
+    end
     local sc = self.scopes[#self.scopes]
-    sc.opens[#sc.opens + 1] = alias
+    sc.opens[#sc.opens + 1] = { alias = alias, flags = flags }
 end
 
 -- expressions -----------------------------------------------------------------------------------
@@ -312,7 +342,7 @@ function E:funcbody(fn, line, head, self_param, contract)
         self:put(('local %s = { n = select("#", ...), ... }; '):format(fn.rest))
         self:bind(fn.rest)
     end
-    for _, p in ipairs(fn.params) do if p.opened then self:open(p.name) end end
+    for _, p in ipairs(fn.params) do if p.opened then self:open(p.name, nil, fn.body or fn.expr) end end
     if fn.expr then
         self:put('return ', fn.expr.line)
         if contract then self:put(('(%s(%s, %s, '):format(self:rt('result'), contract.result, quote(self.fnctx.name))) end
@@ -334,7 +364,12 @@ end
 
 -- statements ------------------------------------------------------------------------------------
 
-function E:stats(stats) for _, s in ipairs(stats) do self:stat(s) end end
+function E:stats(stats)
+    for i, s in ipairs(stats) do
+        self.rest = { stats = stats, index = i }       -- what an opening here would cover
+        self:stat(s)
+    end
+end
 function E:block(stats, line) self:push(); self:stats(stats); self:pop() end
 
 local function names_of(list) local o = {} for i, v in ipairs(list) do o[i] = v.name end return table.concat(o, ', ') end
@@ -365,11 +400,14 @@ function E:stat(s)
             end
         end
     elseif k == 'open' then
+        local rest = self.rest
         if s.init then
             self:put('local ' .. s.name .. ' = ', line); self:expr(s.init); self:put('; ')
             self:bind(s.name)
         end
-        self:open(s.name, line)
+        local region = {}
+        for i = rest.index + 1, #rest.stats do region[#region + 1] = rest.stats[i] end
+        self:open(s.name, line, region)
     elseif k == 'localfunction' then
         self:bind(s.name)
         if s.fn.result and self.host.typed_function then
@@ -412,7 +450,8 @@ function E:stat(s)
             self:list(s.exprs)
             local opens = self:opens_for(t)
             for i, o in ipairs(opens) do
-                self:put(('; %s %sn.%s then %s.%s = __value'):format(i == 1 and 'if' or 'elseif', o, t, o, t))
+                self:put(('; %s %s then %s.%s = __value'):format(i == 1 and 'if' or 'elseif',
+                    o.flags[t] or (o.alias .. '.' .. t .. ' ~= nil'), o.alias, t))
             end
             self:put(('; else %s = __value end end; '):format(t))
             return
