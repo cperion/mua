@@ -220,11 +220,11 @@ function E:expr(n)
         -- the middle operand is bracketed: it may not hold a method call directly
         self:operand(n.c); self:put(' ? ('); self:expr(n.a); self:put(') : '); self:operand(n.b)
     elseif k == 'struct' and n.ffi then
-        -- FFIStruct: a C struct for LuaJIT's FFI. A field's type is a C type name (a name no
+        -- ffistruct: a C struct for LuaJIT's FFI. A field's type is a C type name (a name no
         -- scope binds is read as C's), a string of C, or a ctype value (a name that is bound).
         local translate = self.host.ffi_struct
         if translate then return self:put(translate(n, self:context(n)), line) end
-        self:put(('%s(%s, { '):format(self:rt('FFIStruct'), quote(n.name or 'FFIStruct')), line)
+        self:put(('%s(%s, { '):format(self:rt('ffistruct'), quote(n.name or 'ffistruct')), line)
         for i, f in ipairs(n.fields) do
             if i > 1 then self:put(', ') end
             self:put('{ ' .. quote(f.name) .. ', ', f.line)
@@ -236,7 +236,7 @@ function E:expr(n)
     elseif k == 'struct' then
         local translate = self.host[n.sum and 'sum' or 'struct']
         if translate then return self:put(translate(n, self:context(n)), line) end
-        self:put(('%s(%s, { '):format(self:rt(n.sum and 'Sum' or 'Struct'), quote(n.name or (n.sum and 'Sum' or 'Struct'))), line)
+        self:put(('%s(%s, { '):format(self:rt(n.sum and 'oneof' or 'struct'), quote(n.name or (n.sum and 'oneof' or 'struct'))), line)
         for i, f in ipairs(n.fields) do
             if i > 1 then self:put(', ') end
             self:put('{ ' .. quote(f.name) .. ', ', f.line); self:expr(f.type); self:put(' }')

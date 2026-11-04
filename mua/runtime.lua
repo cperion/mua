@@ -1,7 +1,7 @@
 -- mua.runtime: what emitted Mua code calls (design macro-layer.md §4.5–§4.8). Plain
 -- Lua. A host replaces entries by giving its chunks a global `__mua` built with extend().
 --
--- Costs are paid where a value is built (a keyed spread, a Struct or Sum value, a contract
+-- Costs are paid where a value is built (a keyed spread, a struct or oneof value, a contract
 -- check), never per name access (design E1).
 
 local R = {}
@@ -10,11 +10,11 @@ local unpack = unpack or table.unpack
 -- describing values and checkers, for diagnostics ----------------------------------------------
 
 local checkers = setmetatable({}, { __mode = 'k' })     -- checker -> { name, test }
-local structs = setmetatable({}, { __mode = 'k' })      -- Struct type -> { name, fields, index, meta }
-local sums = setmetatable({}, { __mode = 'k' })         -- Sum type -> { name, alts, index, meta }
+local structs = setmetatable({}, { __mode = 'k' })      -- struct type -> { name, fields, index, meta }
+local sums = setmetatable({}, { __mode = 'k' })         -- oneof type -> { name, alts, index, meta }
 local closed = setmetatable({}, { __mode = 'k' })       -- closed structural type -> { declared names }
-local instance_of = setmetatable({}, { __mode = 'k' })  -- instance metatable -> its Struct or Sum
-local ctypes = setmetatable({}, { __mode = 'k' })        -- FFIStruct ctype -> { name, tag }
+local instance_of = setmetatable({}, { __mode = 'k' })  -- instance metatable -> its struct or oneof
+local ctypes = setmetatable({}, { __mode = 'k' })        -- ffistruct ctype -> { name, tag }
 local ffi_loaded
 local function ffi() ffi_loaded = ffi_loaded or require 'ffi'; return ffi_loaded end
 
@@ -191,7 +191,7 @@ function R.check(T, v)
     end
     if type(T) == 'function' then return T(v) and true or false end
     error(('%s is not a checker (a checker is a built-in like Number, a predicate, a closed structural type, '
-        .. 'a Struct or a Sum)'):format(describe_value(T)), 3)
+        .. 'a struct or a oneof)'):format(describe_value(T)), 3)
 end
 
 -- a contract: v passes T, or an error naming what (`parameter 'x' of f`) at the given level
@@ -215,11 +215,11 @@ function R.result(T, fname, v)
     return v
 end
 
--- Struct and Sum (design §4.8) --------------------------------------------------------------------
+-- struct and oneof (design §4.8) --------------------------------------------------------------------
 
 -- a nominal record type: closed, typed fields; instances branded by a metatable through
 -- which methods (`function P:m() ... end`) are reached
-function R.Struct(name, fields, unchecked)
+function R.struct(name, fields, unchecked)
     local S = {}
     local info = { name = name, fields = fields, index = {}, meta = { __index = S, __name = name } }
     for _, f in ipairs(fields) do info.index[f[1]] = f[2] end
@@ -246,7 +246,7 @@ end
 
 -- a tagged union: a constructor per alternative, payloads checked; a value is matched by calling
 -- it with one handler per alternative, and every match checks the handlers name exactly those
-function R.Sum(name, alts, unchecked)
+function R.oneof(name, alts, unchecked)
     local S = {}
     local info = { name = name, alts = alts, index = {}, meta = {} }
     for _, a in ipairs(alts) do info.index[a[1]] = a[2] end
@@ -278,19 +278,19 @@ function R.Sum(name, alts, unchecked)
     return S
 end
 
--- FFIStruct (LuaJIT FFI): a C struct, declared once under a generated tag, as a ctype. A field's
--- type is a string of C (`"double"`, `"char *"`, `"uint8_t[16]"`) or a ctype made by FFIStruct;
+-- ffistruct (LuaJIT FFI): a C struct, declared once under a generated tag, as a ctype. A field's
+-- type is a string of C (`"double"`, `"char *"`, `"uint8_t[16]"`) or a ctype made by ffistruct;
 -- the ctype is a checker (R.check), and `Point { x = 1 }` / `Point(1, 2)` build values as for
 -- any ctype.
 local ffi_tags = 0
-function R.FFIStruct(name, fields)
+function R.ffistruct(name, fields)
     local decls = {}
     for _, f in ipairs(fields) do
         local fname, T = f[1], f[2]
         local text
         if type(T) == 'string' then text = T
         elseif type(T) == 'cdata' and ctypes[T] then text = 'struct ' .. ctypes[T].tag
-        else error(('FFIStruct %s: the field \'%s\' needs a C type (a name, a string of C, or an FFIStruct), got %s')
+        else error(('ffistruct %s: the field \'%s\' needs a C type (a name, a string of C, or an ffistruct), got %s')
             :format(name, fname, describe_value(T)), 3) end
         local base, array = text:match('^(.-)%s*(%[[^%]]*%])$')
         if base then text = base else array = '' end

@@ -152,12 +152,12 @@ bindings. Initializers resolve names before the new binding is introduced. A nam
 opened region is the opened table's key if it has one, else the enclosing binding; a write
 follows the same rule. Reads and writes allocate nothing and call nothing per access.
 
-## 7. Typed forms: contracts, `Struct`, `Sum`
+## 7. Typed forms: contracts, `struct`, `oneof`
 
 Without a host, annotations are contracts, checked when a function is called, when it returns,
 and when a typed local is assigned. A checker is a built-in (`Number String Boolean Table
-Function Any Unit Optional(T)`), a predicate function, a closed structural type, a `Struct`
-or a `Sum`. A failure names what was expected and what was found at the caller's line:
+Function Any Unit Optional(T)`), a predicate function, a closed structural type, a `struct`
+or a `oneof`. A failure names what was expected and what was found at the caller's line:
 
 ```lua
 local area = do(w: Number, h: Number): Number = w * h
@@ -166,23 +166,23 @@ area("3", 4)   -- contract: parameter 'w' of area expects Number, got a string "
 
 The translator's `contracts = false` removes the checks.
 
-**`Struct`** is a nominal record type: closed, with typed fields, instances branded by a
+**`struct`** is a nominal record type: closed, with typed fields, instances branded by a
 metatable through which methods (`function P:m() … end`) are reached:
 
 ```lua
-local Point = Struct with
+local Point = struct with
     x: Number
     y: Number
 end
 local p = Point { x = 1, y = 2 }
 ```
 
-**`Sum`** is a tagged union with a constructor per alternative. A value is matched by calling
+**`oneof`** is a tagged union with a constructor per alternative. A value is matched by calling
 it with one handler per alternative, and **every match checks** that the handlers name exactly
 the alternatives: a missing or unknown handler is an error at the match.
 
 ```lua
-local Shape = Sum with
+local Shape = oneof with
     circle: Number
     rect: Table
 end
@@ -192,22 +192,22 @@ local area = do(s: Shape): Number = s with
 end
 ```
 
-**`FFIStruct`** declares a C struct for LuaJIT's FFI and gives back its ctype:
+**`ffistruct`** declares a C struct for LuaJIT's FFI and gives back its ctype:
 
 ```lua
-local Point = FFIStruct with
+local Point = ffistruct with
     x: double
     y: double
 end
-local Segment = FFIStruct { a: Point, b: Point, tag: "uint8_t[4]" }
+local Segment = ffistruct { a: Point, b: Point, tag: "uint8_t[4]" }
 local p = Point { x = 12.5, y = 8 }
 ```
 
 A field's type is a C type: a name nothing in scope binds is read as C's (`double`), a string is
-C text (`"uint8_t[4]"`, `"char *"`), and a name that is bound must hold an `FFIStruct` ctype
+C text (`"uint8_t[4]"`, `"char *"`), and a name that is bound must hold an `ffistruct` ctype
 (nesting). The result is an ordinary ctype: values are built as for any ctype (`Point { … }`,
-`Point(1, 2)`). A ctype is a checker, so it works as a contract (`do(p: Point)`), a `Struct`
-field or a `Sum` payload. There are no methods on an `FFIStruct`.
+`Point(1, 2)`). A ctype is a checker, so it works as a contract (`do(p: Point)`), a `struct`
+field or a `oneof` payload. There are no methods on an `ffistruct`.
 
 ## 8. For hosts
 

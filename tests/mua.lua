@@ -1,4 +1,4 @@
--- Mua's tests: lexer, parser, emitter, contracts, Struct and Sum, then every Lua source of
+-- Mua's tests: lexer, parser, emitter, contracts, struct and oneof, then every Lua source of
 -- this repository through the pipeline. Run from the repository root:
 --   luajit tests/mua.lua
 local root = arg[0]:match('^(.*)/tests/[^/]*$') or '.'
@@ -126,7 +126,7 @@ function show(n)
     elseif k == 'struct' then
         local o = {}
         for i, f in ipairs(n.fields) do o[i] = f.name .. ':' .. show(f.type) end
-        return (n.sum and 'Sum' or 'Struct') .. '{' .. table.concat(o, ', ') .. '}'
+        return (n.sum and 'oneof' or 'struct') .. '{' .. table.concat(o, ', ') .. '}'
     elseif k == 'callstat' then return show(n.e)
     elseif k == 'assign' then return list(n.targets) .. ' = ' .. list(n.exprs)
     elseif k == 'compound' then return show(n.target) .. ' ' .. n.op .. '= ' .. show(n.e)
@@ -191,8 +191,8 @@ parses('endall closes the spine', 'outer:each: a\n  inner:each: b\n    f a b\nen
     'outer:each(colon(a){inner:each(colon(b){f(a)(b)})}), g()')
 parses('endall stops at a typed word', 'local w = do(): U32\n  xs:each: a\n    f a\n  endall\n  return 1\nend',
     'local w = fn():U32{xs:each(colon(a){f(a)}), return 1}')
-parses('Struct and Sum', 'local P = Struct { x: F32, y: F32 }\nlocal S = Sum with\n  a: Unit\n  b: U32\nend',
-    'local P = Struct{x:F32, y:F32}, local S = Sum{a:Unit, b:U32}')
+parses('struct and oneof', 'local P = struct { x: F32, y: F32 }\nlocal S = oneof with\n  a: Unit\n  b: U32\nend',
+    'local P = struct{x:F32, y:F32}, local S = oneof{a:Unit, b:U32}')
 parses('typed word', 'local f = do(x: U32): U32 = x + 1', 'local f = fn(x):U32=(x + 1)')
 parses('opening', 'local ctx.. = e\nf do(..) g end', 'open ctx = e, f(fn(..){g()})')
 parses('continue', 'for i = 1, 2 do continue end', 'for i {continue}')
@@ -318,31 +318,31 @@ runs('a closed type is a checker', 'local P = closed define { x = required, y = 
 errors('a closed type rejects an extra field', 'local P = closed define { x = required }\nlocal f = do(p: P): Number = p.x\nreturn f({ x = 2, z = 1 })',
     "has the undeclared field 'z'")
 
--- Struct
-runs('a Struct', 'local Point = Struct { x: Number, y: Number }\nfunction Point:sum(): Number return self.x + self.y end\nlocal p = Point with\n  x = 1\n  y = 2\nend\nreturn p:sum()', 3)
-errors('a Struct field contract', 'local Point = Struct { x: Number, y: Number }\nlocal p = Point { x = 1, y = "2" }',
+-- struct
+runs('a struct', 'local Point = struct { x: Number, y: Number }\nfunction Point:sum(): Number return self.x + self.y end\nlocal p = Point with\n  x = 1\n  y = 2\nend\nreturn p:sum()', 3)
+errors('a struct field contract', 'local Point = struct { x: Number, y: Number }\nlocal p = Point { x = 1, y = "2" }',
     "the field 'y' of Point expects Number")
-errors('an unknown Struct field', 'local Point = Struct { x: Number }\nlocal p = Point { x = 1, z = 2 }', "Point has no field 'z'")
-runs('a Struct is a checker', 'local Point = Struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f(Point { x = 7 })', 7)
-errors('a Struct checker is nominal', 'local Point = Struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f({ x = 7 })',
+errors('an unknown struct field', 'local Point = struct { x: Number }\nlocal p = Point { x = 1, z = 2 }', "Point has no field 'z'")
+runs('a struct is a checker', 'local Point = struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f(Point { x = 7 })', 7)
+errors('a struct checker is nominal', 'local Point = struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f({ x = 7 })',
     'expects Point, got a table')
-runs('spread with overrides builds a Struct', 'local Point = Struct { x: Number, y: Number }\nlocal p = Point { x = 1, y = 2 }\nlocal q = Point { ..p, y = 5 }\nreturn q.x + q.y', 6)
+runs('spread with overrides builds a struct', 'local Point = struct { x: Number, y: Number }\nlocal p = Point { x = 1, y = 2 }\nlocal q = Point { ..p, y = 5 }\nreturn q.x + q.y', 6)
 
--- Sum
-runs('a Sum and its match', 'local Shape = Sum { circle: Number, square: Number, none: Unit }\nlocal area = do(s) = s with\n  circle = do(r) = 3 * r * r\n  square = do(a) = a * a\n  none = do() = 0\nend\nreturn area(Shape.circle(2)) + area(Shape.square(3)) + area(Shape.none())', 21)
-errors('a payload contract', 'local Shape = Sum { circle: Number }\nlocal s = Shape.circle("big")', 'the payload of Shape.circle expects Number')
-errors('a missing handler', 'local Shape = Sum { a: Unit, b: Unit }\nlocal v = Shape.a()\nreturn v { a = do() = 1 }', "the alternative 'b' has no handler")
-errors('an unknown handler', 'local Shape = Sum { a: Unit }\nlocal v = Shape.a()\nreturn v { a = do() = 1, c = do() = 2 }', "has no alternative 'c'")
-runs('a Sum is a checker', 'local R = Sum { ok: Number, err: String }\nlocal f = do(r: R): Number = r { ok = do(v) = v, err = do(e) = -1 }\nreturn f(R.ok(4))', 4)
+-- oneof
+runs('a oneof and its match', 'local Shape = oneof { circle: Number, square: Number, none: Unit }\nlocal area = do(s) = s with\n  circle = do(r) = 3 * r * r\n  square = do(a) = a * a\n  none = do() = 0\nend\nreturn area(Shape.circle(2)) + area(Shape.square(3)) + area(Shape.none())', 21)
+errors('a payload contract', 'local Shape = oneof { circle: Number }\nlocal s = Shape.circle("big")', 'the payload of Shape.circle expects Number')
+errors('a missing handler', 'local Shape = oneof { a: Unit, b: Unit }\nlocal v = Shape.a()\nreturn v { a = do() = 1 }', "the alternative 'b' has no handler")
+errors('an unknown handler', 'local Shape = oneof { a: Unit }\nlocal v = Shape.a()\nreturn v { a = do() = 1, c = do() = 2 }', "has no alternative 'c'")
+runs('a oneof is a checker', 'local R = oneof { ok: Number, err: String }\nlocal f = do(r: R): Number = r { ok = do(v) = v, err = do(e) = -1 }\nreturn f(R.ok(4))', 4)
 
--- FFIStruct (LuaJIT FFI): C structs as ctypes; a ctype is a checker
-runs('an FFIStruct builds values', 'local P = FFIStruct { x: double, y: double }\nlocal p = P { x = 1.5, y = 2 }\nreturn p.x + p.y', 3.5)
-runs('an FFIStruct in the with form', 'local P = FFIStruct with\n    x: int32_t\n    y: int32_t\nend\nreturn require("ffi").sizeof(P)', 8)
-runs('FFIStructs nest, and an array field is a string of C', 'local P = FFIStruct { x: double }\nlocal S = FFIStruct { a: P, tag: "uint8_t[4]" }\nlocal s = S { a = P(7) }\nreturn s.a.x', 7)
-runs('a ctype is a contract', 'local P = FFIStruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(P(4))', 4)
-errors('a ctype contract rejects another value', 'local P = FFIStruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(5)',
+-- ffistruct (LuaJIT FFI): C structs as ctypes; a ctype is a checker
+runs('an ffistruct builds values', 'local P = ffistruct { x: double, y: double }\nlocal p = P { x = 1.5, y = 2 }\nreturn p.x + p.y', 3.5)
+runs('an ffistruct in the with form', 'local P = ffistruct with\n    x: int32_t\n    y: int32_t\nend\nreturn require("ffi").sizeof(P)', 8)
+runs('FFIStructs nest, and an array field is a string of C', 'local P = ffistruct { x: double }\nlocal S = ffistruct { a: P, tag: "uint8_t[4]" }\nlocal s = S { a = P(7) }\nreturn s.a.x', 7)
+runs('a ctype is a contract', 'local P = ffistruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(P(4))', 4)
+errors('a ctype contract rejects another value', 'local P = ffistruct { x: double }\nlocal f = do(p: P): Number = p.x\nreturn f(5)',
     "parameter 'p' of f expects P, got number 5")
-errors('a field needs a C type', 'local P = FFIStruct { x: 5 }', "needs a C type")
+errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type")
 
 -- every tracked Lua source: the round trip is exact, every number and string token is one
 -- LuaJIT reads the same way, it parses, and what it translates to compiles

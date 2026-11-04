@@ -2,7 +2,7 @@
 -- syntax.md §2.4). One recursive-descent parser for whole files: Lua 5.1 with LuaJIT's
 -- `goto`, labels and bitwise operators, and Mua's forms: lambdas, juxtaposition, the
 -- trailing colon, `=:`, `with` blocks, `endall`, `.name` entries, keyed spread, opening,
--- `continue`, and the typed forms (annotations, `Struct`, `Sum`). Node shapes are listed below.
+-- `continue`, and the typed forms (annotations, `struct`, `oneof`). Node shapes are listed below.
 --
 --   parse(source, filename, host) -> block, tokens
 --
@@ -772,17 +772,17 @@ function P:with_entries(wtk)
     return items
 end
 
--- `Struct { name: Type, ... }`, `Sum { ... }`, `FFIStruct { name: ctype, ... }`, and their `with` forms
+-- `struct { name: Type, ... }`, `oneof { ... }`, `ffistruct { name: ctype, ... }`, and their `with` forms
 function P:struct(hint)
     local r = self.r
     local s = r:next()
     local kind = s.v
-    local what = kind == 'Sum' and 'alternative' or 'field'
+    local what = kind == 'oneof' and 'alternative' or 'field'
     local fields = {}
     local function field()
         local n = r:name('as a ' .. what)
         r:expect(':', ("after %s '%s' (%ss are declared name: Type)"):format(what, n.v, what))
-        -- an FFIStruct field's type is a C type: a name is read as C's, not looked up
+        -- an ffistruct field's type is a C type: a name is read as C's, not looked up
         local ty = self:typeexpr()
         fields[#fields + 1] = { name = n.v, type = ty, line = n.line }
     end
@@ -807,14 +807,14 @@ function P:struct(hint)
         if r:peek(1).t == 'eof' then r:error('a `with` block is not closed (expected `end`)', wtk) end
         self:close_block('the ' .. kind)
     end
-    return { k = 'struct', sum = kind == 'Sum', ffi = kind == 'FFIStruct' or nil, fields = fields, name = hint, line = s.line }
+    return { k = 'struct', sum = kind == 'oneof', ffi = kind == 'ffistruct' or nil, fields = fields, name = hint, line = s.line }
 end
 
 function P:primary(hint, in_type)
     local r = self.r
     local tk = r:peek(1)
     if tk.t == 'name' then
-        if (tk.v == 'Struct' or tk.v == 'Sum' or tk.v == 'FFIStruct')
+        if (tk.v == 'struct' or tk.v == 'oneof' or tk.v == 'ffistruct')
             and (r:peek(2).t == '{' or (is_name(r:peek(2), 'with') and r:peek(3).t == 'name')) then
             return self:struct(hint), 'struct'
         end
