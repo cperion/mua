@@ -8,11 +8,11 @@ local Methods = { get = 1, post = 2 }
 
 -- The builder: one verb per method. It checks each sentence and reports at the line that spoke
 -- it (error level 3: the verb, the block's call, the line in the block).
-local router =: Verbs
-    return: body
+local router = do(Verbs)
+    return do(body)
         local routes, seen, Routing = {}, {}, {}
         for name, code in pairs Verbs do
-            Routing[name] =: path
+            Routing[name] = do(path)
                 if type path ~= "string" or path:sub(1, 1) ~= "/" then
                     error(name .. ": a path starts with '/', got " .. tostring path, 3)
                 end
@@ -41,7 +41,7 @@ end
 print(#site, site[1].path, site[2].path)
 
 -- The engine walks the description.
-local dispatch =: table request
+local dispatch = do(table, request)
     for _, route in ipairs table do
         if request.method == route.method and request.path == route.path then
             return route.handler request
@@ -54,7 +54,7 @@ print(dispatch(site, { method = Methods.post, path = "/notes" }))
 print(dispatch(site, { method = Methods.get, path = "/missing" }))
 
 -- A bad sentence is rejected where it is written.
-local bad_sentence =:
+local bad_sentence = do(..)
     get "notes" (|| -> 1)
 end
 print(reason(select(2, pcall(routes, bad_sentence))))

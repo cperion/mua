@@ -29,7 +29,7 @@ examples work, not the prose's claims or the quality of the design. Diagrams use
 | Form | Used for |
 |---|---|
 | `x -> e`, `|a, b| -> e`, `do(x) … end` | lambdas: an arrow for an expression, `do` for statements, types and opening |
-| `=: x`, `return: x` (then a block and `end`) | a block assigned to a name, a block returned: the colon always means a block |
+| `do(x) … end`, `return do(x) … end` | a block assigned to a name, a block returned: a do lambda is a function |
 | `f a b`, `f x do … end`, `f a: x … end` | juxtaposed, **curried** application: `f a b` is `f(a)(b)` |
 | `define … end`, `{ … }` | a vocabulary: names bound with no layout (`define` entries `end` is a table, written without commas) |
 | `{ ..base, name = v }`, `..base` in a `with` block | keyed spread: a vocabulary extended, entries overriding |
@@ -198,10 +198,10 @@ they are by being used:
 ```lua
 -- vocabularies: names bound with no identity of their own
 local Moves = define
-    left =: document
+    left = do(document)
         if document.cursor > 0 then document.cursor = document.cursor - 1 end
     end
-    right =: document
+    right = do(document)
         if document.cursor < document.length then document.cursor = document.cursor + 1 end
     end
 end
@@ -234,7 +234,7 @@ vocabulary as a parameter and calls its members, or opens it:
 
 ```lua
 -- a function that takes a vocabulary calls its members
-local type_and_step_back =: ops document n
+local type_and_step_back = do(ops, document, n)
     ops.insert document n
     ops.left document
 end
@@ -242,7 +242,7 @@ type_and_step_back(Editing, document, 3)
 assert(document.length == 8 and document.cursor == 6)
 
 -- opening a vocabulary brings its names into scope
-local type_twice =: document n
+local type_twice = do(document, n)
     local Editing..
     insert document n
     insert document n
@@ -466,9 +466,9 @@ the context's names available; a bare call then reads as an instruction.
 
 ```lua
 -- a working copy of the document, with the verbs of tentative editing
-local new_draft =: document
+local new_draft = do(document)
     local draft = { length = document.length, cursor = document.cursor, edits = document.edits }
-    draft.insert =: n
+    draft.insert = do(n)
         draft.length = draft.length + n
         draft.cursor = draft.cursor + n
         draft.edits = draft.edits + 1
@@ -480,8 +480,8 @@ local new_draft =: document
 end
 
 -- an activity that always commits: setup, the body speaking instructions, completion
-local edit =: document
-    return: body
+local edit = do(document)
+    return do(body)
         local draft = new_draft document
         body draft
         document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
@@ -533,8 +533,8 @@ the activity matches on it to choose its completion:**
 ```lua
 local Outcome = oneof { commit: Unit, abort: Number }
 
-local try_edit =: document
-    return: body
+local try_edit = do(document)
+    return do(body)
         local draft = new_draft document
         local committed = body(draft) {
             commit() = true,
@@ -547,10 +547,10 @@ local try_edit =: document
     end
 end
 
-local type_capped =: document n cap
+local type_capped = do(document, n, cap)
     return try_edit document:
         insert n
-        if length > cap then return Outcome.abort(length) end
+        if length > cap then return Outcome.abort length end
         return Outcome.commit()
     end
 end
@@ -576,8 +576,8 @@ Each policy is its own activity, and the order of the spine is the order of comp
 
 ```lua
 -- a policy that completes after the work inside it
-local clamp_length =: document max
-    return: body
+local clamp_length = do(document, max)
+    return do(body)
         body
         if document.length > max then
             document.length = max
@@ -585,8 +585,8 @@ local clamp_length =: document max
         end
     end
 end
-local count_into =: stats
-    return: body
+local count_into = do(stats)
+    return do(body)
         body
         stats.count = stats.count + 1
     end
@@ -612,14 +612,14 @@ once:
 
 ```lua
 -- nested activities compose: a name the inner context lacks reaches the outer one
-local collect_notes =: body
+local collect_notes = do(body)
     local log = { notes = 0 }
     log.note = do(count) log.notes = log.notes + count end
     body log
     return log.notes
 end
 
-local type_logged =: document n
+local type_logged = do(document, n)
     return collect_notes:
         edit document:
             insert n
@@ -666,7 +666,7 @@ instruction.
 
 ```lua
 -- a builder: the block declares, the builder returns a description
-local keymap =: body
+local keymap = do(body)
     local bindings = {}
     body define
         bind = do(key) = do(command)
@@ -737,11 +737,11 @@ spoke the instruction:
 
 ```lua
 -- the builder: one verb per method; sentences in, a checked description out
-local router =: Verbs
-    return: body
+local router = do(Verbs)
+    return do(body)
         local routes, seen, Routing = {}, {}, {}
         for name, code in pairs Verbs do
-            Routing[name] =: path
+            Routing[name] = do(path)
                 -- level 3: the error names the line that spoke the route
                 if type path ~= "string" or path:sub(1, 1) ~= "/" then
                     error(name .. ": a path starts with '/', got " .. tostring path, 3)
@@ -767,7 +767,7 @@ depends only on it. Keep it structural while only the engine reads it; promote i
 commands when it must be recognized, stored or replayed (§3.2, §11). Several front ends can then
 feed one engine: a builder, a file read at start-up, a test.
 
-**6. Let handlers be instruction blocks.** A colon block with no names opens what it is given, so
+**6. Let handlers be instruction blocks.** A colon block opens what it is given, so
 a handler speaks the request's fields directly, as an activity body speaks its context's (§5.4):
 
 ```lua
@@ -782,7 +782,7 @@ local site = routes:
 end
 
 -- the engine over the description
-local dispatch =: table request
+local dispatch = do(table, request)
     for _, r in ipairs table do
         if request.method == r.method and request.path == r.path then
             return r.handler request
@@ -990,7 +990,7 @@ the opened parameter only when its name is used.
 Handlers are named after outcomes, and the handler sugar `name(p) = e` keeps short arms short:
 
 ```lua
-local first_or =: xs fallback
+local first_or = do(xs, fallback)
     return find_nonzero(xs) {
         found(i) = xs[i],
         missing() = fallback,
@@ -1007,13 +1007,13 @@ an engine that consumes it. Keep one engine:
 ```lua
 local apply = do(document, c: Command): Unit
     c with
-        move =: d
+        move = do(d)
             d with
                 left() = Editing.left document
                 right() = Editing.right document
             end
         end
-        insert =: n
+        insert = do(n)
             Editing.insert document n
         end
         undo() = nil
@@ -1126,14 +1126,14 @@ generic or a homonym should stay qualified.
 | `word` | a zero-argument call statement |
 | `word()` | a zero-argument invocation in an expression; also valid as an explicit statement |
 | trailing block (colon) | scopes, iteration, activities, builders: `f x:` then the block and `end` |
-| `=: x` | a function that is a block: `local f =: x` for a definition whose body is statements |
-| `return: x` | an activity that returns the function taking its block: `return: body` |
+| `do(x) … end` | a function that is a block: `local f = do(x) … end` for a definition whose body is statements |
+| `return do(x) … end` | an activity that returns the function taking its block: `return do(body) … end` |
 | instruction | inside an opened block, a call without a receiver: `insert n`, `note 1` |
 | `with` blocks | keyed data that spans lines; a `struct` or `oneof` declaration; matching |
 | `{ }` braces | Lua tables, compact one-liners |
 | `define` entries `end` | a vocabulary or a structural type; `{ … }` for a one-line table |
 | `x -> e`, `|a, b| -> e` | a small expression lambda (one name needs no bars; several names after an operand are bracketed) |
-| `do(x) … end` | a callback with statements, when a colon block does not fit |
+| `do(x) … end` | a callback with statements and parameters (the colon form takes none) |
 | `do(x: T): R = e` | a lambda with types, or with an opened parameter (`do(ctx..)`): arrows have no spelling for these |
 | `endall` | the closing run of a trailing-block spine |
 | `local x = e` | a binding |
@@ -1144,10 +1144,10 @@ expression the name remains a value: `local action = refresh` saves the callable
 `local result = refresh()` invokes it.
 
 **One lambda spelling for each purpose.** An expression is an arrow (`x -> x * 2`); statements are
-a block, written with a colon (`f x:`, `=: x`, `return: x`) wherever the grammar allows and with
-`do(x) … end` where it does not; types and opening need `do`. A function that returns a block
-is written `=: params` with `return: block_params`, so an activity reads without a visible
-`do`.
+a `do` block (`do(x) … end`). The trailing colon (`f x:`) is only the anonymous opening block,
+`do(..)`. Types and opening need `do`. A function that returns a block is written
+`do(params) … end` with `return do(block_params) … end`, so an activity reads without a
+second spelling.
 
 Parentheses group and delimit required argument lists; they are not a substitute for clear
 names. Application binds tighter than operators and takes a name's full postfix chain. Write
@@ -1159,7 +1159,7 @@ parenthesis-free application is hard to read, revisit names or split the functio
 **Current source and the host's formatter establish the house style.** Use 4-space indentation,
 a 100-column soft target, safe parenthesis-free application, `.name` for a `name = name` field,
 and anonymous openings when the receiver name is unused. The formatter also writes the house
-spellings: colon blocks (`=: x`, `return: x`, `f x:`), arrows for plain expression lambdas
+spellings: the anonymous trailing colon (`f x:`), do blocks for parameters, arrows for plain expression lambdas
 (`lambda_style`), `define` blocks, and a single `..base` first and beside its `define`
 (`spread_style`). The code blocks of this guide are written that way. What the formatter leaves to you:
 

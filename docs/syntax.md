@@ -87,30 +87,27 @@ is a lambda.
 
 ## 4. Blocks as arguments
 
-**The trailing colon.** A colon that ends a line, optionally after parameter names, opens an
-untyped block lambda closed by `end`:
+**The trailing colon.** A colon that ends a line opens an untyped block lambda that opens the
+home (`do(..)`), closed by `end`:
 
 ```lua
 with_buffer n:                -- with_buffer n do(..)
     ...
 end
-words:each: key value         -- words:each do(key, value)
+words:each:                   -- words:each do(..)
     ...
 end
 ```
 
-`=:` assigns a block: `local f =: x`, and in a table `found =: v`. It works inside brackets,
-because `=:` occurs nowhere else.
-`return:` returns a block: `return: body` then a block and `end` is `return do(body) … end`, a
-function of `body` (the idiom of an activity that returns the function that takes its block).
-The colon always means a block: it passes it to what is on its left, or, after `=` or `return`,
-makes it the value assigned or returned. A colon is a block opener only where there is no annotation
-colon: not the result type after a parameter list, not the names of a `local`, not a field
-inside brackets, not `::label::`, and not a method call (`xs:each`).
+A block with parameters, or one assigned or returned, is a do lambda: `words:each do(key,
+value) … end`, `local f = do(x) … end`, `found = do(v) … end`, `return do(body) … end`. The
+colon always means a block: it passes it to what is on its left. A colon is a block opener only
+where there is no annotation colon: not the result type after a parameter list, not the names
+of a `local`, not a field inside brackets, not `::label::`, and not a method call (`xs:each`).
 
 **`with` blocks.** `T with entries end` is `T { entries }`: keyed data without commas, closed
 by `end`. Entries are `name = value`, `.name` (which is `name = name`), `[k] = v`, `..spread`,
-positional values on lines of their own, and handlers `name =: params …`. With no head,
+positional values on lines of their own, and handlers `name = do(params) …`. With no head,
 `with` where an expression starts (after `return`, `=`, `(`, `,` or `{`) is the table itself,
 which a contract can fill in: where a `struct` or an `ffistruct` is the declared type (a typed
 local, parameter or result, a typed assignment, a struct's field, a `oneof` payload), the table
@@ -120,17 +117,14 @@ table is not changed, and a typed `const` cannot take one). Where no type applie
 plain table. A host may give it other meaning.
 
 ```mua
-local Point = struct
-    x: Number
-    y: Number
-end
+local Point = struct { x: Number, y: Number }
 local origin: Point = with
     x = 0
     y = 0
 end
 ```
 
-**`endall`** closes every open block (`do`, colon, `=:` and `with`) back to the nearest
+**`endall`** closes every open block (`do`, colon and `with`) back to the nearest
 enclosing Lua control block or typed function body: `if`, `while`, `for`, `function`,
 `repeat`, a bare `do … end`, or a typed function. Those keep their own `end`. Nothing may
 follow `endall` inside the blocks it closes. It returns nothing and calls nothing: its effects
@@ -160,9 +154,9 @@ is given and returns the table; every table it is given shares the one metatable
 local Printable = define
     tostring = self -> self.name
 end
-local Comparable = define
+local Comparable = {
     eq = |a, b| -> a.id == b.id
-end
+}
 
 local Person = meta with
     ..Printable
@@ -171,11 +165,11 @@ end with
     id = 42
     name = "Alice"
 
-    greet =: self
+    greet = do(self)
         print("Hello, " .. self.name)
     end
 end
-Person:greet()   -- Hello, Alice
+Person:greet  -- Hello, Alice
 ```
 
 The first block composes behavior (metatable entries), the second the ordinary fields and
@@ -196,15 +190,15 @@ local Sum = struct { left: Expression, right: Expression }
 Expression { Literal, Sum }
 
 local Evaluation = define
-    Literal =: node recurse
+    Literal = do(node, recurse)
         return node.value
     end
-    Sum =: node recurse
+    Sum = do(node, recurse)
         return recurse node.left + recurse node.right
     end
 end
 local evaluate = Expression.pass "evaluate an expression" with ..Evaluation end
-print(evaluate(Sum { left = Literal { value = 1 }, right = Literal { value = 2 } }))   -- 3
+print(evaluate(Sum { left = Literal { value = 1 }, right = Literal { value = 2 } }))  -- 3
 ```
 
 - The names are descriptions. `family "expression of the toy language"` and
@@ -218,7 +212,7 @@ print(evaluate(Sum { left = Literal { value = 1 }, right = Literal { value = 2 }
   the struct's name and called as `handler(node, recurse, ...)`, so it can recur; the extra
   arguments are those the pass was called with (a scope, a state), passed down by each handler's
   own calls (`recurse(node.body, scope)`). Every handler spells the contract the same way,
-  `Kind =: node recurse …`, whatever the pass. The pass is checked when it is made: a kind with no handler, a handler for a name that is no kind, and a handler
+  `Kind = do(node, recurse) …`, whatever the pass. The pass is checked when it is made: a kind with no handler, a handler for a name that is no kind, and a handler
   that is not a function are errors that name it. A value that is no member is named when the
   pass meets it.
 - `Expression.is(node, Literal)` tests a kind (a struct that is not a member is an error, not
@@ -277,7 +271,7 @@ or a `oneof`. A failure names what was expected and what was found at the caller
 
 ```lua
 local area = do(w: Number, h: Number): Number = w * h
-area("3", 4)   -- contract: parameter 'w' of area expects Number, got a string "3"
+area("3", 4)  -- contract: parameter 'w' of area expects Number, got a string "3"
 ```
 
 The translator's `contracts = false` removes the checks.
@@ -291,10 +285,7 @@ constructing a value of a type.
 metatable through which methods (`function P:m() … end`) are reached:
 
 ```lua
-local Point = struct
-    x: Number
-    y: Number
-end
+local Point = struct { x: Number, y: Number }
 local p = Point { x = 1, y = 2 }
 ```
 
@@ -303,23 +294,14 @@ it with one handler per alternative, and **every match checks** that the handler
 the alternatives: a missing or unknown handler is an error at the match.
 
 ```lua
-local Shape = oneof
-    circle: Number
-    rect: Table
-end
-local area = do(s: Shape): Number = s with
-    circle = do(r) = r * r
-    rect = do(t) = t.w * t.h
-end
+local Shape = oneof { circle: Number, rect: Table }
+local area = do(s: Shape): Number = s { circle = r -> r * r, rect = t -> t.w * t.h }
 ```
 
 **`ffistruct`** declares a C struct for LuaJIT's FFI and gives back its ctype:
 
 ```lua
-local Point = ffistruct
-    x: double
-    y: double
-end
+local Point = ffistruct { x: double, y: double }
 local Segment = ffistruct { a: Point, b: Point, tag: "uint8_t[4]" }
 local p = Point { x = 12.5, y = 8 }
 ```

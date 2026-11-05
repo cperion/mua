@@ -8,8 +8,8 @@ which is the one that looks strangest.
 ## A function that takes a block
 
 ```mua
-local with_log =: title
-    return: body
+local with_log = do(title)
+    return do(body)
         print("begin " .. title)
         body
         print("end " .. title)
@@ -17,8 +17,8 @@ local with_log =: title
 end
 
 with_log "import":
-    print("  reading")
-    print("  writing")
+    print "  reading"
+    print "  writing"
 end
 ```
 
@@ -42,27 +42,9 @@ Read on to see where each piece comes from.
 Every block below is a complete program that prints the same four lines. `tests/tour.lua`
 runs them to check it.
 
-**1. `=: title` is `= do(title)`.** A colon right after `=` assigns a block, and the names after
-it are the block's parameters. So the first line says: `with_log` is a function of `title`.
-
-```mua
-local with_log = do(title)
-    return: body
-        print("begin " .. title)
-        body
-        print("end " .. title)
-    end
-end
-
-with_log "import":
-    print("  reading")
-    print("  writing")
-end
-```
-
-**2. `return: body` is `return do(body)`.** The block colon always means a block, and after
-`return` the block is the value returned: a function of `body`. So the second line says that
-`with_log` returns a function that takes a block.
+**1. A `do` lambda is a function.** `local with_log = do(title) … end` is a function of
+`title`, and `return do(body) … end` returns a function of `body`. So the two lines say that
+`with_log` takes a title and returns the function that takes the block.
 
 ```mua
 local with_log = do(title)
@@ -74,12 +56,12 @@ local with_log = do(title)
 end
 
 with_log "import":
-    print("  reading")
-    print("  writing")
+    print "  reading"
+    print "  writing"
 end
 ```
 
-**3. A name alone on a line is a call.** `body` as a whole statement means `body()`: calling a
+**2. A name alone on a line is a call.** `body` as a whole statement means `body()`: calling a
 function with no arguments needs no parentheses. (In an expression the name is still the
 function itself: `local f = body` keeps it.)
 
@@ -87,55 +69,55 @@ function itself: `local f = body` keeps it.)
 local with_log = do(title)
     return do(body)
         print("begin " .. title)
-        body()
+        body
         print("end " .. title)
     end
 end
 
 with_log "import":
-    print("  reading")
-    print("  writing")
+    print "  reading"
+    print "  writing"
 end
 ```
 
-**4. The call site is two applications.** In Mua, application is curried: `f a b` is
+**3. The call site is two applications.** In Mua, application is curried: `f a b` is
 `f(a)(b)`. And a colon at the end of a line passes the block that follows as the next
 argument. So `with_log "import":` followed by a block is `with_log("import")(block)`: first
 give the title, getting back the function that wants a block, then give it the block. That is
-why `with_log` returns a function (step 2).
+why `with_log` returns a function (step 1).
 
 ```mua
 local with_log = do(title)
     return do(body)
         print("begin " .. title)
-        body()
+        body
         print("end " .. title)
     end
 end
 
-with_log("import")(do(..)
-    print("  reading")
-    print("  writing")
-end)
+with_log "import":
+    print "  reading"
+    print "  writing"
+end
 ```
 
-**5. `do(...) ... end` is `function(...) ... end`.** A lambda is a Lua function. This is plain
-Lua except for the `do(..)` of the block, which says that the block opens whatever it is given
+**4. The block opens what it is given.** A lambda is a Lua function. This is plain Lua
+except for the `do(..)` of the block, which says that the block opens whatever it is given
 (see below).
 
 ```mua
 local with_log = function(title)
     return function(body)
         print("begin " .. title)
-        body()
+        body
         print("end " .. title)
     end
 end
 
 with_log("import")(function()
-    print("  reading")
-    print("  writing")
-end)
+        print "  reading"
+        print "  writing"
+    end)
 ```
 
 That last program is ordinary Lua. Nothing in Mua adds a runtime for any of this: the
@@ -151,26 +133,23 @@ obj:method(x)            a method call: a name directly after the colon
 local n: Number = 1     an annotation: a type after a name, in a declaration or parameter list
 do(x: Number): Number    an annotation: the result type after a parameter list
 ::label::                a label, in goto
-with_log "import":       a block: the colon ends the line (names may follow it)
-local f =: x             a block: the colon follows `=`, and the block is the value assigned
-return: body             a block: the colon follows `return`, and the block is the value returned
+with_log "import":       a block: the colon ends the line
 ```
 
-The block colon only applies where nothing else could mean a colon: at the end of a line (after
-an expression), right after `=`, or right after `return`. Anything after it on the same line must be parameter names.
+The block colon only applies where nothing else could mean a colon: at the end of a line,
+after an expression. Parameters, assignment and return are written with `do`.
 
 ```text
-xs:each: key value       `xs:each` is a method access, then the colon ends the line: the block
-                         has two parameters, `key` and `value`
-tasks: scope..           the block opens its argument and calls it `scope`
-spawn:                   no names: the block opens whatever it is handed
+xs:each do(key, value)   `xs:each` is a method access; the do lambda takes two parameters
+tasks do(scope..)        the block opens its argument and calls it `scope`
+spawn:                   no names: the block opens whatever it is handed (`do(..)`)
 ```
 
 ## What `do(..)` means
 
 A block can **open** a table, so that its keys are names in the block. `do(ctx..)` receives
-one argument and opens it as `ctx`; `do(..)` does the same without a name. A colon block
-with no names is `do(..)`:
+one argument and opens it as `ctx`; `do(..)` does the same without a name. A trailing
+colon block is `do(..)`:
 
 ```mua
 local with_config = do(body)
@@ -206,7 +185,7 @@ with_log("import")(function(__home) local __o1 = __mua.open(__home); local __o1_
 end);
 ```
 
-The first function is step 5 above. The call site shows the block opening: `__mua.open` checks
+The first function is step 1 above. The call site shows the block opening: `__mua.open` checks
 that the block was handed something it can open, one flag per name the block mentions records
 whether the opened table has it (`__o1_print`), and each free name in the block reads as
 `(flag ? opened.name : name)`. Opening allocates nothing, and reading a name costs a test and a
@@ -217,8 +196,8 @@ lookup.
 ```text
 f x y                    f(x)(y)                       application is curried
 f x:  ...  end           f(x)(do(..) ... end)          a trailing block is the next argument
-local f =: a b  ... end  local f = do(a, b) ... end     a block assigned to a name
-return: b  ... end       return do(b) ... end          a block returned as the value
+local f = do(a, b)       local f = function(a, b)       a do lambda is a function
+return do(b) ... end     return function(b) ... end     a returned block is a function
 name                     name()                        a bare name as a statement is a call
 a ? b : c                a conditional                 LuaJIT 3.0 syntax
 x -> x + 1               function(x) return x + 1 end  a short function

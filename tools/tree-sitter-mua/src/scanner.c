@@ -6,8 +6,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-enum { LONG_STRING, LONG_COMMENT, NAME_ARGUMENT, ENDALL, IMPLICIT_END, ERROR_SENTINEL, ENDALL_RESET, ATTACHED_PAREN, BLOCK_COLON, HEADER_NAME, HEADER_DOTS, WITH, DEFINE };
-typedef struct { bool endall; bool header; uint32_t column; int32_t next; } Scanner;
+enum { LONG_STRING, LONG_COMMENT, NAME_ARGUMENT, ENDALL, IMPLICIT_END, ERROR_SENTINEL, ENDALL_RESET, ATTACHED_PAREN, BLOCK_COLON, WITH, DEFINE };
+typedef struct { bool endall; uint32_t column; int32_t next; } Scanner;
 void *tree_sitter_mua_external_scanner_create(void) { return calloc(1, sizeof(Scanner)); }
 void tree_sitter_mua_external_scanner_destroy(void *p) { free(p); }
 unsigned tree_sitter_mua_external_scanner_serialize(void *p, char *b) { memcpy(b, p, sizeof(Scanner)); return sizeof(Scanner); }
@@ -30,30 +30,18 @@ static bool dots_ahead(TSLexer *l) {
   advance(l);
   return true;
 }
-// The trailing colon (syntax 2.4, rule 11): a colon directly followed by a space or
-// the end of the line, then only names, `name..` and `..`, then the end of the line.
-// The colon is the token; the names are read as HEADER_NAME / HEADER_DOTS while
-// `header` is set. A block never starts with a closing bracket or a comma, so a
-// last struct field (`x: F32` before `}`) is not a block opener.
-static bool block_colon(Scanner *s, TSLexer *l) {
+// The trailing colon (syntax 2.4, rule 11): a colon that ends its line opens the untyped
+// block lambda `do(..)`; parameters are written in a do lambda, so only the bare colon is
+// a block opener. A block never starts with a closing bracket or a comma, so a last struct
+// field (`x: F32` before `}`) is not a block opener.
+static bool block_colon(TSLexer *l) {
   advance(l);
   if (l->lookahead == ':' || name_char(l->lookahead)) return false;
   l->mark_end(l);
-  bool any = false;
-  for (;;) {
-    while (l->lookahead == ' ' || l->lookahead == '\t' || l->lookahead == '\r') advance(l);
-    if (l->eof(l) || l->lookahead == '\n') break;
-    if (l->lookahead == '-') { advance(l); if (l->lookahead != '-') return false; break; }
-    if (name_start(l->lookahead)) {
-      while (name_char(l->lookahead)) advance(l);
-      dots_ahead(l);
-    } else if (!dots_ahead(l)) return false;
-    any = true;
-  }
+  if (!line_ends(l)) return false;
   while (!l->eof(l) && l->lookahead != '\n') advance(l);
   while (l->lookahead == ' ' || l->lookahead == '\t' || l->lookahead == '\r' || l->lookahead == '\n') advance(l);
   if (l->eof(l) || l->lookahead == '}' || l->lookahead == ')' || l->lookahead == ']' || l->lookahead == ',') return false;
-  s->header = any;
   l->result_symbol = BLOCK_COLON;
   return true;
 }
@@ -85,21 +73,7 @@ bool tree_sitter_mua_external_scanner_scan(void *p, TSLexer *l, const bool *vali
     if (l->lookahead == '\n' || l->lookahead == '\r') same_line = false;
     l->advance(l, true);
   }
-  if (valid[BLOCK_COLON] && l->lookahead == ':' && block_colon(s, l)) return true;
-  if (s->header && same_line) {
-    if (valid[HEADER_DOTS] && l->lookahead == '.') {
-      if (!dots_ahead(l)) return false;
-      l->mark_end(l); s->header = !line_ends(l); l->result_symbol = HEADER_DOTS; return true;
-    }
-    if (valid[HEADER_NAME] && name_start(l->lookahead)) {
-      while (name_char(l->lookahead)) advance(l);
-      l->mark_end(l);
-      while (l->lookahead == ' ' || l->lookahead == '\t') advance(l);
-      s->header = !(l->lookahead == '\r' || l->lookahead == '\n' || l->eof(l) || l->lookahead == '-');
-      l->result_symbol = HEADER_NAME; return true;
-    }
-  }
-  if (s->header && !same_line) s->header = false;
+  if (valid[BLOCK_COLON] && l->lookahead == ':' && block_colon(l)) return true;
   if ((valid[ENDALL] || valid[WITH] || valid[DEFINE] || (valid[NAME_ARGUMENT] && same_line && space)) && name_start(l->lookahead)) {
     char name[128]; unsigned n = 0;
     while (name_char(l->lookahead)) {

@@ -91,12 +91,13 @@ change. Set `opening_style = "preserve"` to retain named openings.
 
 ## Trailing colon
 
-With `block_style = "colon"`, an untyped `do(names)` that ends a line, after an
-operand and outside brackets, is written `: names`; after an `=` (also inside brackets) it is written `=: names` (`do(..)` as `:`, `do(scope..)`
-as `: scope..`). Typed lambdas, inline blocks, blocks that open a new argument
-inside brackets and parameterless `do` blocks keep their spelling. The colon form
-is read back as the `do(..)` it means before anything else is analysed, and the
-result is accepted only when that reading equals the original source.
+With `block_style = "colon"`, a `do(..)` that ends a line, after an operand and
+outside brackets, is written `:`. A block with parameters is a do-form and keeps
+its spelling (`do(x)`, `do(scope..)`); typed lambdas, inline blocks, blocks that
+open a new argument inside brackets and parameterless `do` blocks keep theirs too.
+The colon form is read back as the `do(..)` it means before anything else is
+analysed, and the result is accepted only when that reading equals the original
+source.
 
 ## With blocks
 
@@ -152,7 +153,7 @@ written. A table with a spread is not collapsed onto one line when it spans line
 
 ## End chains
 
-A trailing run of `end` lines that closes Mua blocks (`do`, colon, `=:` and `with`)
+A trailing run of `end` lines that closes Mua blocks (`do`, colon and `with`)
 back to Lua control, three or more of them and including a `with` block, is folded
 into one `endall` and laid out flat (syntax doc, §4): the wrappers (`tasks:`, `spawn:`)
 at one indent, the content after them indented once, the handler chain flat in the
@@ -166,7 +167,7 @@ result gives the same program. `spine_style = "none"` keeps the staircase of han
 ```lua
 local Point = struct { x: Number, y: Number }
 local move = do(x: Number): Number
-    local p = Point { x = x, y = 2 }
+    local p = Point { .x, y = 2 }
     p.x = p.x + 1
     return p.x
 end
@@ -197,7 +198,10 @@ delimiters can be joined, so multiline arguments and chains get the same treatme
 A sole `do` block argument also loses its call parentheses: `items:each(do(item)
 ... end)` becomes `items:each do(item) ... end`, even with a multiline body or a
 next-line `do`. The block body's line boundaries remain intact.
-Comments are not a blanket barrier: `f(--[[ note ]] x)` becomes
+A block body is not the argument the block may itself be: calls inside it are minimized like
+any statement, so `with_log "x": print("y") end` keeps no call parentheses. A call that *is* a
+juxtaposed argument keeps them (`f g(x)` is not `f g x`). Comments are not a blanket barrier:
+`f(--[[ note ]] x)` becomes
 `f --[[ note ]] x`, and `f(x -- note` followed by a newline and `)` can become
 `f x -- note`. Comment and literal bytes are preserved. Rewrites repeat until no
 further safe removal is available; `call_style = "preserve"` retains the original
@@ -223,10 +227,10 @@ taking every group as one supply, and inside typed bodies the formatter then als
 A compound argument becomes a spaced group (syntax doc, §2 rule 3):
 
 ```lua
-f(x + 1, y)            -- f (x + 1) y
+f(x + 1, y)  -- f (x + 1) y
 place(s, fresh + out)  -- place s (fresh + out)
-f(g(x), y)             -- f (g x) y      when g is a word
-f(x, "s")              -- f x ("s")      a name's chain would take the string
+f(g x, y)  -- f (g x) y      when g is a word
+f(x, "s")  -- f x ("s")      a name's chain would take the string
 ```
 
 A call in the middle of the supply is regrouped only when it is a word (one
@@ -244,11 +248,11 @@ A spine is a stack of calls whose bodies are the next call, closed by one
 `endall`:
 
 ```lua
-    counted stats do
-    counted stats do
-    transaction document do(draft..)
-        insert n
-    endall
+counted stats do
+counted stats do
+transaction document:
+    insert n
+endall
 ```
 
 `spine_style` decides how the link bodies indent:
@@ -278,7 +282,7 @@ Forms Mua does not know and no host defines are rejected rather than guessed at.
 
 ```lua
 local fmt = require 'mua.fmt'
-fmt.format(source, options, filename, host)    -- host is optional
+fmt.format(source, options, filename, host)  -- host is optional
 ```
 
 A host is a table: `parse(filename)` gives the Mua parse host (the host's statement and prefix

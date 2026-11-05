@@ -1,7 +1,7 @@
 -- mua.parse: Mua's parser (design macro-layer.md §4.2; the surface rules are
 -- syntax.md §2.4). One recursive-descent parser for whole files: Lua 5.1 with LuaJIT's
 -- `goto`, labels and bitwise operators, and Mua's forms: lambdas, juxtaposition, the
--- trailing colon, `=:`, `with` blocks, `endall`, `.name` entries, keyed spread, opening,
+-- trailing colon, `with` blocks, `endall`, `.name` entries, keyed spread, opening,
 -- `continue`, and the typed forms (annotations, `struct`, `oneof`). Node shapes are listed below.
 --
 --   parse(source, filename, host) -> block, tokens
@@ -124,6 +124,32 @@ function M.parser(reader, host)
     return setmetatable({ r = reader, kinds = {}, host = host or {} }, P)
 end
 
+-- the names after a removed colon form, as the argument list of the do-form that replaces it.
+-- `k` is the peek offset of the name after the colon; only names, `name..` and `..` are read.
+local function colon_arguments(r, k)
+    local names = {}
+    while true do
+        local tk = r:peek(k)
+        if tk.nl or tk.t == 'eof' then break end
+        if tk.t == 'name' then
+            local nx = r:peek(k + 1)
+            if nx.t == '..' and not nx.nl then
+                names[#names + 1] = tk.v .. '..'
+                k = k + 1
+            else
+                names[#names + 1] = tk.v
+            end
+        elseif tk.t == '..' then
+            names[#names + 1] = '..'
+        else
+            break
+        end
+        k = k + 1
+    end
+    if #names == 0 then names[1] = '..' end
+    return table.concat(names, ', ')
+end
+
 -- Context flags. A loop header's `do` ends it; inside brackets a colon is an annotation and
 -- `with` entries do not apply; a `with` block's entries stop juxtaposition at the next entry.
 function P:with_flags(flags, f)
@@ -178,10 +204,9 @@ function P:retstat()
     local exprs = {}
     local nt = r:peek(1)
     if nt.t == ':' then
-        -- `return: names` then a block and `end`: returns the block as a function (the colon
-        -- always opens a block; here the block is the value returned)
-        local c = r:next()
-        exprs = { self:colon_lambda(c, nil) }
+        -- a returned block is a do lambda; `return:` is no longer a form
+        r:error(("a returned block is written 'return do(%s) ... end', not 'return:'")
+            :format(colon_arguments(r, 2)), nt)
     elseif not (ends_block(nt) or nt.t == ';') then exprs = self:exprlist() end
     while r:accept(';') do end                 -- semicolons anywhere (L1)
     return { k = 'return', exprs = exprs, line = tk.line }
@@ -202,12 +227,12 @@ end
 
 -- statements --------------------------------------------------------------------------------
 
--- the value after `=`: an expression, or `=:` a block lambda (`local f =: x`)
+-- the value after `=`: an expression (a block lambda is written `do(names) ... end`)
 function P:assigned(hint)
     local r = self.r
     if r:is(':') then
-        local c = r:next()
-        return self:colon_lambda(c, hint)
+        r:error(("an assigned block is written '= do(%s) ... end', not '=:'")
+            :format(colon_arguments(r, 2)), r:peek(1))
     end
     return self:item(hint)
 end
@@ -485,33 +510,16 @@ function P:funcbody(name, at, opts)
     return fn
 end
 
--- A colon block (§2.4 rule 11): after the colon, names (`x y`), an opened name (`ctx..`), `..`
--- or nothing, to the end of the line; then a block to `end`. Nothing or `..` opens what the
--- activity hands over (`do(..)`).
+-- A colon block (§2.4 rule 11): the colon ends the line and opens the untyped block lambda
+-- `do(..)`; parameters are written in a do lambda.
 function P:colon_lambda(colon, hint)
     local r = self.r
-    local params = {}
-    local opened = false
-    while not r:peek(1).nl and r:peek(1).t ~= 'eof' do
-        local tk = r:peek(1)
-        if tk.t == 'name' and not is_endall(tk) then
-            r:next()
-            local p = { name = tk.v, line = tk.line }
-            if r:is('..') and not r:peek(1).nl then
-                if opened then r:error('one parameter may be opened', tk) end
-                r:next(); p.opened, opened = true, true
-            end
-            params[#params + 1] = p
-        elseif tk.t == '..' then
-            if opened or #params > 0 then r:error("'..' alone opens the unnamed home; it takes no other names", tk) end
-            r:next()
-            params[1] = { name = '__home', opened = true, unnamed = true, line = tk.line }
-            opened = true
-        else
-            r:error(("a block colon is followed by parameter names and the end of the line, got %s"):format(show(tk)), tk)
-        end
+    local tk = r:peek(1)
+    if not tk.nl and tk.t ~= 'eof' then
+        r:error(("a block colon takes no parameters; write 'do(%s) ... end' after the call")
+            :format(colon_arguments(r, 1)), tk)
     end
-    if #params == 0 then params[1] = { name = '__home', opened = true, unnamed = true, line = colon.line } end
+    local params = { { name = '__home', opened = true, unnamed = true, line = colon.line } }
     local body = self:block('lambda')
     local e = self:close_block(hint and ("'" .. hint .. "'") or 'the block')
     return { k = 'lambda', fn = { params = params, body = body, name = hint, line = colon.line, end_line = e.line,
@@ -595,7 +603,7 @@ function P:subexpr(limit, hint, in_type)
     return left
 end
 
--- does the token after `with` begin an entry (`name =`, `name =:`, `.name`, `[`, `..`, a
+-- does the token after `with` begin an entry (`name =`, `.name`, `[`, `..`, a
 -- literal)? Then `with` opens a block (§2.4 rule 12); otherwise it is a name.
 -- does a `with` block's first entry start at token k? `listish` (a `define` block) also takes
 -- the start of a list's items: a table, a function, a nested block, a negative number, or a
@@ -799,7 +807,7 @@ function P:table()
 end
 
 -- `with` entries to `end` (§2.4 rule 12): commas optional; an entry ends where the next one
--- begins (a name followed by `=` or `=:`, or a name or `.name` on a line of its own)
+-- begins (a name followed by `=`, or a name or `.name` on a line of its own)
 function P:with_entries(wtk)
     local r = self.r
     self.kinds[#self.kinds + 1] = 'with'
@@ -967,7 +975,8 @@ function P:args()
 end
 
 -- is the `:` ahead a block colon (§2.4 rule 11)? Not inside brackets or a type, and not a
--- method call (a name directly after the colon); the rest of its line is names and `..`
+-- method call (a name directly after the colon). A removed parameter form still answers yes,
+-- so `colon_lambda` can report what to write instead of reading the names as a method call.
 function P:block_colon_ahead(in_type)
     if in_type or self.in_bracket or self.in_with then return false end
     local r = self.r

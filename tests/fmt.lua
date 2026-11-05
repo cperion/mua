@@ -97,6 +97,10 @@ formatted('parenthesized callable bypass stays explicit', '(refresh)()', '(refre
 formatted('indexed callable stays explicit', 'actions[i]()', 'actions[i]()\n')
 formatted('comments survive bare statement calls', 'refresh(-- keep\n)', 'refresh  -- keep\n')
 formatted('unary statement call', 'consume(value)', 'consume value\n')
+formatted('a call in a trailing block loses its parentheses', 'with_log "import":\n    print("x")\nend\n',
+    'with_log "import":\n    print "x"\nend\n')
+formatted('a call in a do block loses its parentheses', 'f(do(x) g(x) end)\n', 'f do(x) g x end\n')
+formatted('a call that is the juxtaposed argument keeps them', 'f g(x)\n', 'f g(x)\n')
 formatted('multiline unary argument', 'local r=f(\n x\n)', 'local r = f x\n')
 formatted('multiline call chain', 'local r=f(\n a\n)(\n b\n)', 'local r = f a b\n')
 formatted('inline argument comment', 'local r=f(--[[ note ]] x)', 'local r = f  --[[ note ]] x\n')
@@ -306,13 +310,11 @@ formatted('a short function with a block', 'local f=|x|->do\n    return x\nend\n
 formatted('a block with no parameters keeps its do', 'local f = do()\n    return 1\nend\nedit document do(..)\n    go\nend\n',
     'local f = do()\n    return 1\nend\nedit document:\n    go\nend\n')
 
--- `return:` returns a block
-formatted('return do(names) is written return:', 'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n',
-    'local f =: a\n    return: body\n        go body\n    end\nend\n')
-formatted('return: stays', 'local f =: a\n    return: body\n        go body\n    end\nend\n',
-    'local f =: a\n    return: body\n        go body\n    end\nend\n')
+-- a do block keeps its parameters; only the anonymous trailing block has a colon
+formatted('a returned block stays a do-form', 'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n',
+    'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n')
 formatted('return of an expression lambda is an arrow', 'local f = do(a)\n    return do(x) = x + a\nend\n',
-    'local f =: a\n    return x -> x + a\nend\n')
+    'local f = do(a)\n    return x -> x + a\nend\n')
 
 -- lambda_style: a plain `do(a, b) = e` is the short function `|a, b| -> e`
 formatted('one name', 'local f = do(x) = x * 2\n', 'local f = x -> x * 2\n')
@@ -323,13 +325,13 @@ formatted('one name stays a juxtaposed argument', 'map xs do(x) = x + 1\n', 'map
 formatted('several names are bracketed after an operand', 'map xs do(a, b) = a + b\n', 'map xs (|a, b| -> a + b)\n')
 formatted('in a table', 'local t = { found = do(i) = i, missing = do() = -1 }\n', 'local t = { found = i -> i, missing = || -> -1 }\n')
 formatted('an opened parameter has no arrow', 'local f = do(ctx..) = x\n', 'local f = do(..) = x\n')
-formatted('a block body keeps its do', 'local f = do(x)\n    return x\nend\n', 'local f =: x\n    return x\nend\n')
+formatted('a block body keeps its do', 'local f = do(x)\n    return x\nend\n', 'local f = do(x)\n    return x\nend\n')
 formatted('lambda_style do keeps do', 'local f = do(x) = x * 2\n', 'local f = do(x) = x * 2\n', { lambda_style = 'do' })
 check('an invalid lambda_style is rejected', not pcall(fmt.format, 'local x=1', { lambda_style = 'fn' }))
 
 -- a with or define block as a call argument: no space after the bracket, entries one unit in
 formatted('a define block as the argument', 'local keymap = do(body)\n    body(define\n        bind = do(key) = do(command)\n            go key\n        end\n    end)\nend\n',
-    'local keymap =: body\n    body define\n        bind = do(key) = do(command)\n            go key\n        end\n    end\nend\n')
+    'local keymap = do(body)\n    body define\n        bind = do(key) = do(command)\n            go key\n        end\n    end\nend\n')
 formatted('a with block as the argument', 'local x = f(Point with\n    x = 1\n    y = 2\n    z = 3\nend)\n',
     'local x = f(Point with\n    x = 1\n    y = 2\n    z = 3\nend)\n')
 formatted('a define block among arguments', 'local x = f(a, define\n    x = 1\n    y = 2\nend, b)\n',
@@ -356,8 +358,8 @@ formatted('a list mixed with keys', 'local t = define\n    "a"\n    "b"\n    n =
 -- a block with an entry moved to its own line and one the layout already wrote is indented once
 formatted('a long table in a call is indented once', 'print(f(Mul { left = Num { value = 0 }, right = Add { left = Num { value = 5 }, right = Num { value = 5 } } }))\n', 'print(f(Mul with\n    left = Num { value = 0 }\n    right = Add { left = Num { value = 5 }, right = Num { value = 5 } }\nend))\n')
 
--- a rest parameter has no colon spelling, and does not keep the rest of the file from one
-formatted('a rest parameter stays a do-form beside colon blocks', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n', 'local V = define\n    First =: node walk\n        return node\n    end\n    Second =: node walk\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n')
+-- a block with parameters is a do-form; a rest parameter has no colon spelling
+formatted('parameters keep their do-form', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n')
 
 -- a headless `with` is not a table in braces: no pass may give it a head or braces
 formatted('a headless with as an argument stays', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n')

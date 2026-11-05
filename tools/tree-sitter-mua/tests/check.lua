@@ -107,13 +107,7 @@ local colon_tree = parse([[
 with_buffer n:
     go
 end
-words:each: key value
-    go key
-end
-tasks: scope..
-    go
-end
-local total = view_of(p, n): bytes
+words:each:
     go
 end
 spawn:
@@ -121,26 +115,26 @@ spawn:
 endall
 ]], 'trailing colon blocks')
 local colon_sexpr = colon_tree:root():sexpr()
-assert(select(2, colon_sexpr:gsub('%(lambda', '')) == 5, 'colon blocks are not lambdas: ' .. colon_sexpr)
-assert(select(2, colon_sexpr:gsub('%(parameter%s', '')) == 4, 'colon block parameters missing: ' .. colon_sexpr)
+assert(select(2, colon_sexpr:gsub('%(lambda', '')) == 3, 'colon blocks are not lambdas: ' .. colon_sexpr)
+assert(select(2, colon_sexpr:gsub('%(parameter%s', '')) == 0, 'a colon block takes no parameters: ' .. colon_sexpr)
 local assigned = parse([[
-local f =: x
+local f = do(x)
     go x
 end
 local handlers = {
-    found =: v
+    found = do(v)
         go v
     end,
-    other =: ..
+    other = do(..)
         go
     end,
 }
-g.h =:
+g.h = do(..)
     go
 end
-]], '=: assigns a block')
+]], 'a do lambda assigns a block')
 local assigned_sexpr = assigned:root():sexpr()
-assert(select(2, assigned_sexpr:gsub('%(lambda', '')) == 4, '=: blocks are not lambdas: ' .. assigned_sexpr)
+assert(select(2, assigned_sexpr:gsub('%(lambda', '')) == 4, 'assigned blocks are not lambdas: ' .. assigned_sexpr)
 local with_tree = parse([[
 local Point = struct
     x: U32
@@ -149,14 +143,14 @@ end
 local p = Point with
     .y
     x = 1
-    found =: v
+    found = do(v)
         go v
     end
 end
 local q = Point with x = 1, y = 2 end
 local r = s with
     circle = do(c) = c * c
-    rect =: p
+    rect = do(p)
         go p
     end
 end
@@ -185,15 +179,15 @@ assert(select(2, contextual_sexpr:gsub('%(table_constructor', '')) == 3, 'contex
 parse([[
 local g = do(n: U32): U32
     a with
-        rect =: r
+        rect = do(r)
             total = r
         end
-    circle =: r
+    circle = do(r)
     b with
-        circle =: q
+        circle = do(q)
             total = r + q
         end
-    rect =: p
+    rect = do(p)
         total = r + p
     endall
     return total
@@ -279,10 +273,10 @@ end
 ]], 'define blocks and the name define')
 local defined_sexpr = defined:root():sexpr()
 assert(select(2, defined_sexpr:gsub('define_block', '')) == 2, 'define blocks missing: ' .. defined_sexpr)
--- `return:` returns a block
+-- a returned block is a do lambda
 local returned = parse([[
-local with_log =: title
-    return: body
+local with_log = do(title)
+    return do(body)
         go title
         body
     end
@@ -290,9 +284,9 @@ end
 local plain = do(x)
     return x
 end
-]], 'return: returns a block')
+]], 'a returned block is a do lambda')
 local returned_sexpr = returned:root():sexpr()
-assert(select(2, returned_sexpr:gsub('%(lambda', '')) == 3, 'return: block is not a lambda: ' .. returned_sexpr)
+assert(select(2, returned_sexpr:gsub('%(lambda', '')) == 3, 'a returned block is not a lambda: ' .. returned_sexpr)
 -- a `define` block holds lists as well: positional entries, one per line
 local listed = parse([[
 local numbers = define

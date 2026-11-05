@@ -177,20 +177,21 @@ parses('zero-argument call statements', 'refresh\nscreen.refresh\nscreen:refresh
 parses('field shorthand', 'p = P { .x, .y, z = 3 }', 'p = P({x=x, y=y, z=3})')
 parses('keyed spread', 't = { ..a, k = 1 }', 't = {..a, k=1}')
 parses('trailing colon', 'with_buffer n:\n  use n\nend', 'with_buffer(n)(colon(..){use(n)})')
-parses('trailing colon on a method', 'xs:each: k v\n  f k v\nend', 'xs:each(colon(k v){f(k)(v)})')
-parses('trailing colon opening a name', 'tasks: scope..\n  go\nend', 'tasks(colon(scope..){go()})')
-parses('a block argument goes on applying', 'r = apply: v\n  return v\nend x', 'r = apply(colon(v){return v})(x)')
-parses('=: assigns a block', 'local f =: x\n  return x\nend', 'local f = colon(x){return x}')
+parses('a trailing colon on a method', 'xs:each:\n  f k v\nend', 'xs:each(colon(..){f(k)(v)})')
+parses('a do lambda names parameters', 'xs:each do(k, v)\n  f k v\nend', 'xs:each(fn(k v){f(k)(v)})')
+parses('a do lambda opens a name', 'tasks do(scope..)\n  go\nend', 'tasks(fn(scope..){go()})')
+parses('a block argument goes on applying', 'r = apply do(v)\n  return v\nend x', 'r = apply(fn(v){return v})(x)')
+parses('a do lambda assigns a block', 'local f = do(x)\n  return x\nend', 'local f = fn(x){return x}')
 parses('with block', 'p = P with\n  x = 1\n  .y\n  z = f a\nend', 'p = P(with{x=1, y=y, z=f(a)})')
 parses('a spread on its own line is the next entry', 't = define\n  ..a\n  ..b\nend', 't = {..a, ..b}')
 parses('with entries stop at the next entry', 'p = P with x = a y = b end', 'p = P(with{x=a, y=b})')
 parses('contextual with', 'return with\n  x = 1\nend', 'return ctx{x=1}')
 parses('with as a name', 'x = with + 1', 'x = (with + 1)')
 parses('a handler entry', 'r = s with\n  done() = 0\n  failed(e) = e\nend', 'r = s(with{done=fn()=0, failed=fn(e)=e})')
-parses('endall closes the spine', 'outer:each: a\n  inner:each: b\n    f a b\nendall\ng()',
-    'outer:each(colon(a){inner:each(colon(b){f(a)(b)})}), g()')
-parses('endall stops at a typed word', 'local w = do(): U32\n  xs:each: a\n    f a\n  endall\n  return 1\nend',
-    'local w = fn():U32{xs:each(colon(a){f(a)}), return 1}')
+parses('endall closes the spine', 'outer:each:\n  inner:each:\n    f a b\nendall\ng()',
+    'outer:each(colon(..){inner:each(colon(..){f(a)(b)})}), g()')
+parses('endall stops at a typed word', 'local w = do(): U32\n  xs:each do(a)\n    f a\n  end\n  return 1\nend',
+    'local w = fn():U32{xs:each(fn(a){f(a)}), return 1}')
 parses('struct and oneof', 'local P = struct { x: F32, y: F32 }\nlocal S = oneof\n  a: Unit\n  b: U32\nend',
     'local P = struct{x:F32, y:F32}, local S = oneof{a:Unit, b:U32}')
 parses('typed word', 'local f = do(x: U32): U32 = x + 1', 'local f = fn(x):U32=(x + 1)')
@@ -219,6 +220,18 @@ parses('const as a name', 'local const = 5\nconst = 6', 'local const = 5, const 
 parses('semicolons anywhere', ';; f();; do return;; end', 'f(), do {return }')
 parses('goto and labels', 'goto a\n::a::', 'goto a, ::a::')
 parse_rejects('a parallel compound assignment', 'a, b += 1, 1', "'=' expected")
+parse_rejects('a block colon with parameters', 'xs:each: k v\n  f k v\nend',
+    "a block colon takes no parameters; write 'do(k, v) ... end' after the call")
+parse_rejects('a block colon opening a name', 'tasks: scope..\n  go\nend',
+    "a block colon takes no parameters; write 'do(scope..) ... end' after the call")
+parse_rejects('an assigned block', 'local f =: x\n  return x\nend',
+    "an assigned block is written '= do(x) ... end', not '=:'")
+parse_rejects('an assigned block opening the home', 'local f =:\n  go\nend',
+    "an assigned block is written '= do(..) ... end', not '=:'")
+parse_rejects('a returned block', 'return: b\n  go\nend',
+    "a returned block is written 'return do(b) ... end', not 'return:'")
+parse_rejects('a returned block opening the home', 'return:\n  go\nend',
+    "a returned block is written 'return do(..) ... end', not 'return:'")
 
 -- the emitter: Mua programs run as plain Lua ------------------------------------------------
 local mua = require 'mua.init'
@@ -238,8 +251,8 @@ end
 runs('juxtaposition', 'local add = do(a) = do(b) = a + b\nreturn add 1 2', 3)
 runs('a string argument takes its chain', 'local id = do(x) = x\nreturn id "ab":rep 2', 'abab')
 runs('block lambda', 'local function twice(f) return f() * 2 end\nreturn twice do\n  return 21\nend', 42)
-runs('trailing colon', 'local function with_value(v) return function(f) return f(v) end end\nreturn with_value 20: x\n  return x + 1\nend', 21)
-runs('=: assigns a block', 'local f =: x\n  return x * 3\nend\nreturn f(5)', 15)
+runs('trailing colon', 'local function with_value(v) return function(f) return f(v) end end\nreturn with_value 20 do(x)\n  return x + 1\nend', 21)
+runs('a do lambda assigns a block', 'local f = do(x)\n  return x * 3\nend\nreturn f(5)', 15)
 runs('zero-argument call statement', 'local n = 0\nlocal function bump() n = n + 1 end\nbump\nbump\nreturn n', 2)
 runs('with block', 'local function P(t) return t end\nlocal p = P with\n  x = 1\n  y = 2\nend\nreturn p.x + p.y', 3)
 runs('field shorthand', 'local x, y = 3, 4\nlocal t = { .x, .y }\nreturn t.x * t.y', 12)
@@ -280,7 +293,7 @@ runs('LuaJIT 3.0 forms', 'local t = nil\nlocal a = t?.x ?? 5\nlocal f = |x| -> x
 runs('name -> as an argument', 'local function map(xs) return function(f) local o = {} for i, x in ipairs(xs) do o[i] = f(x) end return o end end\nlocal xs = { 1, 2 }\nlocal r = map xs x -> x * 10\nreturn r[2]', 20)
 runs('customary operators', 'return !false && (1 != 2) || false', true)
 runs('continue', 'local n = 0\nfor i = 1, 5 do\n  if i % 2 == 0 then continue end\n  n = n + i\nend\nreturn n', 9)
-runs('endall', 'local function each(xs) return function(f) for _, x in ipairs(xs) do f(x) end end end\nlocal n = 0\neach { 1, 2 }: a\n  each { 10, 20 }: b\n    n = n + a * b\nendall\nreturn n', 90)
+runs('endall', 'local function each(xs) return function(f) for _, x in ipairs(xs) do f(x) end end end\nlocal n = 0\neach { 1, 2 } do(a)\n  each { 10, 20 } do(b)\n    n = n + a * b\nendall\nreturn n', 90)
 fails_at('a runtime error keeps its line', 'local x = 1\n\nlocal f = do(a)\n  return a.b.c\nend\nreturn f({})', 4)
 fails_at('lines across a with block', 'local t = with\n  a = 1\n  b = 2\nend\nerror("here")', 5)
 
@@ -360,9 +373,9 @@ errors('a ctype contract rejects another value', 'local P = ffistruct { x: doubl
     "parameter 'p' of f expects P, got number 5")
 errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type")
 
--- return: returns a block
-runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
-runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
+-- a returned block is a do lambda
+runs('a returned block is a function', 'local f = do(a)\n    return do(b)\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
+runs('a returned block opens what it is given', 'local f = do()\n    return do(..)\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
 -- family: a closed set of structs with passes; every handler spells the contract node recurse
 local FAMILY = [[
 local Expression = family "expression"
@@ -371,13 +384,13 @@ local Sum = struct { left: Expression, right: Expression }
 local Negation = struct { operand: Expression }
 Expression { Literal, Sum, Negation }
 local Evaluation = define
-    Literal =: node recurse
+    Literal = do(node, recurse)
         return node.value
     end
-    Sum =: node recurse
+    Sum = do(node, recurse)
         return recurse node.left + recurse node.right
     end
-    Negation =: node recurse
+    Negation = do(node, recurse)
         return -recurse node.operand
     end
 end
@@ -404,14 +417,14 @@ errors('a family needs structs', 'local Expression = family "expression"\nExpres
 errors('is asks about a kind of the family', FAMILY .. 'local Other = struct { }\nExpression.is(Literal { value = 1 }, Other)', "is not a kind in the family 'expression'")
 runs('passes compose by spread and an explicit entry settles a clash', FAMILY .. [[
 local Loud = define
-    Literal =: node recurse
+    Literal = do(node, recurse)
         return 100
     end
 end
 local settled = Expression.pass "settled" with
     ..Evaluation
     ..Loud
-    Literal =: node recurse
+    Literal = do(node, recurse)
         return 7
     end
 end
@@ -421,22 +434,22 @@ local Expression = family "expression of the toy language"
 local Literal = struct { value: Number }
 Expression { Literal }
 Expression.pass "evaluate an expression to a number" with
-    Literal =: node recurse
+    Literal = do(node, recurse)
         return 1
     end
-    Literall =: node recurse
+    Literall = do(node, recurse)
         return 2
     end
 end]], "pass 'evaluate an expression to a number': 'Literall' is not a kind in the family 'expression of the toy language'")
 runs('a pass carries extra arguments down', FAMILY .. [[
 local Depth = define
-    Literal =: node recurse depth
+    Literal = do(node, recurse, depth)
         return depth
     end
-    Sum =: node recurse depth
+    Sum = do(node, recurse, depth)
         return math.max(recurse(node.left, depth + 1), recurse(node.right, depth + 1))
     end
-    Negation =: node recurse depth
+    Negation = do(node, recurse, depth)
         return recurse(node.operand, depth + 1)
     end
 end
@@ -450,7 +463,7 @@ errors('checker takes a name and a predicate', 'local c = checker(1, 2)', 'takes
 runs('meta installs methods and metamethods', [[
 local Counter = meta with
     index = define
-        increment =: self
+        increment = do(self)
             self.value += 1
         end
     end

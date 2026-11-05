@@ -145,8 +145,8 @@ named checker, which `checker` makes from a predicate; `check(Type, value)` asks
 
 ```lua
 -- a list whose every element passes the element type, named for messages
-local list_of =: element_type
-    local every =: value
+local list_of = do(element_type)
+    local every = do(value)
         if type value ~= "table" then return false end
         for _, element in ipairs value do
             if not check(element_type, element) then return false end
@@ -172,10 +172,10 @@ pass that has not learned it fail where it is made, not when some program first 
 
 ```lua
 local Area = define
-    Circle =: node recurse
+    Circle = do(node, recurse)
         return 3 * node.radius * node.radius
     end
-    Pair =: node recurse
+    Pair = do(node, recurse)
         return recurse node.left + recurse node.right
     end
 end
@@ -186,11 +186,13 @@ local made, why = pcall(Shape.pass "area", { Circle = Area.Circle })
 assert(not made and why:find("no handler for the kind 'Pair'", 1, true))
 ```
 
-A handler is called as `handler(node, recurse, ...)`: the node it is given, the pass itself (to
-recur with), and the arguments the pass was called with. Every handler in this guide spells it
-that way, `Circle =: node recurse`, whatever the pass: the contract reads the same in every pass,
-so a handler never has to be decoded, and `recurse node.left` says what happens. The pass's own
-name (`area`, `check`, `evaluate`) belongs to the place it is called from.
+The `family` builtin's pass machinery calls `handler(node, recurse, ...)`: first the current
+node, then the recurse hook, then the context the pass was called with (a scope, an environment,
+a lowering state). Those positions are fixed by the builtin, not by convention. Every handler in
+this guide spells them that way, `Circle = do(node, recurse)` or
+`Variable = do(node, recurse, environment)`, whatever the pass: the first two never move, so a
+handler never has to be decoded, and `recurse node.left` says what happens. The pass's own name
+(`area`, `check`, `evaluate`) belongs to the place it is called from.
 
 ### 4.2 A result and its effects
 
@@ -210,10 +212,10 @@ in its own calls, changed or not:
 
 ```lua
 local Depth = define
-    Circle =: node recurse depth
+    Circle = do(node, recurse, depth)
         return depth
     end
-    Pair =: node recurse depth
+    Pair = do(node, recurse, depth)
         return math.max(recurse(node.left, depth + 1), recurse(node.right, depth + 1))
     end
 end
@@ -240,7 +242,7 @@ Because handlers are a vocabulary, passes are built from one another by spread:
 ```lua
 -- a variant that names only what it changes
 local RoundedArea = define ..Area
-    Circle =: node recurse
+    Circle = do(node, recurse)
         return math.floor(3.14159 * node.radius * node.radius)
     end
 end
@@ -324,7 +326,7 @@ position, as `source:line:column`, and every stage after it passes positions on.
 ```lua
 local Token = struct { text: String, at: String }
 
-local tokenize =: text source_name
+local tokenize = do(text, source_name)
     local tokens, index, line, line_start = {}, 1, 1, 1
     while index <= #text do
         local character = text:sub(index, index)
@@ -367,7 +369,7 @@ Datum { Atom, List }
 -- a problem at a position: every stage that stops reports this way
 local fail = |at, message| -> error(at .. ": " .. message, 0)
 
-local read =: tokens
+local read = do(tokens)
     local position = 1
     local read_datum
     read_datum = do()
@@ -441,7 +443,7 @@ on its kind. Each form checks its own shape and fails at its own position.
 
 ```lua
 local parse
-parse =: datum
+parse = do(datum)
     if Datum.is(datum, Atom) then
         local number = tonumber datum.text
         if number then return Literal { value = number, at = datum.at } end
@@ -501,7 +503,7 @@ end
 local is_symbol = |datum, text| -> Datum.is(datum, Atom) and datum.text == text
 
 -- a program: (define name value) forms, then the expression they are for
-local parse_program =: forms
+local parse_program = do(forms)
     if #forms == 0 then error("parse: an empty program", 0) end
     local body = parse forms[#forms]
     for index = #forms - 1, 1, -1 do
@@ -528,29 +530,29 @@ the print must give the same tree.
 
 ```lua
 local Writing = define
-    Literal =: node recurse
+    Literal = do(node, recurse)
         return tostring node.value
     end
-    Variable =: node recurse
+    Variable = do(node, recurse)
         return node.name
     end
-    Primitive =: node recurse
+    Primitive = do(node, recurse)
         local left, right = recurse node.arguments[1], recurse node.arguments[2]
         return ("(%s %s %s)"):format(node.operator, left, right)
     end
-    Conditional =: node recurse
+    Conditional = do(node, recurse)
         local condition = recurse node.condition
         local when_true, when_false = recurse node.when_true, recurse node.when_false
         return ("(if %s %s %s)"):format(condition, when_true, when_false)
     end
-    Let =: node recurse
+    Let = do(node, recurse)
         return ("(let ((%s %s)) %s)"):format(node.name, recurse node.value, recurse node.body)
     end
-    Lambda =: node recurse
+    Lambda = do(node, recurse)
         local parameters = table.concat(node.parameters, " ")
         return ("(lambda (%s) %s)"):format(parameters, recurse node.body)
     end
-    Application =: node recurse
+    Application = do(node, recurse)
         local parts = { recurse node.callee }
         for _, argument in ipairs node.arguments do parts[#parts + 1] = recurse argument end
         return "(" .. table.concat(parts, " ") .. ")"
@@ -577,7 +579,7 @@ from the inner table is looked up outside.
 ```lua
 -- a scope whose missing names are those of the scope around it
 local within = outer -> meta { index = outer } {}
-local scope_with =: outer names
+local scope_with = do(outer, names)
     local inner = within outer
     for _, name in ipairs names do inner[name] = true end
     return inner
@@ -600,19 +602,19 @@ the extension is seen only below it), `problems` is accumulated (every handler a
 one list).
 
 ```lua
-local report =: problems at message
+local report = do(problems, at, message)
     problems[#problems + 1] = at .. ": " .. message
 end
 
 local Checking = define
-    Literal =: node recurse scope problems
+    Literal = do(node, recurse, scope, problems)
         return
     end
-    Variable =: node recurse scope problems
+    Variable = do(node, recurse, scope, problems)
         if not scope[node.name] then report(problems,
                 node.at, node.name .. " is not defined here") end
     end
-    Primitive =: node recurse scope problems
+    Primitive = do(node, recurse, scope, problems)
         if #node.arguments ~= 2 then
             local message = ("(%s) takes two arguments, got %d"):format(node.operator,
                 #node.arguments)
@@ -620,20 +622,20 @@ local Checking = define
         end
         for _, argument in ipairs node.arguments do recurse(argument, scope, problems) end
     end
-    Conditional =: node recurse scope problems
+    Conditional = do(node, recurse, scope, problems)
         recurse(node.condition, scope, problems)
         recurse(node.when_true, scope, problems)
         recurse(node.when_false, scope, problems)
     end
-    Let =: node recurse scope problems
+    Let = do(node, recurse, scope, problems)
         local inner = scope_with(scope, { node.name })
         recurse(node.value, inner, problems)
         recurse(node.body, inner, problems)
     end
-    Lambda =: node recurse scope problems
+    Lambda = do(node, recurse, scope, problems)
         recurse(node.body, scope_with(scope, node.parameters), problems)
     end
-    Application =: node recurse scope problems
+    Application = do(node, recurse, scope, problems)
         recurse(node.callee, scope, problems)
         for _, argument in ipairs node.arguments do recurse(argument, scope, problems) end
     end
@@ -662,36 +664,36 @@ with (§12). A compiler without one can only be tested against expected outputs 
 
 ```lua
 local Evaluation = define
-    Literal =: node recurse environment
+    Literal = do(node, recurse, environment)
         return node.value
     end
-    Variable =: node recurse environment
+    Variable = do(node, recurse, environment)
         return environment[node.name]
     end
-    Primitive =: node recurse environment
+    Primitive = do(node, recurse, environment)
         local left = recurse(node.arguments[1], environment)
         local right = recurse(node.arguments[2], environment)
         return operators[node.operator](left, right)
     end
-    Conditional =: node recurse environment
+    Conditional = do(node, recurse, environment)
         if recurse(node.condition, environment) then
             return recurse(node.when_true, environment)
         end
         return recurse(node.when_false, environment)
     end
-    Let =: node recurse environment
+    Let = do(node, recurse, environment)
         local inner = within environment
         inner[node.name] = recurse(node.value, inner)
         return recurse(node.body, inner)
     end
-    Lambda =: node recurse environment
+    Lambda = do(node, recurse, environment)
         return do(..arguments)
             local inner = within environment
             for index, name in ipairs node.parameters do inner[name] = arguments[index] end
             return recurse(node.body, inner)
         end
     end
-    Application =: node recurse environment
+    Application = do(node, recurse, environment)
         local arguments = {}
         for index, argument in ipairs node.arguments do
             arguments[index] = recurse(argument, environment)
@@ -754,13 +756,13 @@ label. A source name may hold characters Lua does not allow in a name, so they a
 ```lua
 local fresh_names = do()
     local count = 0
-    return: word
+    return do(word)
         count += 1
         return word:gsub("[^%w_]", "_") .. "_" .. count
     end
 end
 
-local write_instruction =: lowering instruction
+local write_instruction = do(lowering, instruction)
     lowering.code[#lowering.code + 1] = instruction
 end
 ```
@@ -777,15 +779,15 @@ own, and extends `registers` with its parameters.
 
 ```lua
 local Lowering = define
-    Literal =: node recurse lowering
+    Literal = do(node, recurse, lowering)
         local register = lowering.fresh "value"
         write_instruction(lowering, Constant { .register, value = node.value })
         return register
     end
-    Variable =: node recurse lowering
+    Variable = do(node, recurse, lowering)
         return lowering.registers[node.name]
     end
-    Primitive =: node recurse lowering
+    Primitive = do(node, recurse, lowering)
         local left = recurse(node.arguments[1], lowering)
         local right = recurse(node.arguments[2], lowering)
         local register = lowering.fresh "value"
@@ -793,7 +795,7 @@ local Lowering = define
         write_instruction(lowering, Operation { .register, .operator, .left, .right })
         return register
     end
-    Conditional =: node recurse lowering
+    Conditional = do(node, recurse, lowering)
         local condition = recurse(node.condition, lowering)
         local otherwise = lowering.fresh "otherwise"
         local done = lowering.fresh "done"
@@ -808,14 +810,14 @@ local Lowering = define
         write_instruction(lowering, Label { name = done })
         return register
     end
-    Let =: node recurse lowering
+    Let = do(node, recurse, lowering)
         local register = lowering.fresh node.name
         local inner = { ..lowering, registers = within lowering.registers }
         inner.registers[node.name] = register
         write_instruction(lowering, Copy { .register, source = recurse(node.value, inner) })
         return recurse(node.body, inner)
     end
-    Lambda =: node recurse lowering
+    Lambda = do(node, recurse, lowering)
         local inner = { ..lowering, code = {}, registers = within lowering.registers }
         local parameters = {}
         for index, name in ipairs node.parameters do
@@ -827,7 +829,7 @@ local Lowering = define
         write_instruction(lowering, Closure { .register, .parameters, code = inner.code })
         return register
     end
-    Application =: node recurse lowering
+    Application = do(node, recurse, lowering)
         local callee = recurse(node.callee, lowering)
         local arguments = {}
         for index,
@@ -840,7 +842,7 @@ end
 local lower = Expression.pass "lower an expression to instructions" with ..Lowering end
 
 -- a whole program is the body of a function with no parameters
-local lower_program =: tree
+local lower_program = do(tree)
     local lowering = { code = {}, registers = {}, fresh = fresh_names() }
     write_instruction(lowering, Return { source = lower(tree, lowering) })
     return lowering.code
@@ -866,7 +868,7 @@ An optimization is a pass over the instruction family. Two drivers cover them al
 * a **walk** visits each instruction for its effect on shared state (counting, collecting).
 
 ```lua
-local rewrite =: pass code state
+local rewrite = do(pass, code, state)
     local written = {}
     local work = { ..state, .written }
     for _, instruction in ipairs code do
@@ -876,7 +878,7 @@ local rewrite =: pass code state
     end
     return written
 end
-local walk =: pass code state
+local walk = do(pass, code, state)
     for _, instruction in ipairs code do pass(instruction, state) end
 end
 ```
@@ -925,17 +927,17 @@ always does.
 
 ```lua
 local Folding = define ..Unchanged
-    Constant =: node recurse facts
+    Constant = do(node, recurse, facts)
         facts.known[node.register] = { node.value }
         return { node }
     end
-    Copy =: node recurse facts
+    Copy = do(node, recurse, facts)
         local known = facts.known[node.source]
         facts.known[node.register] = known
         if known then return { Constant { register = node.register, value = known[1] } } end
         return { node }
     end
-    Operation =: node recurse facts
+    Operation = do(node, recurse, facts)
         local left, right = facts.known[node.left], facts.known[node.right]
         facts.known[node.register] = nil
         if left and right then
@@ -945,21 +947,21 @@ local Folding = define ..Unchanged
         end
         return { node }
     end
-    Call =: node recurse facts
+    Call = do(node, recurse, facts)
         facts.known[node.register] = nil
         return { node }
     end
-    Label =: node recurse facts
+    Label = do(node, recurse, facts)
         facts.known = {}
         return { node }
     end
-    JumpUnless =: node recurse facts
+    JumpUnless = do(node, recurse, facts)
         local condition = facts.known[node.condition]
         if condition == nil then return { node } end
         if condition[1] then return {} end
         return { Jump { label = node.label } }
     end
-    Closure =: node recurse facts
+    Closure = do(node, recurse, facts)
         facts.known[node.register] = nil
         local code = rewrite(recurse, node.code, { known = {} })
         return { Closure { register = node.register, parameters = node.parameters, .code } }
@@ -991,23 +993,23 @@ local JumpedTo = define
     Call = nothing
     Label = nothing
     Return = nothing
-    Jump =: node recurse labels
+    Jump = do(node, recurse, labels)
         labels[node.label] = true
     end
-    JumpUnless =: node recurse labels
+    JumpUnless = do(node, recurse, labels)
         labels[node.label] = true
     end
-    Closure =: node recurse labels
+    Closure = do(node, recurse, labels)
         walk(recurse, node.code, labels)
     end
 end
 local find_labels = Instruction.pass "find the labels still jumped to" with ..JumpedTo end
 
-local unless_dead =: node recurse flow
+local unless_dead = do(node, recurse, flow)
     if flow.dead then return {} end
     return { node }
 end
-local ending_the_flow =: node recurse flow
+local ending_the_flow = do(node, recurse, flow)
     if flow.dead then return {} end
     flow.dead = true
     return { node }
@@ -1020,7 +1022,7 @@ local Reaching = define
     JumpUnless = unless_dead
     Jump = ending_the_flow
     Return = ending_the_flow
-    Label =: node recurse flow
+    Label = do(node, recurse, flow)
         if not flow.labels[node.name] then return {} end
         local previous = flow.written[#flow.written]
         if previous and Instruction.is(previous, Jump) and previous.label == node.name then
@@ -1029,7 +1031,7 @@ local Reaching = define
         flow.dead = false
         return { node }
     end
-    Closure =: node recurse flow
+    Closure = do(node, recurse, flow)
         if flow.dead then return {} end
         local code = rewrite(recurse, node.code, { labels = flow.labels })
         return { Closure { register = node.register, parameters = node.parameters, .code } }
@@ -1046,40 +1048,40 @@ stays. Reads inside a closure count, since the closure may read a register of th
 it.
 
 ```lua
-local read_once_more =: register counts
+local read_once_more = do(register, counts)
     counts.reads[register] = (counts.reads[register] or 0) + 1
 end
 local Reads = define
     Constant = nothing
     Label = nothing
     Jump = nothing
-    Copy =: node recurse counts
+    Copy = do(node, recurse, counts)
         read_once_more(node.source, counts)
     end
-    Operation =: node recurse counts
+    Operation = do(node, recurse, counts)
         read_once_more(node.left, counts)
         read_once_more(node.right, counts)
     end
-    Call =: node recurse counts
+    Call = do(node, recurse, counts)
         read_once_more(node.callee, counts)
         for _, argument in ipairs node.arguments do read_once_more(argument, counts) end
     end
-    JumpUnless =: node recurse counts
+    JumpUnless = do(node, recurse, counts)
         read_once_more(node.condition, counts)
     end
-    Return =: node recurse counts
+    Return = do(node, recurse, counts)
         read_once_more(node.source, counts)
     end
-    Closure =: node recurse counts
+    Closure = do(node, recurse, counts)
         walk(recurse, node.code, counts)
     end
 end
 local count_reads = Instruction.pass "count the reads of each register" with ..Reads end
 
-local never_read =: instruction counts
+local never_read = do(instruction, counts)
     return (counts.reads[instruction.register] or 0) == 0
 end
-local unless_never_read =: node recurse counts
+local unless_never_read = do(node, recurse, counts)
     if never_read(node, counts) then return {} end
     return { node }
 end
@@ -1087,7 +1089,7 @@ local Sweeping = define ..Unchanged
     Constant = unless_never_read
     Copy = unless_never_read
     Operation = unless_never_read
-    Closure =: node recurse counts
+    Closure = do(node, recurse, counts)
         if never_read(node, counts) then return {} end
         local code = rewrite(recurse, node.code, counts)
         return { Closure { register = node.register, parameters = node.parameters, .code } }
@@ -1110,7 +1112,7 @@ the count, and that change can enable more work in the next round. Comparing the
 ```lua
 -- the same representation: the same kinds, with the same fields, all the way down
 local same
-same =: left right
+same = do(left, right)
     if type left ~= "table" or type right ~= "table" then return left == right end
     if getmetatable left ~= getmetatable right then return false end
     for key, value in pairs left do
@@ -1123,7 +1125,7 @@ same =: left right
 end
 
 local instruction_count
-instruction_count =: code
+instruction_count = do(code)
     local total = 0
     for _, instruction in ipairs code do
         total += 1
@@ -1132,7 +1134,7 @@ instruction_count =: code
     return total
 end
 
-local optimize =: code
+local optimize = do(code)
     for _ = 1, 8 do
         local before = code
         code = rewrite(fold, code, { known = {} })
@@ -1166,7 +1168,7 @@ shape:
 * **Operators differ in spelling**: the language's `=` is Lua's `==`.
 
 ```lua
-local function_body =: write code indent
+local function_body = do(write, code, indent)
     local registers, declared = {}, {}
     for _, instruction in ipairs code do
         local register = instruction.register
@@ -1183,34 +1185,34 @@ end
 
 local lua_spelling = {["="] = "==" }
 local LuaText = define
-    Constant =: node recurse indent
+    Constant = do(node, recurse, indent)
         return indent .. node.register .. " = " .. tostring node.value
     end
-    Copy =: node recurse indent
+    Copy = do(node, recurse, indent)
         return indent .. node.register .. " = " .. node.source
     end
-    Operation =: node recurse indent
+    Operation = do(node, recurse, indent)
         local operator = lua_spelling[node.operator] or node.operator
         local expression = node.left .. " " .. operator .. " " .. node.right
         return indent .. node.register .. " = " .. expression
     end
-    Call =: node recurse indent
+    Call = do(node, recurse, indent)
         local arguments = table.concat(node.arguments, ", ")
         return indent .. node.register .. " = " .. node.callee .. "(" .. arguments .. ")"
     end
-    Label =: node recurse indent
+    Label = do(node, recurse, indent)
         return indent .. "::" .. node.name .. "::"
     end
-    Jump =: node recurse indent
+    Jump = do(node, recurse, indent)
         return indent .. "goto " .. node.label
     end
-    JumpUnless =: node recurse indent
+    JumpUnless = do(node, recurse, indent)
         return indent .. "if not " .. node.condition .. " then goto " .. node.label .. " end"
     end
-    Return =: node recurse indent
+    Return = do(node, recurse, indent)
         return indent .. "return " .. node.source
     end
-    Closure =: node recurse indent
+    Closure = do(node, recurse, indent)
         local header = ("%s%s = function(%s)"):format(indent,
             node.register, table.concat(node.parameters, ", "))
         local body = function_body(recurse, node.code, indent .. "  ")
@@ -1225,7 +1227,7 @@ The whole compiler is the stages in order. It answers every representation, not 
 so a test or a debugging session can look at any of them:
 
 ```lua
-local compile =: text source_name
+local compile = do(text, source_name)
     local tree = parse_program(read(tokenize(text, source_name)))
     local problems_found = {}
     check(tree, {}, problems_found)
@@ -1235,7 +1237,7 @@ local compile =: text source_name
     return { .tree, .instructions, .optimized, lua = emit_lua optimized }
 end
 
-local run =: text source_name
+local run = do(text, source_name)
     local compiled = compile(text, source_name)
     return assert(load(compiled.lua, "=" .. source_name))(), compiled
 end
@@ -1297,7 +1299,7 @@ What a compiler refuses, and how it says so, is as much its behavior as what it 
 messages, positions included:
 
 ```lua
-local refusal =: text
+local refusal = do(text)
     local accepted, message = pcall(compile, text, "refusal")
     assert(not accepted, text .. " was accepted")
     return message
@@ -1330,7 +1332,7 @@ passes, states. Name all of it in full words (the design guide's §13 is the rul
 * **Kinds and fields** say what they are: `Conditional { condition, when_true, when_false }`, not
   `If { test, yes, no }`; `register`, not `dst`; `Literal`, not `Num`.
 * **A handler** always spells the contract in the same words, `node recurse` and then the state
-  by its role: `Let =: node recurse lowering`. Then `recurse(node.body, inner)` reads the same in
+  by its role: `Let = do(node, recurse, lowering)`. Then `recurse(node.body, inner)` reads the same in
   every pass, and the kind is named once, by the entry (`Let =`).
 * **A pass** is named for what it does where it is made and called: `check`, `evaluate`, `lower`,
   `fold`.

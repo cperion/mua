@@ -29,9 +29,12 @@ local shorthand = do(x: U32, y: U32): Point
     return Point { .x, .y, z = 3 }
 end
 
--- a block colon
-local with_log =: title
-    return: body
+-- a day in the life of a block colon
+local with_log = do(title)
+    return do(body)
         body
     end
+end
+with_log "import":
+    go
 end

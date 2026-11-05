@@ -3,10 +3,10 @@
 
 -- `define` entries `end` is a table of names, written as a block.
 local Moves = define
-    left =: document
+    left = do(document)
         if document.cursor > 0 then document.cursor = document.cursor - 1 end
     end
-    right =: document
+    right = do(document)
         if document.cursor < document.length then document.cursor = document.cursor + 1 end
     end
 end
@@ -43,13 +43,13 @@ end
 print(wide.left, wide.right)
 
 -- A function takes a vocabulary and calls its members...
-local type_and_step_back =: ops document n
+local type_and_step_back = do(ops, document, n)
     ops.insert document n
     ops.left document
 end
 
 -- ...or opens it: the vocabulary's names are in scope in the block.
-local type_twice =: document n
+local type_twice = do(document, n)
     local Editing..
     insert document n
     insert document n

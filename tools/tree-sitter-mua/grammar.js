@@ -3,7 +3,7 @@ const sep = (rule, delimiter = ',') => seq(rule, repeat(seq(delimiter, rule)));
 module.exports = grammar({
   name: 'mua',
   extras: $ => [/\s/, $.comment, $._endall_reset],
-  externals: $ => [$.long_string, $.long_comment, $.name_argument, $._endall, $._implicit_end, $._error_sentinel, $._endall_reset, $._attached_paren, $._block_colon, $._header_name, $._header_dots, $._with, $._define],
+  externals: $ => [$.long_string, $.long_comment, $.name_argument, $._endall, $._implicit_end, $._error_sentinel, $._endall_reset, $._attached_paren, $._block_colon, $._with, $._define],
   word: $ => $.identifier,
   conflicts: $ => [[$.with_spread, $._expression], [$.expression_statement, $._expression], [$.bare_method_call, $._expression], [$.parameter, $._expression], [$.field, $._expression], [$.parameter, $.vararg_expression], [$.handler, $._expression]],
   rules: {
@@ -27,8 +27,7 @@ module.exports = grammar({
     assignment_statement: $ => seq(sep($._expression), '=', sep($._value)),
     expression_statement: $ => choice($.call_expression, $.lambda, $.identifier, $.member_expression, $.bare_method_call),
     bare_method_call: $ => seq(field('function', choice($.identifier, $.member_expression)), ':', field('method', $.identifier)),
-    // `return: names` then a block returns the block as a function
-    return_statement: $ => prec.right(seq('return', optional(choice(sep($._expression), alias($.colon_lambda, $.lambda))))),
+    return_statement: $ => prec.right(seq('return', optional(sep($._expression)))),
     break_statement: _ => choice('break', 'continue'),
     goto_statement: $ => seq('goto', $.identifier),
     label_statement: $ => seq('::', $.identifier, '::'),
@@ -45,14 +44,12 @@ module.exports = grammar({
       seq('=', $._expression),
       seq(optional($.block), choice('end', alias($._endall, 'endall'), $._implicit_end))
     ))),
-    // The trailing colon (`f x:`, `xs:each: key value`, `tasks: scope..`) opens a block.
-    // It is only ever a call's last argument, never a free lambda.
-    colon_lambda: $ => prec.right(seq(alias($._block_colon, ':'), optional(alias($.colon_parameters, $.parameters)),
-      optional($.block), choice('end', alias($._endall, 'endall'), $._implicit_end))),
-    // `=:` assigns a block: the value after `=` may be a colon block (`key =: x`).
-    _value: $ => choice($._expression, alias($.colon_lambda, $.lambda)),
-    colon_parameters: $ => repeat1(alias($.colon_parameter, $.parameter)),
-    colon_parameter: $ => prec.right(choice(seq(alias($._header_name, $.identifier), optional(alias($._header_dots, '..'))), alias($._header_dots, '..'))),
+    // The trailing colon (`f x:`) opens a block and opens the home (`do(..)`). It is only
+    // ever a call's last argument, never a free lambda; parameters are written in a do lambda.
+    colon_lambda: $ => prec.right(seq(alias($._block_colon, ':'), optional($.block),
+      choice('end', alias($._endall, 'endall'), $._implicit_end))),
+    // A block value is an ordinary expression (`local f = do(x) ... end`).
+    _value: $ => $._expression,
     function_expression: $ => seq('function', $.parameters, optional($.block), 'end'),
     // `define entries end` is a table: a definition, the entries need no separators.
     define_block: $ => seq(alias($._define, 'define'), repeat(choice(seq(alias($.with_entry, $.field), choice(',', ';')), alias($.with_entry, $.field))), choice('end', alias($._endall, 'endall'), $._implicit_end)),

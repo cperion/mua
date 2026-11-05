@@ -1,17 +1,16 @@
 -- The formatter's text passes (mua.fmt): the trailing colon and `with` blocks written as the
 -- do-forms and braces they mean (`expand`, driven by Mua's parser), and printed back as colons
--- and `with` blocks (`colonize`, `withize`, `foldends`, `inline_tables`). The trailing colon: a colon that ends a line, optionally followed by parameter
--- names, opens a block lambda:
+-- and `with` blocks (`colonize`, `withize`, `foldends`, `inline_tables`). The trailing colon: a
+-- colon that ends a line opens an untyped block lambda that opens the home:
 --
 --     with_buffer n:               with_buffer n do(..)
---     words:each: key value        words:each do(key, value)
---     tasks: scope..               tasks do(scope..)
 --
--- The colon is a block opener only where Mua has no annotation colon: not after a
--- parameter list (`do(x: U32): U32`, `function f(x): T`), not in the names of a
--- `local`, not inside brackets, not in a `::label::`, and not directly followed by
--- a name (`xs:each`, a method call). Only the token list changes; the text that
--- follows the colon (names, comment) is kept so line numbers stay put.
+-- Parameters are written in a do lambda (`words:each do(key, value) … end`), so only the bare
+-- colon is written back. The colon is a block opener only where Mua has no annotation colon:
+-- not after a parameter list (`do(x: U32): U32`, `function f(x): T`), not in the names of a
+-- `local`, not inside brackets, not in a `::label::`, and not directly followed by a name
+-- (`xs:each`, a method call). Only the token list changes; a comment after the colon is kept
+-- so line numbers stay put.
 
 local M = {}
 
@@ -256,31 +255,10 @@ function M.expand(source, mark, full, filename)
         end
         return struct(self, hint)
     end
-    -- trailing-colon blocks
+    -- trailing-colon blocks open the home: `f x:` is `f x do(..)`
     local colon_lambda = p.colon_lambda
     function p:colon_lambda(colon, hint)
-        local names, k, stop = {}, r.i, colon.index
-        while r.toks[k] and not r.toks[k].nl and r.toks[k].t ~= 'eof' do
-            local tk = r.toks[k]
-            if tk.t == 'name' then
-                names[#names + 1] = tk.v
-                local nx = r.toks[k + 1]
-                if nx and nx.t == '..' and not nx.nl then
-                    names[#names] = tk.v .. '..'
-                    k = k + 1; stop = nx.index
-                else stop = tk.index end
-            elseif tk.t == '..' then
-                names[#names + 1] = '..'; stop = tk.index
-            end
-            k = k + 1
-        end
-        if #names == 0 then names[1] = '..' end
-        local parts = {}
-        for _, n in ipairs(names) do
-            if n == '..' then parts[#parts + 1] = '..' else parts[#parts + 1] = n end
-        end
-        replace[colon.index] = ' do(' .. table.concat(parts, ', ') .. ')'
-        for j = colon.index + 1, stop do drop[j] = true end
+        replace[colon.index] = ' do(..)'
         return colon_lambda(self, colon, hint)
     end
     -- `endall`: the blocks it closes, innermost first
@@ -323,8 +301,8 @@ function try_expand(...)
     return ok and text or nil
 end
 
--- `do ( name, name.. )` at index i, followed by the end of its line: the
--- parameter text and the index of its `)`, or nil
+-- `do(..)` at index i, followed by the end of its line: the token list of the colon form it
+-- stands for. A named parameter is a do-form, not a colon, and `do()` has none.
 local function untyped_head(tokens, i)
     local j = i + 1
     if not tokens[j] or tokens[j][1] ~= '(' then return nil end
@@ -347,8 +325,9 @@ local function untyped_head(tokens, i)
         end
         k = k + 1
     end
-    -- `do()` takes no parameters; the colon form with no names opens the home, which is `do(..)`
-    if #names == 0 then return nil end
+    -- `do(..)` opens the home, which is what the colon form means; `do()` takes no parameters
+    -- and a named parameter stays a do-form
+    if #names ~= 1 or names[1] ~= '..' then return nil end
     local e = k + 1
     while tokens[e] and tokens[e][1] == 'space' and not tokens[e][2]:find '\n' do e = e + 1 end
     if tokens[e] and tokens[e][1] == 'comment' then e = e + 1 end
@@ -373,28 +352,16 @@ function M.colonize(source)
         elseif t == ')' or t == '}' or t == ']' then table.remove(openers) end
         local done = false
         local p = is_do(tk) and skip_back(tokens, i)
-        if is_do(tk) and (#openers == 0 or (p >= 1 and tokens[p][1] == '=')) then
-            local operand = p >= 1 and (OPERAND[tokens[p][1]] or tokens[p][1] == '='
-                or (tokens[p][1] == 'keyword' and tokens[p][2] == 'return')
+        if is_do(tk) and #openers == 0 then
+            local operand = p >= 1 and (OPERAND[tokens[p][1]]
                 or (tokens[p][1] == 'keyword' and LITERAL[tokens[p][2]]))
-            -- the `=` of `do(params) = e` is a lambda's, not an assignment: `e` is an expression
-            if p >= 1 and tokens[p][1] == '=' then
-                local q = skip_back(tokens, p)
-                if q >= 1 and tokens[q][1] == ')' and closer_of[q] and parameter_list(tokens, closer_of[q]) then
-                    operand = false
-                end
-            end
             local after_params = p >= 1 and tokens[p][1] == ')' and closer_of[p]
                 and parameter_list(tokens, closer_of[p])
             local names, close = untyped_head(tokens, i)
             if operand and not after_params and names then
-                -- drop the space before `do`, write `:` and the names
+                -- drop the space before `do`, write `:`; a comment stays where it was
                 while #out > 0 and out[#out][1] == 'space' and not out[#out][2]:find '\n' do out[#out] = nil end
-                local text = ':'
-                if #names > 0 and not (#names == 1 and names[1] == '..') then
-                    text = text .. ' ' .. table.concat(names, ' ')
-                end
-                out[#out + 1] = { ':', text, tk[3] }
+                out[#out + 1] = { ':', ':', tk[3] }
                 i = close + 1
                 done = true
             end

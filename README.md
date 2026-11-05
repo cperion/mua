@@ -21,7 +21,7 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
   `lifecycle` (a state machine as a `oneof`), `editor` (activities, outcomes and commands: the guide's
   worked example), `ffi` (`ffistruct`), `variants` (`meta`: a metatable per tag, behaviors shared by spread), `lisp` (a small Lisp compiled to Lua: two `family` types, a pass per stage). Each ends with a comment holding what it prints; `tests/examples.lua` runs them against it.
 - `docs/reading-mua.md`: a tour for newcomers: one function read slowly, its sugar undone step by
-  step, and the colon explained. Start here if `=: title` looks strange.
+  step, and the colon explained. Start here if `with_log "import":` looks strange.
 - `bench/micro.lua`: micro-benchmarks of the emitted code against hand-written Lua.
 - `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
 - `docs/writing-compilers.md`: writing compilers and language tools in Mua: one compiler built

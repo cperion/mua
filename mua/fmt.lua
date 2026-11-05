@@ -178,7 +178,12 @@ local function parse(source, filename)
     function p:block(kind)
         local start = last + 1
         depth = depth + 1
+        -- a block body is not the argument the block itself may be: calls in it are
+        -- statements or values, so a call there may lose its parentheses
+        local saved_host_argument = host_argument_depth
+        host_argument_depth = 0
         local result = block(self, kind)
+        host_argument_depth = saved_host_argument
         if depth > 1 then
             local closer = r:peek(1)
             local range = { start, closer.index - 1 }

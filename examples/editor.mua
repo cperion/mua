@@ -5,10 +5,10 @@
 -- The document persists; a draft is the private working copy of one edit.
 local new_document = || -> { length = 0, cursor = 0, edits = 0 }
 
-local new_draft =: document
+local new_draft = do(document)
     local draft = { length = document.length, cursor = document.cursor, edits = document.edits }
     -- the verbs of tentative editing live on the context, not on the document
-    draft.insert =: n
+    draft.insert = do(n)
         draft.length = draft.length + n
         draft.cursor = draft.cursor + n
         draft.edits = draft.edits + 1
@@ -19,14 +19,14 @@ local new_draft =: document
     return draft
 end
 
-local commit =: document draft
+local commit = do(document, draft)
     document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
 end
 
 -- `edit` always commits when the body returns normally. The block speaks instructions: calls
 -- without a receiver, resolved by the draft it is given.
-local edit =: document
-    return: body
+local edit = do(document)
+    return do(body)
         local draft = new_draft document
         body draft
         commit(document, draft)
@@ -37,8 +37,8 @@ end
 -- activity matches on it, and owns what each outcome means for the document.
 local Outcome = oneof { commit: Unit, abort: Number }
 
-local try_edit =: document
-    return: body
+local try_edit = do(document)
+    return do(body)
         local draft = new_draft document
         local accepted = body(draft) {
             commit() = true,
@@ -49,7 +49,7 @@ local try_edit =: document
     end
 end
 
-local show =: label document
+local show = do(label, document)
     print(label,
         "length=" .. document.length, "cursor=" .. document.cursor, "edits=" .. document.edits)
 end
@@ -62,10 +62,10 @@ end
 show("edit", document)
 
 -- Accepted: the draft is copied back. Rejected: the document is untouched.
-local type_capped =: document n cap
+local type_capped = do(document, n, cap)
     return try_edit document:
         insert n
-        if length > cap then return Outcome.abort(length) end
+        if length > cap then return Outcome.abort length end
         return Outcome.commit()
     end
 end
@@ -76,8 +76,8 @@ show("rejected", document)
 
 -- Policies are activities too, and they stack. The order of the spine is the order of completion:
 -- the edit commits first, then the clamp applies, then the count is recorded.
-local clamp_length =: document max
-    return: body
+local clamp_length = do(document, max)
+    return do(body)
         body
         if document.length > max then
             document.length = max
@@ -85,8 +85,8 @@ local clamp_length =: document max
         end
     end
 end
-local count_into =: stats
-    return: body
+local count_into = do(stats)
+    return do(body)
         body
         stats.count = stats.count + 1
     end
