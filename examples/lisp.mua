@@ -293,11 +293,12 @@ local Unchanged = define
 end
 local nothing = do() end
 
+-- a rewrite owns the list it writes: its handlers see it as `written` in a work table of their own
 local rewrite =: pass code state
     local written = {}
-    state.written = written
+    local work = { ..state, .written }
     for _, instruction in ipairs code do
-        for _, replacement in ipairs(pass(instruction, state)) do
+        for _, replacement in ipairs(pass(instruction, work)) do
             written[#written + 1] = replacement
         end
     end
@@ -458,6 +459,20 @@ local Sweeping = define ..Unchanged
 end
 local sweep = Instruction.pass "sweep what nobody reads" with ..Sweeping end
 
+-- the same representation: the same kinds, with the same fields, all the way down
+local same
+same =: left right
+    if type left ~= "table" or type right ~= "table" then return left == right end
+    if getmetatable left ~= getmetatable right then return false end
+    for key, value in pairs left do
+        if not same(value, right[key]) then return false end
+    end
+    for key in pairs right do
+        if left[key] == nil then return false end
+    end
+    return true
+end
+
 local instruction_count
 instruction_count =: code
     local total = 0
@@ -468,9 +483,10 @@ instruction_count =: code
     return total
 end
 
+-- the passes in order until a round changes nothing, bounded so a mistake cannot loop forever
 local optimize =: code
     for _ = 1, 8 do
-        local before = instruction_count code
+        local before = code
         code = rewrite(fold, code, { known = {} })
         local labels = {}
         walk(find_labels, code, labels)
@@ -478,7 +494,7 @@ local optimize =: code
         local counts = { reads = {} }
         walk(count_reads, code, counts)
         code = rewrite(sweep, code, counts)
-        if instruction_count code == before then break end
+        if same(code, before) then break end
     end
     return code
 end

@@ -70,22 +70,28 @@ either new kinds or new operations are cheap, and the other is expensive. Here k
 deliberately expensive (each pass is told when one is missing) and operations are cheap (a
 vocabulary and a word).
 
-## 2. Stages, and where state lives
+## 2. Stages, and what an operation knows
 
 A stage is a function from one representation to the next. Inside a stage, the work is a walk
-over a tree, and the walk usually needs **state**: the names in scope, the code being written,
-a supply of fresh names, the problems found so far. There are two places to put it:
+over a tree or along a list, and the walk needs to know things: the names in scope, the code
+being written, the problems found so far, what a register is known to hold. Each piece of that
+information plays one of four **roles** in the operation:
 
-* **passed down**, as an argument the walk hands to each child: a scope, which an inner node
-  extends without the outer one seeing it;
-* **shared**, in a table every node of the walk writes to: the code being written, the problems
-  found.
+| Role | How it behaves | In this guide |
+|---|---|---|
+| **inherited** | handed into nested work, extended there, never seen changed by the outer work | `scope`, `environment`, `registers`, `indent` |
+| **accumulated** | shared by all the work, which contributes to one result | `problems`, `reads`, `labels` |
+| **evolving** | updated as an ordered computation proceeds, read by what comes after | `known`, `dead` |
+| **produced** | created by the current activity, which owns it and hands it back | `code`, `written` |
 
-Passes take both (§4.3): the arguments a pass is called with are passed on to each handler, and a
-handler passes them, changed or not, to the calls it makes for its children. Keep the two kinds
-apart in your head: an extended scope is a new value, a list of problems is one shared value
-that grows. Name each for its role (`scope`, `problems`, `lowering`), never `ctx`: the name is
-how a reader tells which kind it is.
+Beside them sit **capabilities**: something the work may use, shared by everyone who has it, like
+the supply of fresh names (`fresh`).
+
+These are roles, not types: one table can hold several (the lowering state holds produced
+`code`, inherited `registers` and the `fresh` capability), and nothing in Mua names them. They
+are questions to ask of each piece of state, and §4.5 turns them into a way of designing the
+state an operation carries. Name each piece for what it holds (`scope`, `problems`, `lowering`),
+never `ctx`: the name is how a reader tells which it is.
 
 ## 3. Families: closed sets of kinds
 
@@ -186,13 +192,16 @@ that way, `Circle =: node recurse`, whatever the pass: the contract reads the sa
 so a handler never has to be decoded, and `recurse node.left` says what happens. The pass's own
 name (`area`, `check`, `evaluate`) belongs to the place it is called from.
 
-### 4.2 Answers and effects
+### 4.2 A result and its effects
 
-A pass either **answers** (each handler returns something: a value, a node, a line of text) or
-**acts** (each handler changes shared state and returns nothing). The compiler below has both:
-the interpreter answers values, lowering answers registers and writes instructions, the checker
-acts on a list of problems. Decide which a pass is before writing it, and keep it one or the
-other; a handler that answers in one kind and acts in another is a bug waiting to happen.
+Each handler of a pass has a **primary result**, what it returns, and may have **effects** on the
+state it was given. The interpreter has only a result (a value). The checker has only an effect
+(problems added to a list), and returns nothing. Lowering has both, and needs both: it returns
+the register holding the node's value, and writes the instructions that compute it.
+
+Decide both for every pass before writing it, and make every handler of the pass follow the same
+decision: a pass whose `Let` handler returns a register while its `Literal` handler returns an
+instruction is a bug waiting to happen.
 
 ### 4.3 Carrying state down the tree
 
@@ -238,6 +247,65 @@ end
 local rounded_area = Shape.pass "rounded area" with ..RoundedArea end
 assert(rounded_area two_circles == 15)
 ```
+
+### 4.5 Designing the state an operation carries
+
+The state a pass carries is designed, not accumulated as the code grows. Its organizing question
+is **what survives a boundary**: entering a binding, entering a function, crossing a label,
+starting a new rewrite. For each piece of state, ask:
+
+1. What does it hold, and what role does it play (§2)?
+2. Who creates it?
+3. Which boundary changes whether it is still valid?
+4. At that boundary, is it **shared**, **extended**, **reset** or **discarded**?
+5. Who owns its result when the work completes?
+
+The compiler's boundaries, answered:
+
+| Boundary | Kept | Changed |
+|---|---|---|
+| entering a `Let` (§9.3) | `code`, `fresh`, the outer bindings | `registers` extended with the new name |
+| entering a `Lambda` (§9.3) | `fresh`, the enclosing bindings | a new `code`; `registers` extended with the parameters |
+| crossing a label (§10.3) | the instruction sequence | every `known` fact forgotten |
+| entering a function's code in an optimization (§10.3) | `labels`, `reads` | `known` reset, a new `written` |
+| starting a rewrite (§10.1) | whatever the caller's state shares | a new `written`, owned by the rewrite |
+
+**Separate values or one table.** Pass pieces of state as separate arguments when their roles
+differ: the checker takes `scope` (inherited) and `problems` (accumulated), and the emitter takes
+only `indent`. Group them in one table when they are the working circumstances of one activity,
+changed together at its boundaries: lowering's `code`, `registers` and `fresh`. There is no
+universal context record, and none is needed.
+
+**Extending state with what Mua has.** Three existing mechanisms build the state for nested work,
+with different meanings and costs:
+
+* a **spread** makes a table with some responsibilities replaced: `{ ..lowering, code = {} }` is
+  the lowering state of a new function. It copies the table (shallowly), so what the copy shares
+  stays shared;
+* a **fallback** (`meta { index = outer }`, §7.1) extends a table of names without copying it:
+  entering costs nothing, and looking a name up costs a step per level of nesting;
+* a **shared reference** carries an accumulator or a capability into nested work unchanged:
+  `problems`, `fresh`, `reads`.
+
+**Order is part of the meaning.** A handler that changes evolving state or appends to produced
+state depends on the order in which its children are visited. The Lua manual leaves the order of
+evaluation in a multiple assignment undefined, so
+`local left, right = lower(a, lowering), lower(b, lowering)` promises nothing about which
+operand's instructions come first. Visit such children in separate statements, one after the
+other, as the lowering pass does; then the order is the order of the text.
+
+**An activity owns the temporary state it creates.** A rewrite creates the list it writes into;
+that list belongs to the rewrite, and a handler reaches it through state the rewrite made, not
+through a field the rewrite planted in its caller's table (§10.1 shows why).
+
+This is the design guide's method (*Designing and writing Mua*, Part I) applied to one kind of
+operation. For a transformation, the steps are: choose the family it understands; name what it
+does (check, evaluate, lower, rewrite, collect, emit); find its default behaviors (what preserves,
+contributes nothing, or shares a handler); design its state by role and boundary; compose its
+handlers with `define` and spread and let `Family.pass` check them; and test both its results
+and its obligations to its state. The family says what can exist; the pass says what the
+operation does with each kind; the state says what it knows, carries and produces; the activity
+says who owns the work and its completion.
 
 ## Part II: building a compiler
 
@@ -476,7 +544,7 @@ local Writing = define
         return ("(if %s %s %s)"):format(condition, when_true, when_false)
     end
     Let =: node recurse
-        return "(let ((" .. node.name .. " " .. recurse node.value .. ")) " .. recurse node.body .. ")"
+        return ("(let ((%s %s)) %s)"):format(node.name, recurse node.value, recurse node.body)
     end
     Lambda =: node recurse
         local parameters = table.concat(node.parameters, " ")
@@ -526,8 +594,10 @@ The same scopes serve the interpreter (§8), holding values instead of `true`.
 
 A checker should report **every** problem it can, not the first: a programmer fixing a program
 wants the whole list. So the checker acts on a shared list of problems instead of raising an
-error, and the compiler stops after checking if the list is not empty. The scope is passed down
-(each handler may extend it); the list is shared (every handler appends to the same one).
+error, and the compiler stops after checking if the list is not empty. The two pieces of state
+play different roles and travel separately: `scope` is inherited (each handler may extend it, and
+the extension is seen only below it), `problems` is accumulated (every handler appends to the
+one list).
 
 ```lua
 local report =: problems at message
@@ -695,9 +765,13 @@ local write_instruction =: lowering instruction
 end
 ```
 
-A nested scope is lowering state whose names fall back to the outer ones, and a function body is
-state with its own code list: both are a spread of the outer state with a field replaced. The
-fresh-name supply is shared by all of them, so names never collide across functions.
+The lowering state groups three pieces with three roles, because they are the working
+circumstances of one activity: `code` is produced (the instructions of the function being
+lowered), `registers` is inherited (the register each name in scope stands for), and `fresh` is a
+capability shared by every function, so names never collide across them. The two boundaries of
+§4.5 change it differently, each with a spread of the outer state: entering a `Let` keeps `code`
+and extends `registers` with one name; entering a `Lambda` starts a new `code`, the function's
+own, and extends `registers` with its parameters.
 
 ### 9.3 The lowering pass
 
@@ -794,9 +868,9 @@ An optimization is a pass over the instruction family. Two drivers cover them al
 ```lua
 local rewrite =: pass code state
     local written = {}
-    state.written = written
+    local work = { ..state, .written }
     for _, instruction in ipairs code do
-        for _, replacement in ipairs(pass(instruction, state)) do
+        for _, replacement in ipairs(pass(instruction, work)) do
             written[#written + 1] = replacement
         end
     end
@@ -807,8 +881,14 @@ local walk =: pass code state
 end
 ```
 
-A rewrite exposes the code written so far as `state.written`, so a handler can look one
-instruction back (§10.4 uses it).
+A rewrite owns the list it writes: it creates `written`, and hands its handlers a `work` table,
+a spread of the caller's state with `written` added, so a handler can look one instruction back
+(§10.4 uses it). The copy is shallow, so what the caller's state shares (the read counts, the
+labels) stays shared. Writing `state.written = written` instead would plant the list in the
+caller's table, and a nested rewrite over a closure's code, given the same state, would replace it
+in the middle of the outer rewrite: the outer handlers would then look back into the inner
+function's code. Each rewrite owning its `work` makes that impossible, which is the rule of §4.5:
+an activity owns the temporary state it creates.
 
 ### 10.2 The identity, and passes that change only what they name
 
@@ -836,9 +916,12 @@ local nothing = do() end
 
 Along straight-line code, a register written by a `Constant` holds a known value, and an
 operation on known values can be computed now. Facts are boxed (`{ value }`) because a known
-value may be `false`. The invariants of §9.1 make this sound: at a **label**, control may arrive
-from elsewhere, so everything known is forgotten; a function body starts knowing nothing. A
-condition that is known decides its jump: a true condition never jumps, a false one always does.
+value may be `false`. The facts are **evolving** state: each instruction updates them for the
+ones after it, so the rewrite must visit the code in order. Their boundaries come from the
+invariants of §9.1: at a **label**, control may arrive from elsewhere, so every fact is
+forgotten; a function's code starts knowing nothing, so a closure's code is folded with facts of
+its own. A condition that is known decides its jump: a true condition never jumps, a false one
+always does.
 
 ```lua
 local Folding = define ..Unchanged
@@ -894,9 +977,11 @@ optimization has to change.
 
 After folding, some jumps always happen and some labels are never jumped to. Code between an
 unconditional jump (or a return) and the next label that is still jumped to can never run.
-Finding those labels is a walk; removing the dead code is a rewrite that carries a "dead" flag
-along the code. A jump to the label right after it is no jump, which the rewrite removes by
-looking back at the code it has written.
+Finding those labels is a walk that accumulates them; removing the dead code is a rewrite that
+carries an evolving "dead" flag along the code, set by a jump or a return and cleared by a label
+still jumped to. A jump to the label right after it is no jump, which the rewrite removes by
+looking back at the code it has written: `written` is produced by the rewrite, and only the
+rewrite's own handlers see it.
 
 ```lua
 local JumpedTo = define
@@ -1011,13 +1096,32 @@ end
 local sweep = Instruction.pass "sweep what nobody reads" with ..Sweeping end
 ```
 
-### 10.6 Running to a fixed point
+### 10.6 Running until nothing changes
 
 One optimization exposes another: folding a condition makes a branch dead, removing it makes a
 register unread, removing that makes another unread. The optimizer runs the passes in order until
-the code stops shrinking, with a bound so a mistake cannot loop forever.
+a round leaves the code unchanged, with a bound so a mistake cannot loop forever.
+
+"Unchanged" has to mean the representation, not a measure of it. Stopping when the instruction
+count stops falling is tempting, but folding can turn a `Copy` into a `Constant` without changing
+the count, and that change can enable more work in the next round. Comparing the code itself
+(every instruction's kind and fields, closures' code included) is the real fixed-point test.
 
 ```lua
+-- the same representation: the same kinds, with the same fields, all the way down
+local same
+same =: left right
+    if type left ~= "table" or type right ~= "table" then return left == right end
+    if getmetatable left ~= getmetatable right then return false end
+    for key, value in pairs left do
+        if not same(value, right[key]) then return false end
+    end
+    for key in pairs right do
+        if left[key] == nil then return false end
+    end
+    return true
+end
+
 local instruction_count
 instruction_count =: code
     local total = 0
@@ -1030,7 +1134,7 @@ end
 
 local optimize =: code
     for _ = 1, 8 do
-        local before = instruction_count code
+        local before = code
         code = rewrite(fold, code, { known = {} })
         local labels = {}
         walk(find_labels, code, labels)
@@ -1038,11 +1142,16 @@ local optimize =: code
         local counts = { reads = {} }
         walk(count_reads, code, counts)
         code = rewrite(sweep, code, counts)
-        if instruction_count code == before then break end
+        if same(code, before) then break end
     end
     return code
 end
 ```
+
+The bound makes this a bounded fixed-point loop: if eight rounds are not enough, the code is
+still correct, only less optimized. A test (§11) checks that the optimizer's output is a fixed
+point: optimizing it again changes nothing.
+
 
 ## 11. Emitting Lua
 
@@ -1134,6 +1243,7 @@ end
 local folded = compile("(if (< 1 2) (+ 10 (* 2 3)) 99)", "folded")
 assert(instruction_count folded.instructions == 16 and instruction_count folded.optimized == 2)
 assert(folded.lua == "local value_6\nvalue_6 = 16\nreturn value_6")
+assert(same(optimize folded.optimized, folded.optimized))
 ```
 
 `load` takes a chunk name: give each compiled program its own (`"=" .. source_name`), so a Lua
@@ -1224,9 +1334,12 @@ passes, states. Name all of it in full words (the design guide's §13 is the rul
   every pass, and the kind is named once, by the entry (`Let =`).
 * **A pass** is named for what it does where it is made and called: `check`, `evaluate`, `lower`,
   `fold`.
-* **State** is named for its role: `scope` and `problems` in the checker, `environment` in the
-  interpreter, `lowering`, `facts`, `flow`, `counts`. A reader never has to look up what a `ctx`
-  holds.
+* **State** is named for what it holds: `scope` and `problems` in the checker, `environment` in
+  the interpreter, `lowering`, `facts`, `flow`, `counts`. A reader never has to look up what a
+  `ctx` holds.
+* **Derived state** is named for its relation to what it came from: `inner` for the state of
+  nested work, `work` for the state an activity makes for its own handlers. A function that
+  crosses a boundary is named for the boundary: `within` makes a scope inside another.
 * **Generated names** that people read are words too: `fact_1` for the register of `fact`,
   `value_6` for an intermediate value, `otherwise_4` for a label.
 
@@ -1306,6 +1419,13 @@ each compiler, and are candidates for a library or the runtime:
 * **Source maps.** A runtime error in compiled code names a line of emitted Lua, not of the
   source. Instructions could carry the source position of the node that produced them, and the
   emitted chunk a table from its lines back to them.
+
+Some things should stay unwritten. A general context framework (a `Context` type with
+inherited, accumulated and evolving slots) would hide exactly what §4.5 asks you to decide: the
+roles are design questions, answered differently by each operation, and the answers are a few
+lines each with what Mua already has (a spread, a fallback, a shared reference, a driver that
+owns its output). Reusable *operations* on state are worth sharing when they recur, like `within`
+or the drivers above; a framework that every pass must fit is not.
 
 None of these is needed to write a compiler; each removes a piece of boilerplate or a class of
 mistake. Add them when a second compiler wants the same thing.
