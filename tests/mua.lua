@@ -363,69 +363,85 @@ errors('a field needs a C type', 'local P = ffistruct { x: 5 }', "needs a C type
 -- return: returns a block
 runs('return: returns the block as a function', 'local f =: a\n    return: b\n        return a + b\n    end\nend\nreturn f(1)(2)', 3)
 runs('return: with no names opens what it is given', 'local f = do()\n    return:\n        return x\n    end\nend\nreturn f()({ x = 5 })', 5)
--- family: a closed set of structs with passes
+-- family: a closed set of structs with passes; every handler spells the contract node recurse
 local FAMILY = [[
-local Expr = family "Expr"
-local Num = struct { value: Number }
-local Add = struct { left: Expr, right: Expr }
-local Neg = struct { operand: Expr }
-Expr { Num, Add, Neg }
-local Eval = define
-    Num =: n go
-        return n.value
+local Expression = family "expression"
+local Literal = struct { value: Number }
+local Sum = struct { left: Expression, right: Expression }
+local Negation = struct { operand: Expression }
+Expression { Literal, Sum, Negation }
+local Evaluation = define
+    Literal =: node recurse
+        return node.value
     end
-    Add =: n go
-        return go(n.left) + go(n.right)
+    Sum =: node recurse
+        return recurse node.left + recurse node.right
     end
-    Neg =: n go
-        return -go(n.operand)
+    Negation =: node recurse
+        return -recurse node.operand
     end
 end
 ]]
 runs('a family is a type and a pass runs over it', FAMILY .. [[
-local eval = Expr.pass "eval" with ..Eval end
-return eval(Add { left = Num { value = 5 }, right = Neg { operand = Num { value = 2 } } })]], 3)
-runs('a family answers is', FAMILY .. 'return tostring(Expr.is(Num { value = 1 }, Num)) .. tostring(Expr.is(Num { value = 1 }, Neg)) .. tostring(Expr.is(5, Num))', 'truefalsefalse')
-runs('a family lists its kinds', FAMILY .. 'return table.concat(Expr.kinds, ",")', 'Num,Add,Neg')
-errors('a family field names the family', FAMILY .. 'local x = Add { left = Num { value = 1 }, right = 2 }', 'expects Expr')
-errors('a pass with a kind missing', FAMILY .. 'local p = Expr.pass "p" with Num = Eval.Num, Add = Eval.Add end', "no handler for the kind 'Neg' of the family 'Expr'")
-errors('a pass with an unknown kind', FAMILY .. 'local p = Expr.pass "p" with ..Eval, Nul = Eval.Neg end', "'Nul' is not a kind in the family 'Expr'")
-errors('a pass handler that is not a function', FAMILY .. 'local p = Expr.pass "p" with ..Eval, Neg = 1 end', 'not a function')
-errors('a pass meets a value that is no member', FAMILY .. 'local p = Expr.pass "p" with ..Eval end\np(5)', "is not a member of the family 'Expr'")
-errors('a family used before it is sealed', 'local Expr = family "Expr"\nlocal S = struct { e: Expr }\nlocal x = S { e = 1 }', 'before it is sealed')
-errors('a family sealed twice', 'local E = family "E"\nlocal A = struct { }\nE { A }\nE { A }', 'already sealed')
-errors('a family needs structs', 'local E = family "E"\nE { 1 }', 'not a struct')
-errors('is asks about a kind of the family', FAMILY .. 'local Other = struct { }\nExpr.is(Num { value = 1 }, Other)', "is not a kind in the family 'Expr'")
+local evaluate = Expression.pass "evaluate" with ..Evaluation end
+return evaluate(Sum { left = Literal { value = 5 }, right = Negation { operand = Literal { value = 2 } } })]], 3)
+runs('a family answers is', FAMILY .. [[
+local one = Literal { value = 1 }
+return tostring(Expression.is(one, Literal)) .. tostring(Expression.is(one, Negation)) .. tostring(Expression.is(5, Literal))]],
+    'truefalsefalse')
+runs('a family lists its kinds', FAMILY .. 'return table.concat(Expression.kinds, ",")', 'Literal,Sum,Negation')
+errors('a family field names the family', FAMILY .. 'local sum = Sum { left = Literal { value = 1 }, right = 2 }', 'expects expression')
+errors('a pass with a kind missing', FAMILY .. 'local partial = Expression.pass "partial" with Literal = Evaluation.Literal, Sum = Evaluation.Sum end',
+    "no handler for the kind 'Negation' of the family 'expression'")
+errors('a pass with an unknown kind', FAMILY .. 'local misspelled = Expression.pass "misspelled" with ..Evaluation, Negatoin = Evaluation.Negation end',
+    "'Negatoin' is not a kind in the family 'expression'")
+errors('a pass handler that is not a function', FAMILY .. 'local broken = Expression.pass "broken" with ..Evaluation, Negation = 1 end', 'not a function')
+errors('a pass meets a value that is no member', FAMILY .. 'local evaluate = Expression.pass "evaluate" with ..Evaluation end\nevaluate 5',
+    "is not a member of the family 'expression'")
+errors('a family used before it is sealed', 'local Expression = family "expression"\nlocal Holder = struct { held: Expression }\nlocal holder = Holder { held = 1 }', 'before it is sealed')
+errors('a family sealed twice', 'local Expression = family "expression"\nlocal Empty = struct { }\nExpression { Empty }\nExpression { Empty }', 'already sealed')
+errors('a family needs structs', 'local Expression = family "expression"\nExpression { 1 }', 'not a struct')
+errors('is asks about a kind of the family', FAMILY .. 'local Other = struct { }\nExpression.is(Literal { value = 1 }, Other)', "is not a kind in the family 'expression'")
 runs('passes compose by spread and an explicit entry settles a clash', FAMILY .. [[
 local Loud = define
-    Num =: n go
+    Literal =: node recurse
         return 100
     end
 end
-local p = Expr.pass "p" with
-    ..Eval
+local settled = Expression.pass "settled" with
+    ..Evaluation
     ..Loud
-    Num =: n go
+    Literal =: node recurse
         return 7
     end
 end
-return p(Add { left = Num { value = 1 }, right = Num { value = 2 } })]], 14)
-errors('a family and a pass take prose as their description', 'local Expr = family "expression of the toy language"\nlocal Num = struct { value: Number }\nExpr { Num }\nExpr.pass "evaluate an expression to a number" with Num = do(n) = 1, Nul = do(n) = 2 end',
-    "pass 'evaluate an expression to a number': 'Nul' is not a kind in the family 'expression of the toy language'")
+return settled(Sum { left = Literal { value = 1 }, right = Literal { value = 2 } })]], 14)
+errors('a family and a pass take prose as their description', [[
+local Expression = family "expression of the toy language"
+local Literal = struct { value: Number }
+Expression { Literal }
+Expression.pass "evaluate an expression to a number" with
+    Literal =: node recurse
+        return 1
+    end
+    Literall =: node recurse
+        return 2
+    end
+end]], "pass 'evaluate an expression to a number': 'Literall' is not a kind in the family 'expression of the toy language'")
 runs('a pass carries extra arguments down', FAMILY .. [[
 local Depth = define
-    Num =: n go depth
+    Literal =: node recurse depth
         return depth
     end
-    Add =: n go depth
-        return math.max(go(n.left, depth + 1), go(n.right, depth + 1))
+    Sum =: node recurse depth
+        return math.max(recurse(node.left, depth + 1), recurse(node.right, depth + 1))
     end
-    Neg =: n go depth
-        return go(n.operand, depth + 1)
+    Negation =: node recurse depth
+        return recurse(node.operand, depth + 1)
     end
 end
-local depth = Expr.pass "how deep" with ..Depth end
-return depth(Add { left = Num { value = 1 }, right = Neg { operand = Num { value = 2 } } }, 0)]], 2)
+local depth_of = Expression.pass "how deep" with ..Depth end
+return depth_of(Sum { left = Literal { value = 1 }, right = Negation { operand = Literal { value = 2 } } }, 0)]], 2)
 -- checker names a predicate
 errors('a named checker names what it expected', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nf(3)', 'expects Even')
 runs('a named checker accepts', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nreturn f(4)', 4)

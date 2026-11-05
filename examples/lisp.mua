@@ -107,78 +107,78 @@ local scope_with =: outer names
 end
 
 local Checking = define
-    Literal =: literal check scope
+    Literal =: node recurse scope
         return
     end
-    Variable =: variable check scope
-        if not scope[variable.name] then error("check: " .. variable.name .. " is not defined here",
+    Variable =: node recurse scope
+        if not scope[node.name] then error("check: " .. node.name .. " is not defined here",
                 0) end
     end
-    Primitive =: primitive check scope
-        if #primitive.arguments ~= 2 then
-            local message = ("(%s) takes two arguments, got %d"):format(primitive.operator,
-                #primitive.arguments)
+    Primitive =: node recurse scope
+        if #node.arguments ~= 2 then
+            local message = ("(%s) takes two arguments, got %d"):format(node.operator,
+                #node.arguments)
             error("check: " .. message, 0)
         end
-        for _, argument in ipairs primitive.arguments do check(argument, scope) end
+        for _, argument in ipairs node.arguments do recurse(argument, scope) end
     end
-    Conditional =: conditional check scope
-        check(conditional.condition, scope)
-        check(conditional.when_true, scope)
-        check(conditional.when_false, scope)
+    Conditional =: node recurse scope
+        recurse(node.condition, scope)
+        recurse(node.when_true, scope)
+        recurse(node.when_false, scope)
     end
-    Let =: let check scope
-        local inner = scope_with(scope, { let.name })
-        check(let.value, inner)
-        check(let.body, inner)
+    Let =: node recurse scope
+        local inner = scope_with(scope, { node.name })
+        recurse(node.value, inner)
+        recurse(node.body, inner)
     end
-    Lambda =: lambda check scope
-        check(lambda.body, scope_with(scope, lambda.parameters))
+    Lambda =: node recurse scope
+        recurse(node.body, scope_with(scope, node.parameters))
     end
-    Application =: application check scope
-        check(application.callee, scope)
-        for _, argument in ipairs application.arguments do check(argument, scope) end
+    Application =: node recurse scope
+        recurse(node.callee, scope)
+        for _, argument in ipairs node.arguments do recurse(argument, scope) end
     end
 end
 local check = Expression.pass "check names and arity" with ..Checking end
 
 -- The same family, run directly: the reference the compiled code is compared with.
 local Evaluation = define
-    Literal =: literal evaluate environment
-        return literal.value
+    Literal =: node recurse environment
+        return node.value
     end
-    Variable =: variable evaluate environment
-        return environment[variable.name]
+    Variable =: node recurse environment
+        return environment[node.name]
     end
-    Primitive =: primitive evaluate environment
-        local left = evaluate(primitive.arguments[1], environment)
-        local right = evaluate(primitive.arguments[2], environment)
-        return operators[primitive.operator](left, right)
+    Primitive =: node recurse environment
+        local left = recurse(node.arguments[1], environment)
+        local right = recurse(node.arguments[2], environment)
+        return operators[node.operator](left, right)
     end
-    Conditional =: conditional evaluate environment
-        if evaluate(conditional.condition, environment) then
-            return evaluate(conditional.when_true, environment)
+    Conditional =: node recurse environment
+        if recurse(node.condition, environment) then
+            return recurse(node.when_true, environment)
         end
-        return evaluate(conditional.when_false, environment)
+        return recurse(node.when_false, environment)
     end
-    Let =: let evaluate environment
+    Let =: node recurse environment
         local inner = within environment
-        inner[let.name] = evaluate(let.value, inner)
-        return evaluate(let.body, inner)
+        inner[node.name] = recurse(node.value, inner)
+        return recurse(node.body, inner)
     end
-    Lambda =: lambda evaluate environment
+    Lambda =: node recurse environment
         return do(..arguments)
             local inner = within environment
-            for index, name in ipairs lambda.parameters do inner[name] = arguments[index] end
-            return evaluate(lambda.body, inner)
+            for index, name in ipairs node.parameters do inner[name] = arguments[index] end
+            return recurse(node.body, inner)
         end
     end
-    Application =: application evaluate environment
+    Application =: node recurse environment
         local arguments = {}
-        for index, argument in ipairs application.arguments do
-            arguments[index] = evaluate(argument, environment)
+        for index, argument in ipairs node.arguments do
+            arguments[index] = recurse(argument, environment)
         end
-        return evaluate(application.callee, environment)(unpack arguments)
+        return recurse(node.callee, environment)(unpack arguments)
     end
 end
 local evaluate = Expression.pass "evaluate the source directly" with ..Evaluation end
@@ -214,61 +214,61 @@ end
 -- Lowering: a pass from one family to the other. The lowering state holds the code being written,
 -- the register each name stands for, and the supply of fresh names.
 local Lowering = define
-    Literal =: literal lower lowering
+    Literal =: node recurse lowering
         local register = lowering.fresh "value"
-        write_instruction(lowering, Constant { .register, value = literal.value })
+        write_instruction(lowering, Constant { .register, value = node.value })
         return register
     end
-    Variable =: variable lower lowering
-        return lowering.registers[variable.name]
+    Variable =: node recurse lowering
+        return lowering.registers[node.name]
     end
-    Primitive =: primitive lower lowering
-        local left = lower(primitive.arguments[1], lowering)
-        local right = lower(primitive.arguments[2], lowering)
+    Primitive =: node recurse lowering
+        local left = recurse(node.arguments[1], lowering)
+        local right = recurse(node.arguments[2], lowering)
         local register = lowering.fresh "value"
-        local operator = primitive.operator
+        local operator = node.operator
         write_instruction(lowering, Operation { .register, .operator, .left, .right })
         return register
     end
-    Conditional =: conditional lower lowering
-        local condition = lower(conditional.condition, lowering)
+    Conditional =: node recurse lowering
+        local condition = recurse(node.condition, lowering)
         local otherwise = lowering.fresh "otherwise"
         local done = lowering.fresh "done"
         local register = lowering.fresh "value"
         write_instruction(lowering, JumpUnless { .condition, label = otherwise })
         write_instruction(lowering,
-            Copy { .register, source = lower(conditional.when_true, lowering) })
+            Copy { .register, source = recurse(node.when_true, lowering) })
         write_instruction(lowering, Jump { label = done })
         write_instruction(lowering, Label { name = otherwise })
         write_instruction(lowering,
-            Copy { .register, source = lower(conditional.when_false, lowering) })
+            Copy { .register, source = recurse(node.when_false, lowering) })
         write_instruction(lowering, Label { name = done })
         return register
     end
-    Let =: let lower lowering
-        local register = lowering.fresh let.name
+    Let =: node recurse lowering
+        local register = lowering.fresh node.name
         local inner = { ..lowering, registers = within lowering.registers }
-        inner.registers[let.name] = register
-        write_instruction(lowering, Copy { .register, source = lower(let.value, inner) })
-        return lower(let.body, inner)
+        inner.registers[node.name] = register
+        write_instruction(lowering, Copy { .register, source = recurse(node.value, inner) })
+        return recurse(node.body, inner)
     end
-    Lambda =: lambda lower lowering
+    Lambda =: node recurse lowering
         local inner = { ..lowering, code = {}, registers = within lowering.registers }
         local parameters = {}
-        for index, name in ipairs lambda.parameters do
+        for index, name in ipairs node.parameters do
             parameters[index] = lowering.fresh name
             inner.registers[name] = parameters[index]
         end
-        write_instruction(inner, Return { source = lower(lambda.body, inner) })
+        write_instruction(inner, Return { source = recurse(node.body, inner) })
         local register = lowering.fresh "lambda"
         write_instruction(lowering, Closure { .register, .parameters, code = inner.code })
         return register
     end
-    Application =: application lower lowering
-        local callee = lower(application.callee, lowering)
+    Application =: node recurse lowering
+        local callee = recurse(node.callee, lowering)
         local arguments = {}
         for index,
-        argument in ipairs application.arguments do arguments[index] = lower(argument, lowering) end
+        argument in ipairs node.arguments do arguments[index] = recurse(argument, lowering) end
         local register = lowering.fresh "value"
         write_instruction(lowering, Call { .register, .callee, .arguments })
         return register
@@ -279,7 +279,7 @@ local lower = Expression.pass "lower the source to instructions" with ..Lowering
 -- Optimizing. A rewrite answers each instruction with the instructions that replace it, so
 -- `Unchanged` (every instruction stands for itself) is the base the others extend by spread, and
 -- each names only the kinds it changes.
-local itself = instruction -> { instruction }
+local itself = node -> { node }
 local Unchanged = define
     Constant = itself
     Copy = itself
@@ -310,44 +310,44 @@ end
 -- Folding: what a register holds is known from its Constant, along straight-line code. A join
 -- point (a label) forgets it, and a function starts knowing nothing.
 local Folding = define ..Unchanged
-    Constant =: constant fold facts
-        facts.known[constant.register] = { constant.value }
-        return { constant }
+    Constant =: node recurse facts
+        facts.known[node.register] = { node.value }
+        return { node }
     end
-    Copy =: copy fold facts
-        local known = facts.known[copy.source]
-        facts.known[copy.register] = known
-        if known then return { Constant { register = copy.register, value = known[1] } } end
-        return { copy }
+    Copy =: node recurse facts
+        local known = facts.known[node.source]
+        facts.known[node.register] = known
+        if known then return { Constant { register = node.register, value = known[1] } } end
+        return { node }
     end
-    Operation =: operation fold facts
-        local left, right = facts.known[operation.left], facts.known[operation.right]
-        facts.known[operation.register] = nil
+    Operation =: node recurse facts
+        local left, right = facts.known[node.left], facts.known[node.right]
+        facts.known[node.register] = nil
         if left and right then
-            local value = operators[operation.operator](left[1], right[1])
-            facts.known[operation.register] = { value }
-            return { Constant { register = operation.register, .value } }
+            local value = operators[node.operator](left[1], right[1])
+            facts.known[node.register] = { value }
+            return { Constant { register = node.register, .value } }
         end
-        return { operation }
+        return { node }
     end
-    Call =: call fold facts
-        facts.known[call.register] = nil
-        return { call }
+    Call =: node recurse facts
+        facts.known[node.register] = nil
+        return { node }
     end
-    Label =: label fold facts
+    Label =: node recurse facts
         facts.known = {}
-        return { label }
+        return { node }
     end
-    JumpUnless =: jump fold facts
-        local condition = facts.known[jump.condition]
-        if condition == nil then return { jump } end
+    JumpUnless =: node recurse facts
+        local condition = facts.known[node.condition]
+        if condition == nil then return { node } end
         if condition[1] then return {} end
-        return { Jump { label = jump.label } }
+        return { Jump { label = node.label } }
     end
-    Closure =: closure fold facts
-        facts.known[closure.register] = nil
-        local code = rewrite(fold, closure.code, { known = {} })
-        return { Closure { register = closure.register, parameters = closure.parameters, .code } }
+    Closure =: node recurse facts
+        facts.known[node.register] = nil
+        local code = rewrite(recurse, node.code, { known = {} })
+        return { Closure { register = node.register, parameters = node.parameters, .code } }
     end
 end
 local fold = Instruction.pass "fold what is known" with ..Folding end
@@ -360,28 +360,28 @@ local JumpedTo = define
     Call = nothing
     Label = nothing
     Return = nothing
-    Jump =: jump find_labels labels
-        labels[jump.label] = true
+    Jump =: node recurse labels
+        labels[node.label] = true
     end
-    JumpUnless =: jump find_labels labels
-        labels[jump.label] = true
+    JumpUnless =: node recurse labels
+        labels[node.label] = true
     end
-    Closure =: closure find_labels labels
-        walk(find_labels, closure.code, labels)
+    Closure =: node recurse labels
+        walk(recurse, node.code, labels)
     end
 end
 local find_labels = Instruction.pass "find the labels still jumped to" with ..JumpedTo end
 
 -- Reaching: nothing runs between a jump and the next label that is jumped to, and a jump to the
 -- label right after it is no jump.
-local unless_dead =: instruction reach flow
+local unless_dead =: node recurse flow
     if flow.dead then return {} end
-    return { instruction }
+    return { node }
 end
-local ending_the_flow =: instruction reach flow
+local ending_the_flow =: node recurse flow
     if flow.dead then return {} end
     flow.dead = true
-    return { instruction }
+    return { node }
 end
 local Reaching = define
     Constant = unless_dead
@@ -391,19 +391,19 @@ local Reaching = define
     JumpUnless = unless_dead
     Jump = ending_the_flow
     Return = ending_the_flow
-    Label =: label reach flow
-        if not flow.labels[label.name] then return {} end
+    Label =: node recurse flow
+        if not flow.labels[node.name] then return {} end
         local previous = flow.written[#flow.written]
-        if previous and Instruction.is(previous, Jump) and previous.label == label.name then
+        if previous and Instruction.is(previous, Jump) and previous.label == node.name then
             flow.written[#flow.written] = nil
         end
         flow.dead = false
-        return { label }
+        return { node }
     end
-    Closure =: closure reach flow
+    Closure =: node recurse flow
         if flow.dead then return {} end
-        local code = rewrite(reach, closure.code, { labels = flow.labels })
-        return { Closure { register = closure.register, parameters = closure.parameters, .code } }
+        local code = rewrite(recurse, node.code, { labels = flow.labels })
+        return { Closure { register = node.register, parameters = node.parameters, .code } }
     end
 end
 local reach = Instruction.pass "drop what cannot run" with ..Reaching end
@@ -416,25 +416,25 @@ local Reads = define
     Constant = nothing
     Label = nothing
     Jump = nothing
-    Copy =: copy count_reads counts
-        read_once_more(copy.source, counts)
+    Copy =: node recurse counts
+        read_once_more(node.source, counts)
     end
-    Operation =: operation count_reads counts
-        read_once_more(operation.left, counts)
-        read_once_more(operation.right, counts)
+    Operation =: node recurse counts
+        read_once_more(node.left, counts)
+        read_once_more(node.right, counts)
     end
-    Call =: call count_reads counts
-        read_once_more(call.callee, counts)
-        for _, argument in ipairs call.arguments do read_once_more(argument, counts) end
+    Call =: node recurse counts
+        read_once_more(node.callee, counts)
+        for _, argument in ipairs node.arguments do read_once_more(argument, counts) end
     end
-    JumpUnless =: jump count_reads counts
-        read_once_more(jump.condition, counts)
+    JumpUnless =: node recurse counts
+        read_once_more(node.condition, counts)
     end
-    Return =: returning count_reads counts
-        read_once_more(returning.source, counts)
+    Return =: node recurse counts
+        read_once_more(node.source, counts)
     end
-    Closure =: closure count_reads counts
-        walk(count_reads, closure.code, counts)
+    Closure =: node recurse counts
+        walk(recurse, node.code, counts)
     end
 end
 local count_reads = Instruction.pass "count the reads of each register" with ..Reads end
@@ -442,18 +442,18 @@ local count_reads = Instruction.pass "count the reads of each register" with ..R
 local never_read =: instruction counts
     return (counts.reads[instruction.register] or 0) == 0
 end
-local unless_never_read =: instruction sweep counts
-    if never_read(instruction, counts) then return {} end
-    return { instruction }
+local unless_never_read =: node recurse counts
+    if never_read(node, counts) then return {} end
+    return { node }
 end
 local Sweeping = define ..Unchanged
     Constant = unless_never_read
     Copy = unless_never_read
     Operation = unless_never_read
-    Closure =: closure sweep counts
-        if never_read(closure, counts) then return {} end
-        local code = rewrite(sweep, closure.code, counts)
-        return { Closure { register = closure.register, parameters = closure.parameters, .code } }
+    Closure =: node recurse counts
+        if never_read(node, counts) then return {} end
+        local code = rewrite(recurse, node.code, counts)
+        return { Closure { register = node.register, parameters = node.parameters, .code } }
     end
 end
 local sweep = Instruction.pass "sweep what nobody reads" with ..Sweeping end
@@ -487,37 +487,37 @@ end
 -- Listing and emitting: passes that answer with text.
 
 local Listing = define
-    Constant =: constant list indent
-        return indent .. constant.register .. " = " .. tostring constant.value
+    Constant =: node recurse indent
+        return indent .. node.register .. " = " .. tostring node.value
     end
-    Copy =: copy list indent
-        return indent .. copy.register .. " = " .. copy.source
+    Copy =: node recurse indent
+        return indent .. node.register .. " = " .. node.source
     end
-    Operation =: operation list indent
-        local expression = operation.left .. " " .. operation.operator .. " " .. operation.right
-        return indent .. operation.register .. " = " .. expression
+    Operation =: node recurse indent
+        local expression = node.left .. " " .. node.operator .. " " .. node.right
+        return indent .. node.register .. " = " .. expression
     end
-    Call =: call list indent
-        local arguments = table.concat(call.arguments, ", ")
-        return indent .. call.register .. " = " .. call.callee .. "(" .. arguments .. ")"
+    Call =: node recurse indent
+        local arguments = table.concat(node.arguments, ", ")
+        return indent .. node.register .. " = " .. node.callee .. "(" .. arguments .. ")"
     end
-    Label =: label list indent
-        return indent .. label.name .. ":"
+    Label =: node recurse indent
+        return indent .. node.name .. ":"
     end
-    Jump =: jump list indent
-        return indent .. "jump " .. jump.label
+    Jump =: node recurse indent
+        return indent .. "jump " .. node.label
     end
-    JumpUnless =: jump list indent
-        return indent .. "jump " .. jump.label .. " unless " .. jump.condition
+    JumpUnless =: node recurse indent
+        return indent .. "jump " .. node.label .. " unless " .. node.condition
     end
-    Return =: returning list indent
-        return indent .. "return " .. returning.source
+    Return =: node recurse indent
+        return indent .. "return " .. node.source
     end
-    Closure =: closure list indent
-        local parameters = table.concat(closure.parameters, ", ")
-        local lines = { indent .. closure.register .. " = function(" .. parameters .. ")" }
+    Closure =: node recurse indent
+        local parameters = table.concat(node.parameters, ", ")
+        local lines = { indent .. node.register .. " = function(" .. parameters .. ")" }
         for _,
-        instruction in ipairs closure.code do lines[#lines + 1] = list(instruction,
+        instruction in ipairs node.code do lines[#lines + 1] = recurse(instruction,
                 indent .. "    ") end
         return table.concat(lines, "\n")
     end
@@ -547,24 +547,24 @@ local function_body =: write code indent
 end
 local lua_spelling = {["="] = "==" }
 local LuaText = define ..Listing
-    Operation =: operation write indent
-        local operator = lua_spelling[operation.operator] or operation.operator
-        local expression = operation.left .. " " .. operator .. " " .. operation.right
-        return indent .. operation.register .. " = " .. expression
+    Operation =: node recurse indent
+        local operator = lua_spelling[node.operator] or node.operator
+        local expression = node.left .. " " .. operator .. " " .. node.right
+        return indent .. node.register .. " = " .. expression
     end
-    Label =: label write indent
-        return indent .. "::" .. label.name .. "::"
+    Label =: node recurse indent
+        return indent .. "::" .. node.name .. "::"
     end
-    Jump =: jump write indent
-        return indent .. "goto " .. jump.label
+    Jump =: node recurse indent
+        return indent .. "goto " .. node.label
     end
-    JumpUnless =: jump write indent
-        return indent .. "if not " .. jump.condition .. " then goto " .. jump.label .. " end"
+    JumpUnless =: node recurse indent
+        return indent .. "if not " .. node.condition .. " then goto " .. node.label .. " end"
     end
-    Closure =: closure write indent
-        local parameters = table.concat(closure.parameters, ", ")
-        local header = indent .. closure.register .. " = function(" .. parameters .. ")"
-        local body = function_body(write, closure.code, indent .. "  ")
+    Closure =: node recurse indent
+        local parameters = table.concat(node.parameters, ", ")
+        local header = indent .. node.register .. " = function(" .. parameters .. ")"
+        local body = function_body(recurse, node.code, indent .. "  ")
         return header .. "\n" .. body .. "\n" .. indent .. "end"
     end
 end
