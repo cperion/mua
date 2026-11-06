@@ -251,6 +251,20 @@ type_twice(document, 1)
 assert(document.length == 10)
 ```
 
+**Vocabularies can be stateless or stateful.** `Editing` supplies reusable behavior: each call
+receives the document it works on. A factory can instead return verbs that close over one
+document, an accumulator or a capability. That state need not appear as fields on the
+vocabulary. The builder in §5.9 does exactly this: its `bind` verb captures the current activity's
+`bindings` list.
+
+Choose the vocabulary's lifetime and what its calls share. Capture what belongs to the whole
+activity; pass what varies within it, or make a fresh vocabulary at the boundary. A spread
+copies function values, not their captured state: copied verbs still reach the same bindings.
+Independent activities need independently owned state, usually created by a factory, rather
+than a copy of an existing vocabulary.
+[Writing compilers, §4.5–§4.6](writing-compilers.md#45-designing-the-state-an-operation-carries)
+works through the choice, including a pass that captures its accumulator but receives its depth.
+
 A structural type carries its defaults: its values are the default of each member, and an
 instance is the type spread with overrides. No constructor, defaults table or prototype mechanism
 is needed, and an instance can serve as the type of further instances:
@@ -760,7 +774,10 @@ assert(not pcall(routes, do(..) get "notes" (|| -> 1) end))  -- a path starts wi
 ```
 
 The builder makes its verbs from the vocabulary it is given (one verb per method), so the
-vocabulary decides what can be said.
+vocabulary decides what can be said. `Methods` is stateless vocabulary; `Routing` is stateful
+vocabulary, made afresh for each build. Its handlers capture that build's `routes` and `seen`,
+so repeated or nested builds do not share their temporary state. The factory's placement, not
+`define` or opening, gives it that lifetime.
 
 **5. Treat the description as the interface.** The builder's result is keyed data, and the engine
 depends only on it. Keep it structural while only the engine reads it; promote it to a `oneof` of

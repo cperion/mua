@@ -87,11 +87,13 @@ information plays one of four **roles** in the operation:
 Beside them sit **capabilities**: something the work may use, shared by everyone who has it, like
 the supply of fresh names (`fresh`).
 
-These are roles, not types: one table can hold several (the lowering state holds produced
-`code`, inherited `registers` and the `fresh` capability), and nothing in Mua names them. They
-are questions to ask of each piece of state, and §4.5 turns them into a way of designing the
-state an operation carries. Name each piece for what it holds (`scope`, `problems`, `lowering`),
-never `ctx`: the name is how a reader tells which it is.
+These are roles, not types or rules about storage: one table can hold several (the lowering
+state holds produced `code`, inherited `registers` and the `fresh` capability), and a handler
+can receive state as an argument or capture it in a closure. A vocabulary may be stateless or
+stateful; its state need not be a field on the vocabulary. The roles are questions to ask of
+each piece of state, and §4.5 turns them into a way of designing its ownership, lifetime and
+access. Name each piece for what it holds (`scope`, `problems`, `lowering`), never `ctx`: the
+name is how a reader tells which it is.
 
 ## 3. Families: closed sets of kinds
 
@@ -197,18 +199,20 @@ handler never has to be decoded, and `recurse node.left` says what happens. The 
 ### 4.2 A result and its effects
 
 Each handler of a pass has a **primary result**, what it returns, and may have **effects** on the
-state it was given. The interpreter has only a result (a value). The checker has only an effect
-(problems added to a list), and returns nothing. Lowering has both, and needs both: it returns
-the register holding the node's value, and writes the instructions that compute it.
+state it receives or captures. The interpreter has only a result (a value). The checker has
+only an effect (problems added to a list), and returns nothing. Lowering has both, and needs
+both: it returns the register holding the node's value, and writes the instructions that
+compute it.
 
 Decide both for every pass before writing it, and make every handler of the pass follow the same
 decision: a pass whose `Let` handler returns a register while its `Literal` handler returns an
 instruction is a bug waiting to happen.
 
-### 4.3 Carrying state down the tree
+### 4.3 Passing state down the tree
 
-The arguments a pass is called with follow the node to every handler. A handler passes them on
-in its own calls, changed or not:
+Explicit arguments let one pass serve different calls without retaining their state. The
+arguments a pass is called with follow the node to its handler. A handler passes them on in its
+own recursive calls, changed or not:
 
 ```lua
 local Depth = define
@@ -238,6 +242,9 @@ Because handlers are a vocabulary, passes are built from one another by spread:
 * **A handler cannot be removed with `nil`**: in Lua, `nil` is absence, so `{ ..Base, Kind = nil }`
   keeps the base's handler. Copy the vocabulary and delete the entry, and the pass will tell you
   the kind is now missing.
+* **Spread does not rebind closures.** It copies function values, not the state they capture.
+  A handler inherited from a stateful vocabulary still sees that vocabulary's captured state.
+  Make a fresh vocabulary for independent work (§4.6); copying it is not enough.
 
 ```lua
 -- a variant that names only what it changes
@@ -257,10 +264,11 @@ is **what survives a boundary**: entering a binding, entering a function, crossi
 starting a new rewrite. For each piece of state, ask:
 
 1. What does it hold, and what role does it play (§2)?
-2. Who creates it?
+2. Who creates it, and how long should it live?
 3. Which boundary changes whether it is still valid?
 4. At that boundary, is it **shared**, **extended**, **reset** or **discarded**?
-5. Who owns its result when the work completes?
+5. Does a handler receive it as an argument, capture it, or use both mechanisms?
+6. Who owns its result when the work completes?
 
 The compiler's boundaries, answered:
 
@@ -272,15 +280,24 @@ The compiler's boundaries, answered:
 | entering a function's code in an optimization (§10.3) | `labels`, `reads` | `known` reset, a new `written` |
 | starting a rewrite (§10.1) | whatever the caller's state shares | a new `written`, owned by the rewrite |
 
-**Separate values or one table.** Pass pieces of state as separate arguments when their roles
-differ: the checker takes `scope` (inherited) and `problems` (accumulated), and the emitter takes
-only `indent`. Group them in one table when they are the working circumstances of one activity,
-changed together at its boundaries: lowering's `code`, `registers` and `fresh`. There is no
-universal context record, and none is needed.
+**Capture or pass.** Capture what belongs to the whole activity; pass what varies within it.
+This is a useful default, not a restriction: a factory can also create a vocabulary for a nested
+scope or function. A checker's handlers can capture one `problems` list while receiving `scope`
+on each call. A lowering operation can capture its fresh-name supply while passing the current
+function's code and bindings. A closure changes how state is reached, not its role or ownership.
+§4.6 works through this choice.
 
-**Extending state with what Mua has.** Three existing mechanisms build the state for nested work,
-with different meanings and costs:
+**Separate values or one table.** For state passed explicitly, use separate arguments when their
+roles differ: the checker below takes `scope` (inherited) and `problems` (accumulated), and the
+emitter takes only `indent`. Group them in one table when they are the working circumstances of
+one activity, changed together at its boundaries: lowering's `code`, `registers` and `fresh`.
+These are choices for this compiler, not a requirement that vocabularies be stateless. There is
+no universal context record, and none is needed.
 
+**Giving nested work its state.** Existing mechanisms have different meanings and costs:
+
+* a **closure** gives handlers access to the bindings where they were made. A factory can make
+  fresh private state for each activity, or intentionally capture state supplied by its caller;
 * a **spread** makes a table with some responsibilities replaced: `{ ..lowering, code = {} }` is
   the lowering state of a new function. It copies the table (shallowly), so what the copy shares
   stays shared;
@@ -298,7 +315,9 @@ other, as the lowering pass does; then the order is the order of the text.
 
 **An activity owns the temporary state it creates.** A rewrite creates the list it writes into;
 that list belongs to the rewrite, and a handler reaches it through state the rewrite made, not
-through a field the rewrite planted in its caller's table (§10.1 shows why).
+through a field the rewrite planted in its caller's table (§10.1 shows why). Capturing that list
+in handlers made for the rewrite is another valid design; under that arrangement, each nested
+rewrite needs its own captured output, not one list shared across both activities.
 
 This is the design guide's method (*Designing and writing Mua*, Part I) applied to one kind of
 operation. For a transformation, the steps are: choose the family it understands; name what it
@@ -308,6 +327,89 @@ handlers with `define` and spread and let `Family.pass` check them; and test bot
 and its obligations to its state. The family says what can exist; the pass says what the
 operation does with each kind; the state says what it knows, carries and produces; the activity
 says who owns the work and its completion.
+
+### 4.6 Stateful vocabularies: one instance per activity
+
+A vocabulary is not necessarily reusable, stateless behavior. It can be the verbs of one
+particular operation, closing over that operation's state. Here a factory creates a vocabulary
+that collects the depth of every circle. `depths` is accumulated state, captured once; `depth` is
+inherited state, passed at each recursive call because it changes within the traversal:
+
+```lua
+local collecting_depths = do()
+    local depths = {}
+    local Collecting = define
+        Circle = do(node, recurse, depth)
+            depths[#depths + 1] = depth
+        end
+        Pair = do(node, recurse, depth)
+            recurse(node.left, depth + 1)
+            recurse(node.right, depth + 1)
+        end
+    end
+    return Collecting, depths
+end
+
+local collect_depths = do(tree)
+    local Collecting, depths = collecting_depths()
+    local collect = Shape.pass "collect circle depths" with ..Collecting end
+    collect(tree, 0)
+    return depths
+end
+
+local uneven = Pair { left = two_circles, right = Circle { radius = 3 } }
+local first_depths = collect_depths uneven
+local second_depths = collect_depths two_circles
+assert(first_depths ~= second_depths)
+assert(table.concat(first_depths, " ") == "2 2 1")
+assert(table.concat(second_depths, " ") == "1 1")
+```
+
+The factory creates the state and its handlers together; `collect_depths` builds a pass once per
+operation, not once per node, runs it and hands back its result. Repeating the operation creates
+another list without clearing or changing the previous result. Nothing in `family` requires
+state to travel as an argument, and the handler contract remains `node, recurse, ...`.
+
+**Composition shares captures; factories can separate them.** The following pass copies the
+collector's handlers. Its `Circle` handler still appends to the original list. The override for
+`Pair` starts a separate, nested collection before continuing the outer one:
+
+```lua
+local Collecting, shared_depths = collecting_depths()
+local collect_original = Shape.pass "collect into the original list" with ..Collecting end
+local collect_nested = Shape.pass "collect with nested work" with ..Collecting
+    Pair = do(node, recurse, depth)
+        local nested_depths = collect_depths node
+        assert(table.concat(nested_depths, " ") == "1 1")
+        assert(table.concat(shared_depths, " ") == "1 1")
+        Collecting.Pair(node, recurse, depth)
+    end
+end
+collect_original(two_circles, 0)
+collect_nested(two_circles, 2)
+assert(table.concat(shared_depths, " ") == "1 1 3 3")
+```
+
+Sharing the first collector's list between these two passes is intentional; the nested
+`collect_depths` call creates its own vocabulary and result. For independent variants, invoke
+the factory separately before composing them. A factory that captures a caller-supplied table
+still shares that table: fresh closures alone do not guarantee fresh state. Passing the same
+table to two operations also shares it; isolation follows ownership, not argument versus capture.
+
+**Choose the lifetime, not a ban on state.** A module-level vocabulary may intentionally share a
+cache or configuration. Per-compilation problems and temporary output normally belong to a
+fresh operation instead. Keeping a vocabulary after its activity returns keeps its captures
+reachable too: escaped handlers and any resources they retain need an explicit lifetime.
+
+Keeping one mutable `current_scope` in a closure and swapping it on entry and exit is possible,
+but then restoration on errors, reentrant calls and interleaved work becomes part of the
+design. Explicit scope arguments, or fresh vocabularies bound to each scope, avoid that
+shared-current-state obligation. A captured output buffer needs the same boundary care:
+entering another function must not accidentally write into its parent's buffer.
+
+The compiler below keeps its pass state explicit so one pass can be reused and the boundaries
+are visible at each call. Capturing activity-owned state is an equally valid arrangement, not a
+workaround and not a reason to introduce a context framework.
 
 ## Part II: building a compiler
 
@@ -1319,6 +1421,9 @@ assert(refusal "1 2" == "refusal:1:1: only the last form of a program may be an 
   silently stopping (the `16 -> 2` assertion in §11 is one).
 * **Pass completeness.** A family checks every pass when it is made, so a new kind is caught by
   simply loading the compiler. Load it in the tests.
+* **State ownership and lifetime.** Repeat and nest activities: independent runs must not change
+  each other's results. For composed stateful vocabularies, test which captures are deliberately
+  shared and which a factory must create afresh (§4.6).
 * **Examples with their output.** A file of programs whose expected output is a comment at the
   end, run by the test suite, documents and tests at once (Mua's `examples/` work this way).
 
@@ -1358,6 +1463,10 @@ keystrokes and costs every reader a lookup.
   same. Keep contracts on in tests.
 * **Spreads copy.** `{ ..lowering, code = {} }` copies the state; it is meant for entering a scope
   or a function, not for every node. Scopes that fall back (§7.1) cost nothing to enter.
+* **Vocabulary factories allocate.** Instantiating handlers creates closures, and constructing
+  a pass checks its coverage. Usually build it once per activity (§4.6), rather than once per node.
+  Reusing a stateless pass with explicit state avoids that repeated setup; measure before
+  preferring either arrangement for speed.
 * **The emitted code is ordinary Lua.** Registers become locals; LuaJIT compiles them well.
   Locals are limited to 200 per function, so a back end for large functions must reuse
   registers (allocate them by liveness) instead of declaring one per value.
@@ -1425,9 +1534,10 @@ each compiler, and are candidates for a library or the runtime:
 Some things should stay unwritten. A general context framework (a `Context` type with
 inherited, accumulated and evolving slots) would hide exactly what §4.5 asks you to decide: the
 roles are design questions, answered differently by each operation, and the answers are a few
-lines each with what Mua already has (a spread, a fallback, a shared reference, a driver that
-owns its output). Reusable *operations* on state are worth sharing when they recur, like `within`
-or the drivers above; a framework that every pass must fit is not.
+lines each with what Mua already has (a closure, a spread, a fallback, a shared reference, a
+driver that owns its output). A vocabulary factory can own an activity's state without a new
+framework. Reusable *operations* on state are worth sharing when they recur, like `within` or
+the drivers above; a framework that every pass must fit is not.
 
 None of these is needed to write a compiler; each removes a piece of boilerplate or a class of
 mistake. Add them when a second compiler wants the same thing.
