@@ -1,0 +1,7 @@
+-- a failing case between passing ones (tests/cli.lua runs this with `mua test`)
+test "three is odd":
+    assert(3 % 2 == 0, "three is not even")
+end
+test "four is even":
+    assert(4 % 2 == 0)
+end

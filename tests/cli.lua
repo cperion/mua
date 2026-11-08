@@ -50,6 +50,12 @@ check('named error status', cli .. ' ' .. fixture('named_error.mua'), 1, 'boom')
 check('syntax error location', cli .. ' ' .. fixture('syntax_error.mua'), 1, 'syntax_error.mua:1')
 check('missing file status', cli .. ' ' .. fixture('does_not_exist.mua'), 1, 'No such file')
 check('no arguments prints usage', cli, 1, 'usage: mua')
+check('test: every case passes', cli .. ' test ' .. fixture('cases_pass.mua'), 0, '2 passed, 0 failed')
+check('test: a failure is reported with its name and the rest still run', cli .. ' test ' .. fixture('cases_fail.mua'), 1,
+    'FAIL ' .. root .. '/tests/fixtures/cases_fail.mua: three is odd')
+check('test: the failing file still reports its passing case', cli .. ' test ' .. fixture('cases_fail.mua'), 1, '1 passed, 1 failed')
+check('test: --match runs the cases whose name contains the text', cli .. ' test --match times ' .. fixture('cases_pass.mua'), 0, '1 passed, 0 failed')
+check('test: no files prints usage', cli .. ' test', 2, 'usage: mua test')
 check('script arguments', cli .. ' -e ' .. q('print(...)') .. ' a b', 0, 'a\tb')
 check('expression lambdas and currying', cli .. ' -e ' .. q([[
 local mul = do(a) = do(b) = a * b

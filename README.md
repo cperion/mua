@@ -13,6 +13,8 @@ its own right and knows nothing about Nua, which is a host of it (Lua → Mua �
 - `mua.lua`, `mua/cli.lua`: the `mua` command: `luajit mua.lua [-e code] [-d] [--no-contracts]
   [-l module] file.mua [args]` runs a file, runs an expression, or prints what a file translates
   to; `MUA_CACHE=dir` turns the bytecode cache on.
+- `mua/test_cli.lua`: `mua test [--match text] files…` runs the cases the files name with the
+  `test` word (`test "what it shows": … end`), collected first, every failure reported.
 - `mua/fmt.lua`, `mua/fmt_text.lua`, `mua/fmt_cli.lua`: the formatter and `mua fmt`; a host (Nua is
   one) passes its parse forms, facts and extra passes (`docs/formatting.md`).
 - `mua outline FILE [args]`: executes a file and outlines labels on its returned values,

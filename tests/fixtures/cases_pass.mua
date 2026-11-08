@@ -1,0 +1,7 @@
+-- two cases that pass (tests/cli.lua runs this with `mua test`)
+test "one plus one is two":
+    assert(1 + 1 == 2)
+end
+test "two times two is four":
+    assert(2 * 2 == 4)
+end

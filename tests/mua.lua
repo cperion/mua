@@ -437,6 +437,46 @@ each:
     text ..= bump()
 end
 return text]], "ab")
+-- test: a named case; run at once, or collected for a runner
+runs('a test runs where it is named', [[
+local ran = false
+test "it runs":
+    ran = true
+end
+return ran]], true)
+errors('a failing test names itself', [[
+test "two is not three":
+    assert(2 == 3, "arithmetic")
+end]], "test 'two is not three' failed: ")
+runs('collect gathers cases in order without running them', [[
+local ran = 0
+local cases = collect do()
+    test "first":
+        ran += 1
+    end
+    test "second":
+        ran += 10
+    end
+end
+assert(ran == 0 and #cases == 2 and cases[1].name == "first" and cases[2].name == "second")
+cases[2].run()
+return ran]], 10)
+runs('a collection inside a collection is its own', [[
+local outer = collect do()
+    test "outer":
+    end
+    local inner = collect do()
+        test "inner":
+        end
+    end
+    assert(#inner == 1 and inner[1].name == "inner")
+end
+return #outer == 1 and outer[1].name == "outer"]], true)
+errors('a test takes a name first', 'test(5)', 'test takes a name first')
+errors('a test takes a block', 'test "named" (5)', "test 'named' takes a block")
+runs('a program may define its own test', [[
+local test = do(x) = x * 2
+return test 21]], 42)
 errors('a pass meets a value that is no member', FAMILY .. 'local evaluate = Expression.pass "evaluate" with ..Evaluation end\nevaluate 5',
     "is not a member of the family 'expression'")
 errors('a family used before it is sealed', 'local Expression = family "expression"\nlocal Holder = struct { held: Expression }\nlocal holder = Holder { held = 1 }', 'before it is sealed')

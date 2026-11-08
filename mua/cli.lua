@@ -7,6 +7,7 @@
 --   mua -l module ...                  require a module first
 --   mua fmt [--check | --write] files  format Mua source (see mua/fmt_cli.lua)
 --   mua outline file.mua [args]        execute a file and outline its returned labels
+--   mua test [--match text] files      run the cases the files name with `test` (mua/test_cli.lua)
 --   MUA_CACHE=dir mua ...              keep translated chunks as bytecode in dir (mua.load opts.cache)
 --
 -- Exit status: 0, or 1 for a translation error, a missing file or an uncaught error (reported on
@@ -49,7 +50,7 @@ local function main(argv, opts)
     if argv[1] == 'lint' then
         return fail('mua lint has been retired; mua outline FILE executes code and reads returned labels')
     end
-    for _, command in ipairs { 'fmt', 'outline' } do
+    for _, command in ipairs { 'fmt', 'outline', 'test' } do
         if argv[1] == command then
             local rest = {}
             for j = 2, #argv do rest[#rest + 1] = argv[j] end

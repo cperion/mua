@@ -274,6 +274,20 @@ An entry that begins a line is a new entry, so a literal, a table or a function 
 never an argument of the one before. Positional and keyed entries mix, a spread (`..base`) is for
 keyed entries only, and the empty table is `{}` (a bare `define` is a name).
 
+**Tests.** `test "what it shows":` followed by a block and `end` names a case; the block is its
+body. A file of such cases is an ordinary program: run, each case runs where it is named, and a
+failure raises `test 'name' failed: …` with its traceback. Run by `mua test files…` (or a host's
+runner, through `collect`), the cases are collected first and then each one runs, so every
+failure in a file is reported. `collect(run)` runs a function and answers the cases it named,
+as `{ name, run }` in order.
+
+```mua
+test "spread keeps explicit entries":
+    local merged = { ..{ a = 1 }, b = 2 }
+    assert(merged.a == 1 and merged.b == 2)
+end
+```
+
 **Structural markers.** `required` and `optional` are values in a structural type: a keyed
 spread of the type fails (`required`) when a required field is not supplied and leaves an
 optional one out. `closed` marks a type whose spreads admit only its declared fields. Closed

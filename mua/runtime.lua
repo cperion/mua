@@ -580,9 +580,46 @@ function R.extend(overrides)
     return setmetatable(overrides, { __index = R })
 end
 
+-- tests --------------------------------------------------------------------------------------
+-- `test "what it shows":` … `end` names a case whose block is its body. Inside `collect(run)`,
+-- the cases `run` names are registered, in order, for a runner to run; anywhere else a case runs
+-- at once and a failure raises `test 'name' failed: …`, so a file of tests is also a program.
+local collectors = {}
+function R.test(name, body)
+    if type(name) ~= 'string' then
+        error(('test takes a name first: test "what it shows":, got %s'):format(describe_value(name)), 2)
+    end
+    local function case(run)
+        if type(run) ~= 'function' then
+            error(("test '%s' takes a block: test %q: ... end"):format(name, name), 2)
+        end
+        local collector = collectors[#collectors]
+        if collector then
+            collector[#collector + 1] = { name = name, run = run }
+            return
+        end
+        local ok, problem = xpcall(run, function(e) return debug.traceback(tostring(e), 2) end)
+        if not ok then error(("test '%s' failed: %s"):format(name, problem), 0) end
+    end
+    if body ~= nil then return case(body) end
+    return case
+end
+
+-- run `run` and answer the cases its tests named, as { name, run } in order; a collection
+-- inside a collection is its own
+function R.collect(run)
+    if type(run) ~= 'function' then error('collect takes a function to run', 2) end
+    local cases = {}
+    collectors[#collectors + 1] = cases
+    local ok, problem = pcall(run)
+    collectors[#collectors] = nil
+    if not ok then error(problem, 0) end
+    return cases
+end
+
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R
