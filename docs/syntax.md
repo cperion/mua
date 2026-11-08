@@ -340,6 +340,18 @@ local Point = struct { x: Number, y: Number }
 local p = Point { x = 1, y = 2 }
 ```
 
+A struct's `__index` method, when it defines one, answers the members an instance's fields and
+the struct's methods do not; it receives the instance and the member's name. A value that
+names members by its contents (the constructors of a type a host builds) is a struct with an
+`__index`, not a table with a metatable of its own, so it stays a branded, checked value:
+
+```lua
+local Sum = struct { name: String, alternatives: Table }
+function Sum:__index(member)
+    if self.alternatives[member] then return constructor_of(self, member) end
+end
+```
+
 **`oneof`** is a tagged union with a constructor per alternative. A value is matched by calling
 it with one handler per alternative, and **every match checks** that the handlers name exactly
 the alternatives: a missing or unknown handler is an error at the match.

@@ -356,6 +356,17 @@ runs('a struct', 'local Point = struct { x: Number, y: Number }\nfunction Point:
 errors('a struct field contract', 'local Point = struct { x: Number, y: Number }\nlocal p = Point { x = 1, y = "2" }',
     "the field 'y' of Point expects Number")
 errors('an unknown struct field', 'local Point = struct { x: Number }\nlocal p = Point { x = 1, z = 2 }', "Point has no field 'z'")
+runs('a struct answers the members it lacks through its __index method', [[
+local Sum = struct { name: String, alternatives: Table }
+function Sum:describe(): String return "sum " .. self.name end
+function Sum:__index(member)
+    if self.alternatives[member] then return "constructor " .. member end
+    return nil
+end
+local shape = Sum { name = "shape", alternatives = { circle = true, name = true } }
+return table.concat({ shape.circle, shape.name, shape:describe(), tostring(shape.square) }, ",")]], 'constructor circle,shape,sum shape,nil')
+runs('a struct without __index looks members up as a table', 'local P = struct { x: Number }\nfunction P:twice(): Number return self.x * 2 end\nlocal p = P { x = 4 }\nreturn p:twice() + (p.y == nil and 1 or 0)', 9)
+errors('a struct\'s __index is a method', 'local P = struct { x: Number }\nP.__index = 5', 'is a method')
 runs('a struct is a checker', 'local Point = struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f(Point { x = 7 })', 7)
 errors('a struct checker is nominal', 'local Point = struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f({ x = 7 })',
     'expects Point, got a table')
