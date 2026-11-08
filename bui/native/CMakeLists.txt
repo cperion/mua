@@ -77,8 +77,20 @@ if(BUILD_TESTING)
     "$<TARGET_FILE:mua_bui>" "${abi_report}")
   set_tests_properties(bui_ffi PROPERTIES FIXTURES_REQUIRED bui_abi
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 60)
+  add_test(NAME bui_ui COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
+    "$<TARGET_FILE:mua_bui>")
+  add_test(NAME bui_ui_headless_example COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+    "${MUA_SOURCE_DIR}/examples/bui/activities.mua" "$<TARGET_FILE:mua_bui>" --headless)
+  set_tests_properties(bui_ui bui_ui_headless_example PROPERTIES
+    WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   option(BUI_FFI_TEST_WINDOW "Also test a real native window (requires a desktop)" OFF)
   if(BUI_FFI_TEST_WINDOW)
+    add_test(NAME bui_ui_window COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
+      "$<TARGET_FILE:mua_bui>" --window)
+    add_test(NAME bui_ui_example COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+      "${MUA_SOURCE_DIR}/examples/bui/activities.mua" "$<TARGET_FILE:mua_bui>" --smoke)
+    set_tests_properties(bui_ui_window bui_ui_example PROPERTIES
+      WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 10)
     add_test(NAME bui_window COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui.lua"
       "$<TARGET_FILE:mua_bui>" "${abi_report}" --window)
     set_tests_properties(bui_window PROPERTIES FIXTURES_REQUIRED bui_abi

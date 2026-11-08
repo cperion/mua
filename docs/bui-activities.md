@@ -1,8 +1,9 @@
 # BUI as a library of Mua activities
 
-**Design contract, not an implemented SDK.** The working code is the
-[raw FFI boundary](bui-ffi.md) and its native examples. The studio is a test of that boundary,
-not the architecture to generalize. In particular, `add(parent, kind, properties, callback)`
+**Design contract; implementation coverage is tracked separately.** The
+[implemented activity API](bui-ui.md) now has native/headless ownership, mounting, delivery,
+controls and editing/drawing vocabularies. The [raw FFI boundary](bui-ffi.md) remains separate.
+The original studio is a test of that boundary, not the architecture to generalize. In particular, `add(parent, kind, properties, callback)`
 is not the proposed UI language.
 
 The goal is a coherent Mua DSL for **all of BUI**, including the work around widgets:
@@ -352,7 +353,8 @@ Required scenarios include:
 
 The studio regression already checks idle, resize, theme/exposure events, a button-driven timed
 job and closing with an external process deadline on both supported platforms. That is evidence
-for the native boundary, **not a claim that the activity library above exists yet**.
+for the native boundary, not proof of this entire design map. The managed library's own
+`bui_ui` tests and [API coverage notes](bui-ui.md) identify what is implemented.
 
 > **Owners bound the work. Vocabularies express capabilities. Parents connect continuations.
 > Builders describe only where a description is useful. The driver makes native interaction safe.**

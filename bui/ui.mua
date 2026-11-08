@@ -1,0 +1,49 @@
+-- Activity-based BUI entry point. Native mechanics live at the Lua/FFI edge;
+-- these closed protocols belong to the Mua library, not to the C declarations.
+local Application = require "bui.ui.application"
+local Descriptions = require "bui.ui.descriptions"
+
+local Opening = oneof { opened: Any, unavailable: String }
+local Acquisition = oneof { ready: Any, unavailable: String }
+local Frame = oneof { next_frame: Unit, finished: Unit }
+local Selection = oneof { selected: Table, empty: Unit }
+
+local continue_frame = do(decision: Frame): Boolean
+    return decision {
+        next_frame() = true,
+        finished() = false,
+    }
+end
+local protocols = define
+    opening = Opening
+    acquisition = Acquisition
+    selection = Selection
+    .continue_frame
+end
+
+-- Own the integration, all child activities, and their deterministic completion.
+local activities = do(clock)
+    return define
+        with_application = do(Native)
+            return do(body: Function): Any
+                return Application.with_application(Native, protocols, body, clock)
+            end
+        end
+    end
+end
+
+-- Supply a monotonic seconds capability for deterministic tests or an embedding host.
+-- This creates a vocabulary, not another dispatch engine or a global clock override.
+local using_clock = do(clock: Function): Table
+    return activities clock
+end
+
+return define
+    ..activities(nil)
+    ..Descriptions
+    .Opening
+    .Acquisition
+    .Frame
+    .Selection
+    .using_clock
+end

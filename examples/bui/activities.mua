@@ -1,0 +1,128 @@
+-- A composed UI using only managed activities and vocabularies (no native pointers).
+-- luajit mua.lua examples/bui/activities.mua path/to/mua_bui.dll [--smoke|--headless]
+local ffi = require "ffi"
+local Bui = require "bui.ffi"
+local Ui = require "bui.ui"
+local filename = ffi.os == "Windows" and "mua_bui.dll" or "libmua_bui.so"
+local Native = Bui.load(arg[1] or "./build/bui/" .. filename)
+
+-- Each invocation of the installer owns independent state. Notifications point outward;
+-- the returned increment/current vocabulary points inward. Neither exposes the controls.
+local counter_panel = do(inputs)
+    assert(type inputs.initial == "number" and inputs.initial >= 0 and inputs.initial <= 20)
+    return do(Notify)
+        assert(type Notify.changed == "function", "counter needs a changed continuation")
+        return do(place)
+            local value = inputs.initial
+            local readout, slider
+            local set_count = do(count)
+                value = math.max(0, math.min(20, count))
+                readout.display(string.format("Count / %d", value))
+                slider.set value
+                Notify.changed value
+            end
+            local increment = || -> set_count(value + 1)
+            place.box with padding = 16, spacing = 10, fill = true end do(children)
+                children.label { caption = inputs.caption, bold = true, font_scale = 1.2 }
+                readout = children.label(string.format("Count / %d", value))
+                slider = children.slider with
+                    minimum = 0
+                    maximum = 20
+                    .value
+                    integer = true
+                    precision = 0
+                end
+                slider.connect define changed = set_count end
+                children.button "Increment" increment
+                children.button "Reset" (|| -> set_count inputs.initial)
+            end
+            return define .increment, current = || -> value end
+        end
+    end
+end
+
+-- A pure drawing description. Rebuilding it changes no native object until canvas.replace.
+local landscape = do(width, height)
+    return Ui.drawing do(draw)
+        draw.rectangle with
+            coordinates = { 0, 0, width, height }
+            fill = { 0.06, 0.12, 0.24, 1 }
+        end
+        draw.oval with
+            coordinates = { width * 0.68, 15, width * 0.68 + 54, 69 }
+            fill = { 1, 0.73, 0.4, 1 }
+        end
+        draw.polygon with
+            coordinates = { 0, height, width * 0.3, 25, width * 0.6, height }
+            fill = { 0.22, 0.45, 0.55, 1 }
+        end
+        draw.polygon with
+            coordinates = { width * 0.3, height, width * 0.7, 55, width, height }
+            fill = { 0.1, 0.3, 0.4, 1 }
+        end
+    end
+end
+
+local studio = do(place)
+    local first, second
+    place.column with padding = 20, spacing = 14, fill = true end do(children)
+        children.label { caption = "Mua / activities", font_scale = 1.7, bold = true }
+        children.label "Two components. Independent state. Explicit parent wiring."
+        local status = children.label "Ready"
+        local report = value -> status.display(string.format("A counter reported %d", value))
+        local first_inputs = { caption = "First counter", initial = 4 }
+        local second_inputs = { caption = "Second counter", initial = 10 }
+        children.row { spacing = 16 } do(columns)
+            first = columns.include(counter_panel first_inputs define changed = report end)
+            second = columns.include(counter_panel second_inputs define changed = report end)
+        end
+        children.button "Advance both" do()
+            first.increment
+            second.increment
+        end
+        local canvas = children.canvas { height = 140, fill = true }
+        canvas.connect define
+            configured = rectangle -> canvas.replace(landscape(rectangle.width, rectangle.height))
+        end
+        local slot = children.slot {}
+        children.button "Replace the note" do()
+            slot.replace do(note)
+                note.label "This child has its own mount lifetime. Its predecessor was retired safely."
+            end
+        end
+        slot.replace do(note)
+            note.label "The native driver owns dispatch. Components never enter a nested event loop."
+        end
+    end
+    return define
+        advance_first = first.increment
+        first_count = first.current
+        second_count = second.current
+    end
+end
+
+Ui.with_application Native do(application)
+    application.gpu_default false
+    application.theme "dark"
+    local headless = arg[2] == "--headless"
+    local open = headless and application.with_surface or application.with_window
+    local options = { title = "Mua / activity-based BUI", width = 850, height = 650 }
+    return open options do(window)
+        window.with_content studio do(components)
+            components.advance_first
+            assert(components.first_count() == 5 and components.second_count() == 10)
+            if headless then
+                window.render
+                application.pump
+                window.render
+            else
+                window.show
+                if arg[2] == "--smoke" then window.after 200 window.close end
+                application.run
+            end
+        end
+    end {
+        opened() = print "BUI activity example completed.",
+        unavailable = reason -> error(reason, 0),
+    }
+end
