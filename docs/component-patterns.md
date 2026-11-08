@@ -8,6 +8,8 @@ bus or new syntax is required.
 This records the patterns agreed while discussing a Mua UI framework over BUI. It does **not**
 specify a BUI binding, widget API, rendering model, scheduler or mounting implementation.
 The examples are headless behavioral components, not implemented UI widgets.
+The separate [BUI FFI boundary](bui-ffi.md) supplies raw native calls without choosing the
+component or activity implementation.
 
 [Designing and writing Mua](designing-and-writing-mua.md) owns the activity and vocabulary
 principles; [the compiler guide](writing-compilers.md#45-designing-the-state-an-operation-carries)

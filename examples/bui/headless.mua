@@ -1,0 +1,35 @@
+-- Raw C calls through the thin binding; no component model or window host.
+-- Build bui/native first, then run with the LuaJIT required by Mua:
+--   luajit mua.lua examples/bui/headless.mua ./build/bui/libmua_bui.so
+local ffi = require "ffi"
+local Bui = require "bui.ffi"
+local Native = Bui.load(arg[1] or "./build/bui/libmua_bui.so")
+
+local root, context, raster
+local render = do()
+    root = Native.BK_node_new "column"
+    assert(root ~= nil, "root allocation failed")
+    local greeting_label = Native.BK_node_new "label"
+    assert(greeting_label ~= nil, "label allocation failed")
+    assert(Native.BK_node_add(root, greeting_label, -1) == 1)
+    assert(Native.BK_set_str(greeting_label, "text", "Hello from Mua") == 1)
+    context = Native.BK_context_new root
+    assert(context ~= nil, "context allocation failed")
+    raster = Native.BUI_raster_create(320, 120)
+    assert(raster ~= nil, "raster allocation failed")
+    assert(Native.BK_render(context, raster, 320, 120, 1) > 0)
+    assert(Native.BUI_raster_pixels raster ~= nil)
+end
+
+local accepted, problem = xpcall(render, debug.traceback)
+-- Context borrows the root. With no host refs, freeing the root frees its children.
+if context ~= nil then Native.BK_context_free context end
+if root ~= nil then Native.BK_node_free root end
+if raster ~= nil then Native.BUI_raster_free raster end
+Native.BK_image_exit
+assert(accepted, problem)
+print("BUI " .. ffi.string(Native.BK_version_string()) .. ": rendered 320x120 headlessly")
+
+--[=[ output
+BUI 0.5.0: rendered 320x120 headlessly
+]=]
