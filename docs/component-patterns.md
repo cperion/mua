@@ -302,10 +302,9 @@ Not every component needs every role. A button can accept one continuation; an e
 an editing vocabulary and report changes; a dialog additionally has a terminal outcome. Do not
 impose an empty vocabulary or a universal component record where there is no responsibility.
 
-Still open for the UI framework: the concrete builder and mounting API, whether and where pure
-descriptions precede live instances, update scheduling, native callback handling, resource
-release mechanics and the BUI integration. These patterns constrain those choices; they do not
-pretend the choices have already been made.
+The concrete mounting API, placement of pure descriptions, update scheduling, native callbacks,
+and release mechanics are specified separately in the [BUI activity DSL design](bui-activities.md).
+That design applies these patterns; it is not a claim that the activity library is implemented.
 
 ### Review checklist
 

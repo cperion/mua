@@ -95,6 +95,27 @@ there are no shell-pipe or shell-quoting requirements.
 These tests are separate from `make test`: the language itself does not require a BUI checkout
 or a native build.
 
+## Interactive studio
+
+`examples/bui/studio.mua` opens a small native creative-studio demo: a canvas landscape with
+live exposure, color pickers, an editable ramp and curve, light/dark themes, and a simulated
+render job driven by native timers. It is an example using the raw binding, not a UI framework
+or a real path tracer. Close the window to release its native resources.
+
+```powershell
+luajit mua.lua examples/bui/studio.mua ./build/bui/mua_bui.dll
+```
+
+On Linux, pass `./build/bui/libmua_bui.so` instead. Add `--smoke` after the library path to
+test idle redraw suppression, resizing, theme/exposure changes, button input, render timers and
+closing automatically. With the desktop tests enabled, setting
+`-DMUA_LUAJIT_EXECUTABLE=/path/to/mua-capable/luajit` also runs this regression under CTest's
+10-second process timeout. The program owns its callback objects, contains callback errors,
+and frees the window, context and tree in order.
+
+This remains a raw-FFI demonstration. The intended library is the
+[activity-based BUI DSL](bui-activities.md), not this example's node-construction helper.
+
 ## Use
 
 ```lua
@@ -192,7 +213,11 @@ Specific constraints:
    function that drives input/polling/notifying setters when callbacks may occur. LuaJIT's
    automatic blacklisting can miss a callback that appears only after the call became hot.
    The binding does not disable JIT globally; the native smoke test does so explicitly.
-5. **An event's pointer payload may be ephemeral.** Copy strings and values while valid rather
+5. **A frame request needs its callback.** At the pinned BUI revision, Win32 clears
+   `BK_window_request_frame`'s pending flag only when `BKWindowCallbacks.on_frame` runs. Requesting
+   a frame without that callback causes a render-message loop that starves timers. Ordinary
+   property/canvas damage already schedules drawing: do not request an extra frame for it.
+6. **An event's pointer payload may be ephemeral.** Copy strings and values while valid rather
    than queuing raw pointers to temporary C buffers. The ABI does not encode each event's
    payload meaning; consult `BUI_kit.h`.
 
