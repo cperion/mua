@@ -43,13 +43,12 @@ local function run(chunk, args)
     return 0
 end
 
-function M.main(argv)
+local function main(argv, opts)
     if argv[1] == 'fmt' then
         local rest = {}
         for j = 2, #argv do rest[#rest + 1] = argv[j] end
         return require('mua.fmt_cli').run(rest)
     end
-    local opts = { contracts = true, cache = os.getenv('MUA_CACHE') }
     local expression, dump, libraries = nil, false, {}
     local i = 1
     while argv[i] and argv[i]:sub(1, 1) == '-' and argv[i] ~= '-' do
@@ -96,6 +95,20 @@ function M.main(argv)
     for j, a in ipairs(rest) do script_arg[j] = a end
     _G.arg = script_arg
     return run(chunk, rest)
+end
+
+-- A Mua program can require Mua libraries. Scope the searcher to this invocation so an
+-- embedding caller does not accumulate loaders or inherit another invocation's contracts.
+function M.main(argv)
+    local opts = { contracts = true, cache = os.getenv('MUA_CACHE') }
+    local searcher = mua.searcher(opts)
+    table.insert(package.loaders, 2, searcher)
+    local ok, result = pcall(main, argv, opts)
+    for index, loader in ipairs(package.loaders) do
+        if loader == searcher then table.remove(package.loaders, index); break end
+    end
+    if not ok then error(result, 0) end
+    return result
 end
 
 return M

@@ -1,0 +1,4 @@
+-- Required by the CLI regression tests; this is a module, not a program.
+local identity = do(value: Number): Number = value
+local greeting = || -> "Mua library loaded"
+return define .identity .greeting end

@@ -67,4 +67,24 @@ print('two dots ok')
 ]]), 0, 'two dots ok')
 check('contracts are checked', cli .. ' -e ' .. q('local f = do(x: Number): Number = x\nprint(pcall(f, "s"))'), 0, "expects Number")
 check('contracts can be switched off', cli .. ' --no-contracts -e ' .. q('local f = do(x: Number): Number = x\nprint(pcall(f, "s"))'), 0, 'true\ts')
+check('require a Mua module', cli .. ' -e ' .. q([[local Library = require "tests.fixtures.library"
+print(Library.greeting())]]), 0, 'Mua library loaded')
+check('preload a Mua module', cli .. ' -l tests.fixtures.library -e ' .. q([[
+print(package.loaded["tests.fixtures.library"].greeting())]]), 0, 'Mua library loaded')
+check('module contracts are checked', cli .. ' -e ' .. q([[
+local Library = require "tests.fixtures.library"
+print(pcall(Library.identity, "text"))]]), 0, 'expects Number')
+check('module inherits no-contracts', cli .. ' --no-contracts -e ' .. q([[
+local Library = require "tests.fixtures.library"
+print(pcall(Library.identity, "text"))]]), 0, 'true\ttext')
+check('module syntax errors name their file', cli .. ' -e ' .. q([[
+require "tests.fixtures.syntax_error"]]), 1, 'syntax_error.mua:1')
+check('CLI restores its loader after failure', lua .. ' -e ' .. q([[
+local cli = require 'mua.cli'
+local before = {}
+for index, loader in ipairs(package.loaders) do before[index] = loader end
+assert(cli.main({'-e', 'error("expected failure")'}) == 1)
+assert(#package.loaders == #before)
+for index, loader in ipairs(before) do assert(package.loaders[index] == loader) end
+print('loaders restored')]]), 0, 'loaders restored')
 print(('%d command checks passed'):format(passed))
