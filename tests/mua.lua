@@ -413,6 +413,30 @@ errors('a pass with a kind missing', FAMILY .. 'local partial = Expression.pass 
 errors('a pass with an unknown kind', FAMILY .. 'local misspelled = Expression.pass "misspelled" with ..Evaluation, Negatoin = Evaluation.Negation end',
     "'Negatoin' is not a kind in the family 'expression'")
 errors('a pass handler that is not a function', FAMILY .. 'local broken = Expression.pass "broken" with ..Evaluation, Negation = 1 end', 'not a function')
+-- compound assignment in an opened region (every colon block opens its home)
+runs('a compound assignment to a free name in a colon block', [[
+local each = do(f) f() end
+local n = 1
+each:
+    n += 2
+    n *= 5
+end
+return n]], 15)
+runs('a compound assignment reaches the opened member that has the name', [[
+local context = { total = 1 }
+local with_context = do(f) f(context) end
+with_context:
+    total += 41
+end
+return context.total]], 42)
+runs('a compound assignment reads its target before its operand', [[
+local each = do(f) f() end
+local text = "a"
+local bump = do() text = text .. "!" return "b" end
+each:
+    text ..= bump()
+end
+return text]], "ab")
 errors('a pass meets a value that is no member', FAMILY .. 'local evaluate = Expression.pass "evaluate" with ..Evaluation end\nevaluate 5',
     "is not a member of the family 'expression'")
 errors('a family used before it is sealed', 'local Expression = family "expression"\nlocal Holder = struct { held: Expression }\nlocal holder = Holder { held = 1 }', 'before it is sealed')
