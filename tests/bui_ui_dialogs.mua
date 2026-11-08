@@ -1,0 +1,106 @@
+local Ui = require "bui.ui"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "dialog check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local opened = result -> result { opened = value -> value, unavailable = reason -> error reason }
+local outcomes = {}
+local receive = do(outcome)
+    outcomes[#outcomes + 1] = outcome { accepted = value -> value, cancelled() = "cancelled" }
+end
+Ui.with_application Native do(Application)
+    Application.gpu_default false
+    local acquire = arg[2] == "--window" and Application.with_window or Application.with_surface
+    opened(acquire { width = 200, height = 100 } do(surface)
+            local baseline = Application.statistics().surfaces
+            local dialog = opened(surface.confirm({ message = "Accept?" })(receive))
+            expect(Application.statistics().surfaces == baseline + 1)
+            dialog.render
+            dialog.content.accept
+            expect(#outcomes == 0 and Application.statistics().surfaces == baseline)
+            Application.pump
+            expect(#outcomes == 1 and outcomes[1] == true)
+            refuses(dialog.content.accept, "activity has ended")
+            dialog.cancel
+            Application.pump
+            expect(#outcomes == 1)
+            local cancelled = opened(surface.confirm({ message = "Cancel?" })(receive))
+            cancelled.cancel
+            cancelled.cancel
+            Application.pump
+            expect(#outcomes == 2 and outcomes[2] == "cancelled")
+            refuses(do()
+                    local install = surface.open_dialog {} do(place, Finish)
+                        place.label "tentative"
+                        error "installation failed"
+                    end
+                    install receive
+                end, "installation failed")
+            expect(Application.statistics().surfaces == baseline)
+            Application.pump
+            expect(#outcomes == 2)
+            refuses(do()
+                    local install = surface.open_dialog {} do(place, Finish)
+                        Finish.accept "too early"
+                    end
+                    install receive
+                end, "not been published")
+            expect(Application.statistics().surfaces == baseline)
+            local late, component
+            surface.with_content do(place)
+                component = place
+                late = opened(place.confirm({ message = "Owned by this component" })(receive))
+                return {}
+            end do()
+                expect(Application.statistics().surfaces == baseline + 1)
+            end
+            expect(Application.statistics().surfaces == baseline)
+            Application.pump
+            expect(#outcomes == 2)  -- completion destination retired with its component
+            refuses(late.render, "activity has ended")
+            refuses(|| -> component.confirm({ message = "Retired" })(receive), "activity has ended")
+            surface.choose_file with
+                browser = { mode = "directory",
+                    directory = ".", bookmarks_file = "" }
+            end (receive) with
+                unavailable = do(reason) expect(type reason == "string") end
+                opened = do(choice)
+                    choice.render
+                    expect(choice.content.location().directory ~= "")
+                    expect(choice.content.result() { browsing() = true,
+                            accepted() = false, cancelled() = false })
+                    choice.content.refresh
+                    choice.content.execute
+                    expect(#outcomes == 2)
+                    Application.pump
+                    expect(Application.statistics().surfaces == baseline and #outcomes == 2)
+                    Application.pump
+                    expect(#outcomes == 3 and type outcomes[3] == "table" and #outcomes[3] == 1)
+                    refuses(choice.content.execute, "activity has ended")
+                end
+            end
+            refuses(|| -> surface.choose_file({ browser = { directory = false } })(receive),
+                "string")
+        end)
+end
+-- Backend refusal is an opening outcome, not cancellation and not a raised programming error.
+local unavailable = meta { index = do(_, key) return Native[key] end } with
+    BK_node_new = do(kind)
+        if kind == "filebrowser" then return nil end
+        return Native.BK_node_new kind
+    end
+end
+Ui.with_application unavailable do(Application)
+    opened(Application.with_surface { width = 100, height = 100 } do(surface)
+            expect(surface.choose_file {} do() error "unavailable choice completed" end {
+                    opened() = false, unavailable = reason -> reason:find("unavailable", 1, true),
+                })
+        end)
+end
+print("BUI dialogs: " .. checks .. " checks passed")

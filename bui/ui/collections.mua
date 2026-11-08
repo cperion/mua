@@ -1,0 +1,233 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Scope = require "bui.ui.scope"
+
+if jit then jit.off(true, true) end
+
+-- Copy a forest before allocation; identifiers are stable values, never native addresses.
+local forest = do(input)
+    local identifiers, visiting, total = {}, {}, 0
+    local copy
+    copy = do(items, depth)
+        Check.array(items, "forest")
+        assert(depth <= 64, "forest is too deep")
+        local copied = {}
+        for index, item in ipairs items do
+            Check.keys(item, { id = true, label = true, icon = true, expanded = true,
+                    marked = true, toggles = true, values = true, children = true }, "tree item")
+            assert(not visiting[item], "cyclic forest")
+            visiting[item] = true
+            local identity = item
+            item = { ..item }
+            total += 1
+            assert(total <= 100000, "forest is too large")
+            local identifier = item.id
+            if type identifier == "number" then Check.integer(identifier,
+                    "tree id", -2 ^ 53 + 1, 2 ^ 53 - 1)
+            else Check.string(identifier, "tree id") end
+            assert(not identifiers[identifier], "duplicate tree id")
+            identifiers[identifier] = true
+            local values, toggles = {}, {}
+            for column, text in ipairs(Check.array(Check.default(item.values, {}), "tree values")) do
+                values[column] = Check.string(text, "tree value")
+            end
+            for column, enabled in ipairs(Check.array(Check.default(item.toggles, {}),
+                    "tree toggles")) do
+                assert(column <= 32, "tree supports 32 toggle bits")
+                toggles[column] = Check.boolean(enabled, "toggle")
+            end
+            copied[index] = with
+                id = identifier
+                label = Check.string(item.label, "tree label")
+                icon = Check.string(Check.default(item.icon, ""), "tree icon")
+                expanded = Check.boolean(Check.default(item.expanded, true), "expanded")
+                marked = Check.boolean(Check.default(item.marked, false), "marked")
+                .values
+                .toggles
+                children = copy(Check.default(item.children, {}), depth + 1)
+            end
+            visiting[identity] = nil
+        end
+        return copied
+    end
+    return copy(input, 1)
+end
+
+-- The widget borrows a separately owned forest. Self references identify native events;
+-- managed integration leaves BUI's global ref hooks unset and frees every item explicitly.
+local for_control = do(record)
+    if record.kind ~= "tree" then return {} end
+    local Native, node, owner = record.native, record.node, record.owner
+    local Selection = record.application.protocols.selection
+    local installed
+    local find = do(identifier)
+        local entry = installed and installed.identifiers[identifier]
+        return assert(entry, "unknown tree item id")
+    end
+    local snapshot = do(pointer)
+        local entry = installed and installed.pointers[tostring pointer]
+        if not entry then return Selection.empty() end
+        local values, toggles = {}, {}
+        for index, value in ipairs entry.values do values[index] = value end
+        for column = 1, 32 do
+            toggles[column] = Native.BK_tree_item_get(pointer, "toggle" .. (column - 1)) ~= 0
+        end
+        return Selection.selected with
+            id = entry.identifier
+            label = ffi.string(Native.BK_tree_item_label pointer)
+            expanded = Native.BK_tree_item_get(pointer, "expanded") ~= 0
+            marked = Native.BK_tree_item_get(pointer, "marked") ~= 0
+            .values
+            .toggles
+        end
+    end
+    local replace_forest = do(descriptions)
+        owner.mutate "replace forest"
+        local data = forest descriptions
+        return Scope.prepare(owner, do()
+                local lifetime = owner.child "tree forest"
+                local roots, allocated, identifiers, pointers = {}, {}, {}, {}
+                local replacement = { owner = lifetime, .identifiers, .pointers }
+                lifetime.defer do()
+                    if installed == replacement then
+                        Native.BK_tree_set_roots(node, nil, 0)
+                        installed = nil
+                    end
+                    -- Clear parent links first; otherwise native recursive destruction could
+                    -- free children which the explicit allocation ledger still owns.
+                    for _, pointer in ipairs allocated do Native.BK_tree_item_clear pointer end
+                    for index = #allocated, 1, -1 do Native.BK_tree_item_free allocated[index] end
+                end
+                local build
+                build = do(description, parent)
+                    local icon = description.icon == "" and 0 or Native.BK_icon_id description.icon
+                    assert(description.icon == "" or icon > 0, "unknown tree icon")
+                    local pointer = Native.BK_tree_item_new(description.label, icon)
+                    assert(pointer ~= nil, "tree item allocation failed")
+                    allocated[#allocated + 1] = pointer
+                    Native.BK_tree_item_set_ref(pointer, pointer)
+                    if parent then Native.BK_tree_item_add(parent, pointer)
+                    else roots[#roots + 1] = pointer end
+                    local entry = { identifier = description.id,
+                        .pointer, values = description.values }
+                    identifiers[description.id], pointers[tostring pointer] = entry, entry
+                    Native.BK_tree_item_set(pointer, "expanded", description.expanded and 1 or 0)
+                    Native.BK_tree_item_set(pointer, "marked", description.marked and 1 or 0)
+                    for column, enabled in ipairs description.toggles do
+                        Native.BK_tree_item_set(pointer,
+                            "toggle" .. (column - 1), enabled and 1 or 0)
+                    end
+                    local strings, retained = Check.strings(description.values, "tree values")
+                    Native.BK_tree_item_set_values(pointer, strings, #retained)
+                    for _, child in ipairs description.children do build(child, pointer) end
+                end
+                for _, description in ipairs data do build description end
+                local native_roots = ffi.new("BKTreeItem *[?]", math.max(1, #roots))
+                for index, pointer in ipairs roots do native_roots[index - 1] = pointer end
+                owner.mutate "publish forest"
+                Native.BK_tree_set_roots(node, native_roots, #roots)
+                local previous = installed
+                installed = replacement
+                lifetime.activate
+                if previous then previous.owner.close end
+                Native.BK_node_relayout node
+            end)
+    end
+    local selection = do()
+        owner.check "tree selection"
+        return snapshot(Native.BK_tree_selected node)
+    end
+    local select_item = do(identifier)
+        owner.mutate "select tree item"
+        local pointer
+        if identifier ~= nil then pointer = find(identifier).pointer end
+        Native.BK_tree_select(node, pointer)
+        record.application.check_error
+    end
+    local item = do(identifier)
+        owner.check "tree item"
+        return snapshot find(identifier).pointer
+    end
+    local item_children = do(identifier)
+        owner.check "tree children"
+        local pointer = find(identifier).pointer
+        local children = {}
+        for index = 0, Native.BK_tree_item_child_count pointer - 1 do
+            children[#children + 1] = snapshot(Native.BK_tree_item_child(pointer, index))
+        end
+        return children
+    end
+    local rename_item = do(identifier, label)
+        owner.mutate "rename tree item"
+        Check.string(label, "tree label")
+        Native.BK_tree_item_set_label(find(identifier).pointer, label)
+        Native.BK_node_relayout node
+    end
+    local item_values = do(identifier, values)
+        owner.mutate "tree column values"
+        local strings, retained = Check.strings(values, "tree values")
+        owner.mutate "publish tree values"
+        local entry = find identifier
+        Native.BK_tree_item_set_values(entry.pointer, strings, #retained)
+        entry.values = retained
+        Native.BK_node_relayout node
+    end
+    local expand_item = do(identifier, expanded)
+        owner.mutate "expand tree item"
+        Check.boolean(expanded, "expanded")
+        Native.BK_tree_item_set(find(identifier).pointer, "expanded", expanded and 1 or 0)
+        Native.BK_node_relayout node
+    end
+    local mark_item = do(identifier, marked)
+        owner.mutate "mark tree item"
+        Check.boolean(marked, "marked")
+        Native.BK_tree_item_set(find(identifier).pointer, "marked", marked and 1 or 0)
+        Native.BK_node_invalidate node
+    end
+    local toggle_item = do(identifier, column, enabled)
+        owner.mutate "toggle tree item"
+        Check.integer(column, "toggle column", 1, 32)
+        Check.boolean(enabled, "toggle")
+        Native.BK_tree_item_set(find(identifier).pointer,
+            "toggle" .. (column - 1), enabled and 1 or 0)
+        Native.BK_node_invalidate node
+    end
+    local tree_rows = do()
+        owner.check "tree rows"
+        local rows = {}
+        for index = 0, Native.BK_tree_row_count node - 1 do
+            local pointer, bounds = Native.BK_tree_row(node, index), ffi.new "int[4]"
+            Native.BK_tree_row_rect(node, index, bounds)
+            rows[#rows + 1] = with
+                id = installed.pointers[tostring pointer].identifier
+                rectangle = { x = tonumber bounds[0], y = tonumber bounds[1],
+                    width = tonumber bounds[2], height = tonumber bounds[3] }
+            end
+        end
+        return rows
+    end
+    record.change_snapshot = selection
+    record.event_snapshot = do(kind, reference, first, second)
+        if kind == 4 then return "renamed", snapshot(Native.BK_tree_row(node, first)) end
+        if kind == 6 then
+            if first == -1 then return "expanded", snapshot(ffi.cast("BKTreeItem *", reference)) end
+            return "toggled", { item = snapshot(ffi.cast("BKTreeItem *", reference)),
+                column = first + 1, value = second ~= 0 }
+        end
+    end
+    return define
+        .replace_forest
+        .selection
+        .select_item
+        .item
+        .rename_item
+        .item_values
+        .expand_item
+        .mark_item
+        .toggle_item
+        .tree_rows
+        .item_children
+    end
+end
+
+return define .forest, .for_control end

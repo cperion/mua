@@ -1,0 +1,115 @@
+local Check = require "bui.ui.check"
+local Scope = require "bui.ui.scope"
+local Mount = require "bui.ui.mount"
+local Widgets = require "bui.ui.widgets"
+
+-- Dialog completion belongs to the launching owner, not the native notification or setup block.
+local for_owner = do(Application, parent_window, parent, open_child)
+    local Opening, Dialog = Application.protocols.opening, Application.protocols.dialog
+    local open_dialog = do(options)
+        return do(installer)
+            return do(completed)
+                parent.mutate "open dialog"
+                Check.callable(installer, "dialog installer")
+                Check.callable(completed, "dialog completion")
+                return Scope.prepare(parent, do()
+                        local owner = parent.child "dialog"
+                        local published, outcome = false, nil
+                        owner.defer do()
+                            if published then
+                                Application.post(parent, completed, outcome or Dialog.cancelled())
+                            end
+                        end
+                        local accept = do(value)
+                            owner.mutate "accept dialog"
+                            assert(published, "dialog has not been published")
+                            outcome = Dialog.accepted value
+                            owner.close
+                        end
+                        local cancel = do()
+                            if not owner.is_alive() then return end
+                            owner.mutate "cancel dialog"
+                            assert(published, "dialog has not been published")
+                            owner.close
+                        end
+                        local Finish = define .accept, .cancel end
+                        return open_child(Application, parent_window, owner, options) with
+                            unavailable = do(reason)
+                                owner.close
+                                return Opening.unavailable reason
+                            end
+                            opened = do(window)
+                                -- An externally destroyed native window also completes the activity.
+                                window.owner.defer do()
+                                    if owner.is_alive() then Application.post(owner, owner.close) end
+                                end
+                                local installed = Mount.mount(Application,
+                                    window, window.owner, window.root,
+                                    do(place) return installer(place, Finish) end)
+                                window.capabilities.on_close_requested owner.close
+                                owner.activate
+                                if window.pointer then window.capabilities.show end
+                                published = true
+                                return Opening.opened define
+                                    cancel = owner.close
+                                    content = installed.capabilities
+                                    render = window.capabilities.render
+                                    input = window.capabilities.input
+                                    size = window.capabilities.size
+                                end
+                            end
+                        end
+                    end)
+            end
+        end
+    end
+    local confirm = do(options)
+        Check.keys(options,
+            { title = true, message = true, accept = true, cancel = true }, "confirmation")
+        local message = Check.string(options.message, "confirmation message")
+        local accepted = Check.string(Check.default(options.accept, "OK"), "accept caption")
+        local cancelled = Check.string(Check.default(options.cancel, "Cancel"), "cancel caption")
+        local title = Check.string(Check.default(options.title, "Confirm"), "dialog title")
+        return open_dialog { .title, width = 420, height = 160 } do(place, Finish)
+            place.label message
+            local accept = do() Finish.accept true end
+            place.row {} do(buttons)
+                buttons.button accepted accept
+                buttons.button cancelled Finish.cancel
+            end
+            return define .accept end
+        end
+    end
+    local choose_file = do(options)
+        Check.keys(options, { title = true, browser = true }, "file choice")
+        local title = Check.string(Check.default(options.title, "Choose a file"),
+            "file choice title")
+        local browser = Check.default(options.browser, {})
+        Check.table(browser, "file browser options")
+        local copied = { ..browser }
+        Widgets.prepare(Widgets.catalog.file_browser, copied)
+        return do(completed)
+            parent.mutate "choose file"
+            Check.callable(completed, "file choice completion")
+            local probe = Application.native.BK_node_new "filebrowser"
+            if probe == nil then return Opening.unavailable "file browser unavailable in this build" end
+            Application.native.BK_node_free probe
+            return open_dialog { .title, width = 800, height = 520 } do(place, Finish)
+                local browser = place.file_browser copied
+                browser.connect define
+                    submitted = do(result)
+                        result with
+                            browsing() = nil
+                            accepted = Finish.accept
+                            cancelled = Finish.cancel
+                        end
+                    end
+                end
+                return browser
+            end completed
+        end
+    end
+    return define .open_dialog, .confirm, .choose_file end
+end
+
+return define .for_owner end

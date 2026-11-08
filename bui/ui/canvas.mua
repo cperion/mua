@@ -2,6 +2,7 @@ local ffi = require "ffi"
 local Check = require "bui.ui.check"
 local Handles = require "bui.ui.handles"
 local Media = require "bui.ui.media"
+local Language = require "bui.ui.canvas_language"
 
 if jit then jit.off(true, true) end
 
@@ -90,31 +91,67 @@ local describe = do(kind, options, default_identifier)
     return result
 end
 
-local marshal = do(description, owner)
+local lower_common = do(node, code)
     local item = ffi.new "BKCanvasItem[1]"
-    local coordinates = ffi.new("float[?]", #description.coordinates, description.coordinates)
-    item[0].id, item[0].type = description.id, kinds[description.kind]
-    item[0].coords, item[0].ncoords = coordinates, #description.coordinates
+    local coordinates = ffi.new("float[?]", #node.coordinates, node.coordinates)
+    item[0].id, item[0].type = node.id, code
+    item[0].coords, item[0].ncoords = coordinates, #node.coordinates
     for index = 1, 4 do
-        item[0].fill[index - 1] = description.fill[index]
-        item[0].outline[index - 1] = description.outline[index]
+        item[0].fill[index - 1] = node.paint.fill[index]
+        item[0].outline[index - 1] = node.paint.outline[index]
     end
-    for _, field in ipairs { "width", "radius", "size", "start", "extent", "text", "anchor",
-        "text_flags", "family" } do item[0][field] = description[field] end
-    item[0].hidden = description.hidden and 1 or 0
-    item[0].fit, item[0].frame = Media.fit_code description.fit, description.frame
-    if description.image then item[0].imbuf = Handles.get(description.image, "image", owner) end
-    if description.video then item[0].video = Handles.get(description.video, "video", owner) end
-    if description.clip then
+    item[0].width = node.paint.width
+    item[0].hidden = node.paint.hidden and 1 or 0
+    if node.paint.clip then
         item[0].clip_on = 1
-        for index = 1, 4 do item[0].clip[index - 1] = description.clip[index] end
+        for index = 1, 4 do item[0].clip[index - 1] = node.paint.clip[index] end
     end
-    if description.source then item[0].src = description.source end
-    if description.rgba then
-        item[0].rgba = ffi.cast("const unsigned char *", description.rgba)
-        item[0].iw, item[0].ih = description.image_width, description.image_height
+    return { shape = node, .item, .coordinates }
+end
+local primitive = do(code)
+    return do(node, recurse, owner) return lower_common(node, code) end
+end
+local Lowering = define
+    Rectangle = primitive 0
+    Oval = primitive 1
+    Line = primitive 2
+    Polygon = primitive 3
+    Text = do(node, recurse, owner)
+        local lowered = lower_common(node, 4)
+        local item = lowered.item[0]
+        item.text, item.family = node.text, node.font.family
+        item.size, item.text_flags, item.anchor = node.font.size, node.font.flags, node.anchor
+        return lowered
     end
-    return { .description, .item, .coordinates }
+    Arc = do(node, recurse, owner)
+        local lowered = lower_common(node, 5)
+        lowered.item[0].start, lowered.item[0].extent = node.start, node.extent
+        return lowered
+    end
+    Image = do(node, recurse, owner)
+        local lowered = lower_common(node, 6)
+        local item = lowered.item[0]
+        item.fit, item.frame = Media.fit_code node.fit, node.frame
+        node.source with
+            path = do(path) item.src = path end
+            image = do(image) item.imbuf = Handles.get(image, "image", owner) end
+            video = do(video) item.video = Handles.get(video, "video", owner) end
+            pixels = do(pixels)
+                item.rgba = ffi.cast("const unsigned char *", pixels.bytes)
+                item.iw, item.ih = pixels.width, pixels.height
+            end
+        end
+        return lowered
+    end
+    RoundRectangle = do(node, recurse, owner)
+        local lowered = lower_common(node, 7)
+        lowered.item[0].radius = node.radius
+        return lowered
+    end
+end
+local lower = Language.Shape.pass "lower a canvas shape to retained native storage" with ..Lowering end
+local marshal = do(description, owner)
+    return { ..lower(Language.read description, owner), .description }
 end
 
 -- Own the installed list and all native-borrowed strings; public indexes are one-based.
@@ -223,7 +260,9 @@ local for_control = do(record)
     end
     local count = do()
         owner.check "canvas count"
-        return #installed
+        local count = tonumber(Native.BK_canvas_count node)
+        assert(count == #installed, "native canvas changed outside its managed owner")
+        return count
     end
     -- The ledger keeps the captures even if the caller discards every canvas capability.
     owner.defer do()

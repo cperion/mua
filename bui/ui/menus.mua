@@ -1,0 +1,270 @@
+local ffi = require "ffi"
+local Scope = require "bui.ui.scope"
+local Check = require "bui.ui.check"
+local Descriptions = require "bui.ui.menu_descriptions"
+local Layout = require "bui.ui.layout"
+
+if jit then jit.off(true, true) end
+
+local describe = Descriptions.describe
+local menu = Descriptions.menu
+
+local action_callbacks = meta { mode = "k" } {}
+local action_callback = do(Application)
+    if not action_callbacks[Application] then
+        action_callbacks[Application] = Application.callback("void (*)(void *)", do(token)
+                local action = Application.resolve token
+                if action then Application.post(action.owner, action.body) end
+            end)
+        Application.owner.defer do() action_callbacks[Application] = nil end
+    end
+    return action_callbacks[Application]
+end
+
+-- Lowering captures one installation's registration owner and retained storage.
+-- Each nested list owns its output array; the destination slot is inherited by a handler.
+local marshal = do(Application, owner, descriptions, retained)
+    local appearance = do(node, specification)
+        specification.text, specification.shortcut = node.caption, node.shortcut
+        specification.enabled = node.enabled and 1 or 0
+        specification.checked = node.checked == nil and -1 or (node.checked and 1 or 0)
+        specification.icon = node.icon == "" and 0 or Application.native.BK_icon_id node.icon
+        assert(node.icon == "" or specification.icon > 0, "unknown menu icon")
+    end
+    local lower_entries = do(lower, entries)
+        local specifications = ffi.new("BKMenuSpec[?]", math.max(1, #entries))
+        retained[#retained + 1] = specifications
+        for index, entry in ipairs entries do lower(entry, specifications[index - 1]) end
+        return specifications
+    end
+    local Lowering = define
+        Command = do(node, recurse, specification)
+            appearance(node, specification)
+            specification.fn = action_callback Application
+            specification.data = Application.register(owner, { .owner, body = node.action })
+        end
+        Submenu = do(node, recurse, specification)
+            appearance(node, specification)
+            specification.sub = lower_entries(recurse, node.children)
+            specification.nsub = #node.children
+        end
+        Separator = do(node, recurse, specification)
+            specification.text = "-"
+        end
+    end
+    local lower = Descriptions.Entry.pass "lower a menu to native specifications" with ..Lowering end
+    return lower_entries(lower, descriptions)
+end
+
+-- A menu button owns its action registrations independently of native popup copies.
+local for_control = do(record)
+    if record.kind ~= "menubutton" then return {} end
+    local Native, owner, Application = record.native, record.owner, record.application
+    local installed
+    local menu = do(items)
+        owner.mutate "install menu"
+        local descriptions = describe items
+        return Scope.prepare(owner, do()
+                local lifetime = owner.child "menu actions"
+                local retained = { descriptions }
+                local specifications = marshal(Application, lifetime, descriptions, retained)
+                lifetime.defer do()
+                    if installed == lifetime then
+                        Native.BK_menubutton_set_items(record.node, nil, 0)
+                        installed = nil
+                    end
+                    Native.BK_close_popups record.window.context
+                end
+                owner.mutate "publish menu"
+                Native.BK_menubutton_set_items(record.node, specifications, #descriptions)
+                local previous = installed
+                installed = lifetime
+                lifetime.activate
+                if previous then previous.close end
+                return lifetime.close
+            end)
+    end
+    return define .menu end
+end
+
+local canonical_key = do(combination)
+    Check.string(combination, "key combination")
+    assert(#combination > 0 and combination:sub(1, 1) ~= "+" and combination:sub(-1) ~= "+"
+        and not combination:find("++", 1, true) and not combination:find "%s",
+        "invalid key combination")
+    local modifiers, key = {}, nil
+    for part in combination:lower():gmatch "[^+]+" do
+        if part == "ctrl" or part == "shift" or part == "alt" then
+            assert(not key and not modifiers[part], "invalid key combination")
+            modifiers[part] = true
+        else
+            assert(not key and #part <= 31, "invalid key combination")
+            key = part
+        end
+    end
+    assert(key, "key combination needs a keysym")
+    local parts = {}
+    for _, name in ipairs { "ctrl", "shift", "alt" } do
+        if modifiers[name] then parts[#parts + 1] = name end
+    end
+    parts[#parts + 1] = key
+    return table.concat(parts, "+")
+end
+
+-- Build a key map independently of its context's finite native reservation budget.
+local keymap = do(body: Function): Table
+    local bindings, active = {}, true
+    local bind = do(combination)
+        assert(active, "key map builder has ended")
+        local key = canonical_key combination
+        return do(action)
+            assert(active, "key map builder has ended")
+            assert(not bindings[key], "duplicate key combination")
+            bindings[key] = Check.callable(action, "key action")
+        end
+    end
+    local succeeded, problem = pcall(body, define .bind end)
+    active = false
+    if not succeeded then error(problem, 0) end
+    return bindings
+end
+
+-- Context reservations persist until context completion: BUI has no native unbind operation.
+local for_surface = do(Application, window)
+    local Native, owner = Application.native, window.owner
+    local opened
+    local close_popups = do()
+        owner.mutate "close popups"
+        if opened then opened.close end
+        Native.BK_close_popups window.context
+    end
+    local popup = do(items, options, publish)
+        owner.mutate "open menu"
+        options = Check.default(options, {})
+        Check.keys(options, { title = true, x = true, y = true }, "menu placement")
+        local title = Check.string(Check.default(options.title, ""), "menu title")
+        local horizontal = Check.integer(Check.default(options.x, 0), "menu x")
+        local vertical = Check.integer(Check.default(options.y, 0), "menu y")
+        local descriptions = describe items
+        return Scope.prepare(owner, do()
+                local lifetime = owner.child "popup actions"
+                local retained = { descriptions }
+                local specifications = marshal(Application, lifetime, descriptions, retained)
+                owner.mutate "publish popup"
+                close_popups
+                publish(specifications, #descriptions, title, horizontal, vertical)
+                opened = lifetime
+                lifetime.defer do()
+                    if opened == lifetime then
+                        Native.BK_close_popups window.context
+                        opened = nil
+                    end
+                end
+                lifetime.activate
+                return lifetime.close
+            end)
+    end
+    local open_menu = do(items, options)
+        return popup(items, options, do(specifications, count, title, horizontal, vertical)
+                Native.BK_open_menu(window.context,
+                    nil, specifications, count, title, horizontal, vertical)
+            end)
+    end
+    local open_pie = do(items, options)
+        Check.array(items, "pie menu")
+        assert(#items <= 8, "a pie menu admits at most eight items")
+        return popup(items, options, do(specifications, count, title, horizontal, vertical)
+                Native.BK_set_pointer(window.context, horizontal, vertical)
+                Native.BK_open_pie(window.context, specifications, count, title)
+            end)
+    end
+    local reservations, count = {}, 0
+    local bind_keys = do(bindings)
+        owner.mutate "bind keys"
+        Check.table(bindings, "key map")
+        local copied, added = {}, 0
+        for combination, action in pairs bindings do
+            local key = canonical_key combination
+            assert(not copied[key], "duplicate key combination")
+            copied[key] = Check.callable(action, "key action")
+            if not reservations[key] then added += 1 end
+        end
+        assert(count + added <= 64, "native shortcut reservations exhausted")
+        return Scope.prepare(owner, do()
+                local connection = owner.child "key map"
+                local assigned = {}
+                connection.defer do()
+                    for reservation, action in pairs assigned do
+                        if reservation.action == action then reservation.action = nil end
+                    end
+                end
+                for key, body in pairs copied do
+                    local reservation = reservations[key]
+                    if not reservation then
+                        reservation = { shortcut = true }
+                        local token = Application.register(owner, reservation)
+                        Native.BK_bind(window.context, key, token)
+                        reservations[key], count = reservation, count + 1
+                    end
+                    local action = { owner = connection, .body }
+                    reservation.action, assigned[reservation] = action, action
+                end
+                connection.activate
+                return connection.close
+            end)
+    end
+    local popup_rows = do()
+        owner.check "popup rows"
+        local popups = {}
+        for index = 0, Native.BK_popup_count window.context - 1 do
+            local pointer = Native.BK_popup(window.context, index)
+            local rows = {}
+            for row = 0, Native.BK_menu_row_count pointer - 1 do
+                local bounds = ffi.new "int[4]"
+                Native.BK_menu_row_rect(pointer, row, bounds)
+                rows[#rows + 1] = with
+                    text = ffi.string(Native.BK_menu_row_text(pointer, row))
+                    rectangle = { x = tonumber bounds[0], y = tonumber bounds[1],
+                        width = tonumber bounds[2], height = tonumber bounds[3] }
+                end
+            end
+            local kind = ffi.string(Native.BK_node_type pointer)
+            local owner = Native.BK_popup_owner(window.context, index)
+            local parts = {}
+            if kind == "picker" then
+                for _, name in ipairs { "area",
+                    "strip", "tabs", "slider0", "slider1", "slider2", "alpha", "hex", "dropper" } do
+                    local part = Native.BK_picker_part(pointer, name)
+                    if part ~= nil then parts[name] = Layout.node_snapshot(Native, part) end
+                end
+            end
+            popups[#popups + 1] = { .kind, .rows, .parts,
+                owner = owner ~= nil and Application.protocols.selection.selected(Layout.node_snapshot(Native,
+                        owner))
+                or Application.protocols.selection.empty() }
+        end
+        return popups
+    end
+    return define
+        .open_menu
+        .open_pie
+        .close_popups
+        .bind_keys
+        .popup_rows
+    end
+end
+
+-- BK_EV_CALL can have a NULL node: shortcut lookup precedes ordinary node dispatch.
+local dispatch = do(Boundary, Delivery, reference)
+    local reservation = Boundary.resolve reference
+    local action = reservation and reservation.shortcut and reservation.action
+    if action then Delivery.post(action.owner, action.body) end
+end
+
+return define
+    .menu
+    .keymap
+    .for_control
+    .for_surface
+    .dispatch
+end

@@ -86,6 +86,13 @@ if(BUILD_TESTING)
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 60)
   add_test(NAME bui_ui_ownership COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
     "${MUA_SOURCE_DIR}/tests/bui_ui_ownership.mua")
+  add_test(NAME bui_ui_menu_descriptions COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+    "${MUA_SOURCE_DIR}/tests/bui_ui_menu_descriptions.mua")
+  foreach(activity_test bui_ui_collections bui_ui_graphics bui_ui_menus bui_ui_services bui_ui_dialogs bui_ui_integration bui_ui_graphs bui_ui_canvas_language bui_ui_controls bui_ui_coverage)
+    add_test(NAME ${activity_test} COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+      "${MUA_SOURCE_DIR}/tests/${activity_test}.mua" "$<TARGET_FILE:mua_bui>")
+    set_tests_properties(${activity_test} PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
+  endforeach()
   add_test(NAME bui_ui COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
     "$<TARGET_FILE:mua_bui>")
   add_test(NAME bui_ui_media COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
@@ -96,12 +103,23 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:mua_bui>" "${BUI_SOURCE_DIR}/tests/videos/clip.mp4" --require-video)
     set_tests_properties(bui_ui_video PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   endif()
+  add_test(NAME bui_ui_workbench_headless COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+    "${MUA_SOURCE_DIR}/examples/bui/workbench.mua" "$<TARGET_FILE:mua_bui>" --headless)
+  set_tests_properties(bui_ui_workbench_headless PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   add_test(NAME bui_ui_headless_example COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
     "${MUA_SOURCE_DIR}/examples/bui/activities.mua" "$<TARGET_FILE:mua_bui>" --headless)
-  set_tests_properties(bui_ui_ownership bui_ui bui_ui_media bui_ui_headless_example PROPERTIES
+  set_tests_properties(bui_ui_ownership bui_ui_menu_descriptions bui_ui bui_ui_media bui_ui_headless_example PROPERTIES
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   option(BUI_FFI_TEST_WINDOW "Also test a real native window (requires a desktop)" OFF)
   if(BUI_FFI_TEST_WINDOW)
+    add_test(NAME bui_ui_workbench COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+      "${MUA_SOURCE_DIR}/examples/bui/workbench.mua" "$<TARGET_FILE:mua_bui>" --smoke)
+    set_tests_properties(bui_ui_workbench PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
+    foreach(activity_test bui_ui_services bui_ui_dialogs)
+      add_test(NAME ${activity_test}_window COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+        "${MUA_SOURCE_DIR}/tests/${activity_test}.mua" "$<TARGET_FILE:mua_bui>" --window)
+      set_tests_properties(${activity_test}_window PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
+    endforeach()
     add_test(NAME bui_ui_window COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
       "$<TARGET_FILE:mua_bui>" --window)
     add_test(NAME bui_ui_example COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"

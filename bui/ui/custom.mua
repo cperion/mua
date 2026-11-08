@@ -1,0 +1,161 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Scope = require "bui.ui.scope"
+local Raster = require "bui.ui.raster"
+
+if jit then jit.off(true, true) end
+
+local event_names = { "pressed", "released", "moved", "left", "wheel", "key_pressed",
+    "key_released", "focused", "blurred" }
+local cursors = { default = 0, horizontal = 1, vertical = 2, text = 3, crosshair = 4,
+    hand = 5,
+    move = 6, hidden = 7, northeast = 8, northwest = 9, forbidden = 10, wait = 11, progress = 12 }
+local pools = meta { mode = "k" } {}
+local packed = do(..values) = values
+
+local service = do(registration, body)
+    local active = true
+    local record = registration.record
+    local check = do()
+        record.owner.check "custom service"
+        assert(active and registration.owner.is_alive(), "custom service activity has ended")
+    end
+    local request_frame = do(milliseconds)
+        check
+        record.native.BK_custom_request_frame(record.node,
+            Check.integer(Check.default(milliseconds, 0), "frame delay", 0, 2147483647))
+    end
+    local cursor = do(name)
+        check
+        local code = assert(cursors[name], "unknown cursor")
+        record.native.BK_custom_set_cursor(record.node, code)
+    end
+    local invalidate = do() check; record.native.BK_node_invalidate record.node end
+    local focused = do() check; return record.native.BK_custom_has_focus record.node ~= 0 end
+    local post = do(notification, payload)
+        check
+        Check.callable(notification, "custom notification")
+        record.application.post(registration.owner, notification, payload)
+    end
+    local results = packed(pcall(body,
+            define
+                .request_frame
+                .cursor
+                .focused
+                .post
+                .invalidate
+            end))
+    active = false
+    if not results[1] then error(results[2], 0) end
+    return unpack(results, 2, results.n)
+end
+
+local callbacks = do(Application)
+    if pools[Application] then return pools[Application] end
+    local event = Application.callback("int (*)(void *, BKNode *, const BKCustomEvent *)",
+        do(token, _, native_event)
+            local registration = Application.resolve token
+            if not registration or not registration.event then return 0 end
+            local event = with
+                kind = assert(event_names[native_event.type], "unknown custom event")
+                x = tonumber native_event.x
+                y = tonumber native_event.y
+                button = tonumber native_event.button
+                modifiers = tonumber native_event.mods
+                clicks = tonumber native_event.clicks
+                horizontal = tonumber native_event.wheel_x
+                vertical = tonumber native_event.wheel_y
+                text = native_event.text ~= nil and ffi.string native_event.text or ""
+                keysym = native_event.keysym ~= nil and ffi.string native_event.keysym or ""
+            end
+            return service(registration, do(Services)
+                    return Application.protocols.consume_input(registration.event(event, Services)) and 1 or 0
+                end)
+        end, 0, "service")
+    local frame = Application.callback("void (*)(void *, BKNode *)", do(token)
+            local registration = Application.resolve token
+            if registration then
+                service(registration, do(Services)
+                        local again = registration.frame and Application.protocols.continue_frame(registration.frame Services)
+                        Services.invalidate
+                        if again then Services.request_frame end
+                    end)
+            end
+        end, nil, "frame")
+    local draw = Application.callback("void (*)(void *, BKNode *, BuiRaster *, const int *)",
+        do(token, _, pointer, bounds)
+            local registration = Application.resolve token
+            if registration and registration.draw then
+                local rectangle = { x = tonumber bounds[0], y = tonumber bounds[1],
+                    width = tonumber bounds[2], height = tonumber bounds[3] }
+                Raster.borrow(Application, registration.owner, pointer, do(Paint)
+                        registration.draw(Paint, rectangle)
+                    end)
+            end
+        end, nil, "draw")
+    local Callbacks = define .event, .frame, .draw end
+    pools[Application] = Callbacks
+    Application.owner.defer do() pools[Application] = nil end
+    return Callbacks
+end
+
+-- Replace a custom control's synchronous services and drawing adapters as one owned binding.
+local for_control = do(record)
+    if record.kind ~= "custom" then return {} end
+    local installed
+    local behavior = do(Services)
+        record.owner.mutate "install custom behavior"
+        Check.keys(Services,
+            { event = true, frame = true, draw = true, width = true, height = true },
+            "custom behavior")
+        local copied = {}
+        for _, name in ipairs { "event", "frame", "draw" } do
+            if Services[name] ~= nil then copied[name] = Check.callable(Services[name], name) end
+        end
+        local width = Check.integer(Check.default(Services.width, 160),
+            "custom natural width", 1, 32768)
+        local height = Check.integer(Check.default(Services.height, 160),
+            "custom natural height", 1, 32768)
+        return Scope.prepare(record.owner, do()
+                local lifetime = record.owner.child "custom behavior"
+                local registration = { ..copied, owner = lifetime, .record }
+                local token = record.application.register(lifetime, registration)
+                local Callbacks = callbacks record.application
+                local class = ffi.new "BKCustomClass[1]"
+                class[0].event,
+                class[0].frame, class[0].draw = Callbacks.event, Callbacks.frame, Callbacks.draw
+                class[0].natural_w, class[0].natural_h = width, height
+                lifetime.defer do()
+                    if installed == lifetime then
+                        record.native.BK_custom_set(record.node, nil, nil)
+                        installed = nil
+                    end
+                end
+                record.owner.mutate "publish custom behavior"
+                assert(record.native.BK_custom_set(record.node, class, token) == 1,
+                    "custom behavior refused")
+                local previous = installed
+                installed = lifetime
+                lifetime.activate
+                if previous then previous.close end
+                return lifetime.close
+            end)
+    end
+    local request_frame = do(milliseconds)
+        record.owner.mutate "request custom frame"
+        record.native.BK_custom_request_frame(record.node,
+            Check.integer(Check.default(milliseconds, 0), "frame delay", 0, 2147483647))
+    end
+    local focused = do()
+        record.owner.check "custom focus"
+        return record.native.BK_custom_has_focus record.node ~= 0
+    end
+    local cursor = do(name)
+        record.owner.mutate "custom cursor"
+        local code = assert(cursors[name], "unknown cursor")
+        record.native.BK_custom_set_cursor(record.node, code)
+    end
+    return define .behavior, .request_frame, .focused, .cursor end
+end
+
+return define .for_control end

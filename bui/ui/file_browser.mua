@@ -1,0 +1,45 @@
+local ffi = require "ffi"
+
+-- A browser is an ongoing choice; only accepted/cancelled states complete a dialog.
+local for_control = do(record)
+    if record.kind ~= "filebrowser" then return {} end
+    local Native, owner, node = record.native, record.owner, record.node
+    local result = do()
+        owner.check "file choice"
+        local state = Native.BK_get_num(node, "state")
+        local Choice = record.application.protocols.choice
+        if state == 0 then return Choice.browsing() end
+        if state < 0 then return Choice.cancelled() end
+        local paths = {}
+        for index = 0, Native.BK_strs_count(node, "result") - 1 do
+            paths[#paths + 1] = ffi.string(Native.BK_strs_get(node, "result", index))
+        end
+        return Choice.accepted paths
+    end
+    record.change_snapshot = result
+    record.event_snapshot = do(kind)
+        if kind == 16 then return "submitted", result() end
+    end
+    local command = do(key)
+        return do()
+            owner.mutate("file browser " .. key)
+            Native.BK_set_num(node, key, 1)
+            record.application.check_error
+        end
+    end
+    local location = do()
+        owner.check "file browser location"
+        return { directory = ffi.string(Native.BK_get_str(node, "directory")),
+            filename = ffi.string(Native.BK_get_str(node, "filename")),
+            search = ffi.string(Native.BK_get_str(node, "search")) }
+    end
+    return define
+        .result
+        .location
+        refresh = command "refresh"
+        execute = command "execute"
+        cancel = command "cancel"
+    end
+end
+
+return define .for_control end

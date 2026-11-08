@@ -1,0 +1,56 @@
+local Check = require "bui.ui.check"
+local packed = do(..values) = values
+
+local for_control = do(record, mount_header)
+    local Native, owner, node = record.native, record.owner, record.node
+    if record.kind == "panel" then
+        local header_active = false
+        local expanded = do() owner.check "panel expansion"; return Native.BK_get_num(node,
+                "collapsed") == 0 end
+        local expand = do(open)
+            owner.mutate "expand panel"
+            Native.BK_set_num(node, "collapsed", Check.boolean(open, "expanded") and 0 or 1)
+            record.application.check_error
+        end
+        local with_header = do(installer)
+            Check.callable(installer, "panel header installer")
+            return do(body)
+                owner.mutate "mount panel header"
+                Check.callable(body, "panel header body")
+                assert(not header_active, "panel header is already mounted")
+                header_active = true
+                local results = packed(pcall(mount_header, installer, body))
+                header_active = false
+                if not results[1] then error(results[2], 0) end
+                return unpack(results, 2, results.n)
+            end
+        end
+        record.change_snapshot = expanded
+        return define .expanded, .expand, .with_header end
+    end
+    if record.kind == "scrollbar" then
+        local range = do()
+            owner.check "scrollbar range"
+            return { first = tonumber(Native.BK_get_num(node, "first")),
+                last = tonumber(Native.BK_get_num(node, "last")) }
+        end
+        local set_range = do(first, last)
+            owner.mutate "set scrollbar range"
+            Check.number(first, "first fraction", 0, 1)
+            Check.number(last, "last fraction", first, 1)
+            Native.BK_set_num(node, "first", first)
+            Native.BK_set_num(node, "last", last)
+        end
+        record.event_snapshot = do(kind, reference, first, second)
+            if kind == 18 then
+                if first == 0 then return "scrolled", record.application.protocols.scrolling.moveto second end
+                if first == 1 then return "scrolled", record.application.protocols.scrolling.units second end
+                error "unknown native scroll operation"
+            end
+        end
+        return define .range, .set_range end
+    end
+    return {}
+end
+
+return define .for_control end

@@ -1,0 +1,137 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Scope = require "bui.ui.scope"
+local Handles = require "bui.ui.handles"
+
+local video_transfers = {}
+
+local pixels = do(source)
+    Check.keys(source,
+        { width = true, height = true, rgba = true, stride = true }, "texture pixels")
+    source = { ..source }
+    local width = Check.integer(source.width, "texture width", 1, 16384)
+    local height = Check.integer(source.height, "texture height", 1, 16384)
+    local stride = Check.integer(Check.default(source.stride, width * 4),
+        "texture stride", width * 4)
+    if source.rgba ~= nil then
+        assert(type source.rgba == "string" and #source.rgba >= (height - 1) * stride + width * 4,
+            "texture RGBA buffer is too small")
+    end
+    return width, height, stride, source.rgba
+end
+
+local acquire = do(Application, owner, source)
+    owner.mutate "acquire texture"
+    Check.table(source, "texture source")
+    source = { ..source }
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    local identifier = 0
+    local video
+    local same_integration = do(resource, kind)
+        local pointer = Handles.get(resource, kind)
+        assert(Scope.same_integration(owner, Handles.owner(resource, kind)),
+            "resource belongs to another application")
+        return pointer
+    end
+    if source.image ~= nil then
+        Check.keys(source, { image = true, frame = true }, "texture image")
+        local image = same_integration(source.image, "image")
+        local count = Native.BK_imbuf_size(image, nil, nil)
+        local frame = Check.integer(Check.default(source.frame, 1), "image frame", 1, count)
+        owner.mutate "copy image to texture"
+        identifier = Native.BK_imbuf_texture(image, frame - 1)
+    elseif source.video ~= nil then
+        Check.keys(source, { video = true }, "texture video")
+        video = source.video
+        local pointer = same_integration(video, "video")
+        local identity = tostring pointer
+        assert(not video_transfers[identity], "video already has a texture transfer owner")
+        local lease = {}
+        video_transfers[identity] = lease
+        local release = do()
+            if video_transfers[identity] == lease then video_transfers[identity] = nil end
+        end
+        owner.defer release
+        Handles.owner(video, "video").defer release
+        identifier = Native.BK_video_texture(pointer, 0, 0, 0)
+    else
+        local width, height, stride, rgba = pixels source
+        owner.mutate "publish texture pixels"
+        identifier = Native.BUI_texture_create(width, height, rgba, stride)
+    end
+    if identifier == 0 and not video then return Acquisition.unavailable "texture allocation failed" end
+    owner.defer do() if identifier > 0 then Native.BUI_texture_free identifier end end
+    local size = do()
+        owner.check "texture size"
+        local width, height = ffi.new "int[1]", ffi.new "int[1]"
+        if identifier == 0 or Native.BUI_texture_size(identifier, width, height) == 0 then
+            return Acquisition.unavailable "texture has no decoded frame yet"
+        end
+        return Acquisition.ready { width = tonumber width[0], height = tonumber height[0] }
+    end
+    local refresh = do()
+        owner.mutate "refresh texture"
+        assert(video, "only a video texture has a frame source")
+        identifier = Native.BK_video_texture(same_integration(video, "video"), identifier, 0, 0)
+        return size()
+    end
+    local update = do(horizontal, vertical, source)
+        owner.mutate "update texture"
+        assert(not video, "video textures are updated by refresh")
+        Check.integer(horizontal, "texture x", 0, 16384)
+        Check.integer(vertical, "texture y", 0, 16384)
+        local width, height, stride, rgba = pixels source
+        assert(rgba ~= nil, "texture update needs RGBA pixels")
+        owner.mutate "publish texture update"
+        assert(Native.BUI_texture_update(identifier,
+                horizontal, vertical, width, height, rgba, stride) ~= 0,
+            "texture update failed")
+    end
+    local copy_image = do(image, frame)
+        owner.mutate "update texture from image"
+        assert(not video, "video textures are updated by refresh")
+        local pointer = same_integration(image, "image")
+        local count = Native.BK_imbuf_size(pointer, nil, nil)
+        frame = Check.integer(Check.default(frame, 1), "image frame", 1, count)
+        local image_width, image_height = ffi.new "int[1]", ffi.new "int[1]"
+        local texture_width, texture_height = ffi.new "int[1]", ffi.new "int[1]"
+        Native.BK_imbuf_size(pointer, image_width, image_height)
+        Native.BUI_texture_size(identifier, texture_width, texture_height)
+        if image_width[0] == texture_width[0] and image_height[0] == texture_height[0] then
+            if Native.BK_imbuf_texture_update(pointer, frame - 1, identifier) == 0 then
+                return Acquisition.unavailable "image texture conversion failed"
+            end
+        else
+            local replacement = Native.BK_imbuf_texture(pointer, frame - 1)
+            if replacement == 0 then return Acquisition.unavailable "image texture allocation failed" end
+            Native.BUI_texture_free identifier
+            identifier = replacement
+        end
+        return Acquisition.ready(nil)
+    end
+    local Texture = define .size, .refresh, .update, .copy_image end
+    return Acquisition.ready(Handles.register(Texture, owner, "texture", || -> identifier))
+end
+
+-- Own copied pixel textures or one evolving video texture; handles never expose reusable IDs.
+local resources = do(Application, owner)
+    local acquire_texture = source -> Scope.prepare(owner,
+        || -> acquire(Application, owner, source))
+    local with_texture = do(source)
+        return do(body)
+            Check.callable(body, "texture body")
+            return Scope.with_owner(owner.child "texture") do(temporary)
+                return acquire(Application, temporary, source) with
+                    unavailable = Application.protocols.acquisition.unavailable
+                    ready = do(Texture)
+                        temporary.activate
+                        return Application.protocols.acquisition.ready(body Texture)
+                    end
+                end
+            end
+        end
+    end
+    return define .acquire_texture, .with_texture end
+end
+
+return define .resources end

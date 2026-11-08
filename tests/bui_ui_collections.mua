@@ -1,0 +1,145 @@
+local Ui = require "bui.ui"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "collection check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local selected = result -> result { selected = value -> value, empty = || -> nil }
+local original = { { id = "root", label = "Root", children = { { id = 7, label = "Child" } } } }
+local copied = Ui.forest original
+original[1].children[1].label = "changed outside"
+expect(copied[1].children[1].label == "Child")
+refuses(|| -> Ui.forest { { id = math.huge, label = "invalid" } }, "range")
+refuses(|| -> Ui.forest { { id = 1, label = "one" }, { id = 1, label = "two" } }, "duplicate")
+local cyclic = { id = "cycle", label = "Cycle" }
+cyclic.children = { cyclic }
+refuses(|| -> Ui.forest { cyclic }, "cyclic")
+local escaped_builder
+local menu_description = Ui.menu do(Menu)
+    escaped_builder = Menu
+    Menu.item { caption = "One", action = do() end }
+    Menu.separator
+    Menu.submenu { caption = "Nested" } do(Submenu)
+        Submenu.item { caption = "Child", action = do() end }
+    end
+end
+expect(#menu_description == 3 and menu_description[3].children[1].caption == "Child")
+refuses(escaped_builder.separator, "builder has ended")
+refuses(|| -> Ui.keymap do(Keys) Keys.bind "+a" do() end end, "invalid key")
+
+Ui.with_application Native do(Application)
+    Application.gpu_default false
+    Application.with_surface { width = 500, height = 500 } do(surface)
+        local tree, menu_button, popover, cancelled
+        local observations, actions = {}, 0
+        local action = do() actions += 1 end
+        surface.with_content do(place)
+            place.menu_bar {} do(bar)
+                menu_button = bar.menu_button "File"
+                menu_button.menu(Ui.menu do(Menu) Menu.item { caption = "Run", .action } end)
+            end
+            popover = place.popover { caption = "Details" } do(body)
+                body.column {} do(children) children.label "Owned popup body" end
+            end
+            tree = place.tree { height = 240 }
+            tree.replace_forest copied
+            tree.connect define
+                changed = value -> table.insert(observations, selected value)
+                expanded = value -> table.insert(observations, selected value)
+            end
+            cancelled = place.slot {}
+        end do()
+            surface.render
+            expect(#tree.tree_rows() == 2)
+            tree.select_item 7
+            expect(selected(tree.selection()).label == "Child")
+            tree.rename_item(7, "Renamed")
+            tree.item_values(7, { "column" })
+            tree.toggle_item(7, 32, true)
+            tree.mark_item(7, true)
+            local item = selected(tree.item 7)
+            expect(item.label == "Renamed" and item.values[1] == "column" and item.toggles[32] and item.marked)
+            tree.expand_item("root", false)
+            expect(#tree.tree_rows() == 1)
+            tree.expand_item("root", true)
+            refuses(|| -> tree.replace_forest { { id = 1, label = "Bad", icon = "NOT_AN_ICON" } },
+                "unknown tree icon")
+            expect(selected(tree.selection()).id == 7 and #tree.tree_rows() == 2)
+            local bounds = tree.tree_rows()[1].rectangle
+            surface.input.press(bounds.x + 2, bounds.y + 5, 0)
+            surface.input.release(bounds.x + 2, bounds.y + 5, 0)
+            expect(#observations == 0)
+            Application.pump
+            expect(#observations == 1 and observations[1].id == "root" and not observations[1].expanded)
+
+            local previous = surface.bind_keys { ["SHIFT+CTRL+K"] = action }
+            expect(surface.input.key("", "k", 3))
+            expect(actions == 0)
+            Application.pump
+            expect(actions == 1)
+            local replacement = surface.bind_keys {["ctrl+shift+k"] = do() actions += 10 end }
+            previous
+            surface.input.key("", "k", 3)
+            Application.pump
+            expect(actions == 11)
+            surface.input.key("", "k", 3)
+            replacement
+            Application.pump
+            expect(actions == 11)
+            expect(surface.input.key("", "k", 3))  -- reservation remains consumed after disconnect
+            refuses(|| -> surface.bind_keys { ["+bad"] = action }, "invalid key")
+            refuses(|| -> surface.bind_keys { ["a"] = action,["A"] = action }, "duplicate key")
+            local bindings = {}
+            for index = 1, 63 do bindings["F" .. index] = action end
+            surface.bind_keys bindings
+            refuses(|| -> surface.bind_keys { ["new-key"] = action }, "reservations exhausted")
+            surface.bind_keys { ["CTRL+SHIFT+K"] = action }
+
+            local click = do(rectangle)
+                surface.input.press(rectangle.x + rectangle.width / 2,
+                    rectangle.y + rectangle.height / 2, 0)
+                surface.input.release(rectangle.x + rectangle.width / 2,
+                    rectangle.y + rectangle.height / 2, 0)
+            end
+            surface.open_menu(Ui.menu do(Menu) Menu.item { caption = "Run", .action } end,
+                { x = 30, y = 30 })
+            surface.render
+            local popup = surface.popup_rows()[1]
+            expect(popup.kind == "menu" and popup.rows[1].text == "Run")
+            click popup.rows[1].rectangle
+            expect(actions == 11)
+            Application.pump
+            expect(actions == 12)
+            surface.open_pie(Ui.menu do(Menu) Menu.item { caption = "Pie", .action } end,
+                { x = 200, y = 200 })
+            surface.render
+            expect(surface.popup_rows()[1].kind == "pie")
+            surface.close_popups
+            click(menu_button.rectangle())
+            surface.render
+            expect(surface.popup_rows()[1].rows[1].text == "Run")
+            surface.close_popups
+            click(popover.rectangle())
+            surface.render
+            expect(surface.popup_rows()[1].kind == "popover_panel")
+            surface.close_popups
+
+            local retired
+            cancelled.replace do(place)
+                retired = place.tree {}
+                retired.replace_forest copied
+            end
+            cancelled.clear
+            refuses(retired.selection, "activity has ended")
+            tree.replace_forest {}
+            expect(#tree.tree_rows() == 0 and selected(tree.selection()) == nil)
+        end
+        expect(Application.statistics().registered_nodes == 0)
+    end { opened() = nil, unavailable = reason -> error reason }
+end
+print("BUI collections: " .. checks .. " checks passed")

@@ -1,0 +1,192 @@
+local Ui = require "bui.ui"
+local Widgets = require "bui.ui.widgets"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+if jit then jit.off(true, true) end
+local spans_written
+local Watched = meta { index = do(_, name) return Native[name] end } with
+    BK_textarea_set_spans = do(node, spans, count)
+        spans_written = count
+        return Native.BK_textarea_set_spans(node, spans, count)
+    end
+end
+local checks, exercised = 0, 0
+local expect = do(condition, message)
+    checks += 1
+    assert(condition, message or ("control check " .. checks))
+end
+local values = { number = 1, integer = 1, fraction = 0.25, boolean = true, string = "kept value",
+    color = { 0.2, 0.4, 0.6, 1 }, normal = { -1, 0, 0 } }
+Ui.with_application Watched do(Application)
+    Application.gpu_default false
+    local probe = Native.BK_node_new "filebrowser"
+    local has_browser = probe ~= nil
+    if has_browser then Native.BK_node_free probe end
+    Application.with_surface { width = 400, height = 300 } do(surface)
+        for name, descriptor in pairs Widgets.catalog do
+            if name ~= "graph_node" and name ~= "node_editor" and (name ~= "file_browser" or has_browser) then
+                local expired, delivered
+                surface.with_content do(place)
+                    local options = { caption = "Initial caption", width = 200, height = 100 }
+                    if descriptor.value_type then options.value = values[descriptor.value_type] end
+                    if name == "dropdown" or name == "enum" or name == "list" or name == "grid_view" then
+                        options.items = { "First", "Second", "Third" }
+                    end
+                    if name == "file_browser" then options.directory = "." end
+                    local control
+                    if descriptor.container then
+                        control = place[name](options) do(children)
+                            children.label "First child"
+                            children.label "Second child"
+                        end
+                    elseif name == "button" then control = place.button options do() end
+                    else control = place[name](options) end
+                    expired = control
+                    control.connect { changed = do(value) delivered = value end }
+                    return control
+                end do(control)
+                    exercised += 1
+                    control.display "Changed caption"
+                    expect(control.caption() == "Changed caption", name .. " caption")
+                    if descriptor.value_type then
+                        local expected = values[descriptor.value_type]
+                        local actual = control.current()
+                        if type expected == "table" then
+                            expect(math.abs(actual[1] - expected[1]) < 0.0001,
+                                name .. " vector value")
+                        else expect(actual == expected, name .. " caption changed the value") end
+                        if descriptor.value_type == "integer" then
+                            expect(not pcall(control.set, 0.5),
+                                name .. " accepted a fractional index")
+                        end
+                        control.change expected
+                        expect(delivered == nil, name .. " delivered synchronously")
+                        Application.pump
+                        expect(delivered ~= nil, name .. " dropped notification")
+                    end
+                    control.configure { visible = false, enabled = false }
+                    control.configure { visible = true, enabled = true }
+                    surface.render
+                    local box = control.rectangle()
+                    expect(box.width >= 0 and box.height >= 0, name .. " geometry")
+                    expect(control.inspect().kind == descriptor.kind)
+                    if name == "ramp" then
+                        local values = { { color = { 1, 0, 0, 1 } },
+                            { position = 1, color = { 0, 0, 1, 1 } } }
+                        setmetatable(values[1], { __index = do(_, key)
+                                    if key == "position" then
+                                        values[3] = { position = 0.5, color = { 0, 1, 0, 1 } }
+                                        return 0
+                                    end
+                                end })
+                        control.set_stops values
+                        expect(#control.stops() == 2 and #values == 3,
+                            "ramp changed its native allocation count")
+                    end
+                    if name == "textarea" then
+                        local spans = { { start = 0, stop = 1 } }
+                        local reads = 0
+                        setmetatable(spans[1], { __index = do(_, key)
+                                    if key == "foreground" then
+                                        reads += 1
+                                        spans[2] = { start = 1, stop = 2 }
+                                        return { 1, 0, 0, 1 }
+                                    end
+                                end })
+                        control.set_spans spans
+                        expect(reads == 1 and spans_written == 1 and #spans == 2)
+                        local invalidated = meta with
+                            index = do(_, key)
+                                if key == "foreground" then control.set "x"; return { 1, 0, 0, 1 } end
+                            end
+                        end { start = 3, stop = 4 }
+                        expect(not pcall(control.set_spans, { invalidated }))
+                    end
+                    if name == "panel" or name == "scroll" or name == "popover" then
+                        expect(control.children()[1].children == 2, name .. " body routing")
+                    end
+                    if name == "panel" then
+                        control.expand false
+                        expect(not control.expanded())
+                        control.expand true
+                        local header
+                        control.with_header do(place) return place.label "Header accessory" end do(label)
+                            header = label
+                            expect(#control.children() == 2)
+                        end
+                        expect(#control.children() == 1)
+                        expect(not pcall header.caption)
+                    end
+                    if name == "scrollbar" then
+                        control.set_range(0.2, 0.4)
+                        expect(control.range().first == 0.2 and control.range().last == 0.4)
+                        local units = 0
+                        control.connect with
+                            scrolled = do(request)
+                                request { moveto() = nil, units = do(value) units = value end }
+                            end
+                        end
+                        surface.input.wheel(box.x + 8, box.y + 8, 1, 0)
+                        expect(units == 0)
+                        Application.pump
+                        expect(units == -1)
+                    end
+                    control.invalidate
+                    surface.render
+                end
+                local succeeded, problem = pcall expired.caption
+                expect(not succeeded and tostring(problem):find("activity has ended", 1, true))
+            end
+        end
+        surface.with_content do(place)
+            local first = place.number { value = 1, width = 120 }
+            local second = place.number { value = 2, width = 120 }
+            local disconnect, Group = place.link_fields { first, second }
+            return { .first, .second, .disconnect, .Group }
+        end do(Bundle)
+            local changes = 0
+            Bundle.first.connect { changed = do() changes += 1 end }
+            Bundle.second.connect { changed = do() changes += 1 end }
+            Bundle.Group.set_values { 2, 3 }
+            expect(changes == 0 and Bundle.Group.values()[2] == 3)
+            Bundle.Group.copy
+            expect(surface.clipboard.read() { ready = text -> text == "[2, 3]", unavailable() = false })
+            surface.clipboard.write "[3, 4]"
+            expect(Bundle.Group.paste() { ready() = true, unavailable() = false })
+            expect(changes == 0 and Bundle.first.current() == 3 and Bundle.second.current() == 4)
+            Application.pump
+            expect(changes == 2)
+            surface.clipboard.write "[9, 10, invalid]"
+            expect(Bundle.Group.paste() { ready() = false, unavailable() = true })
+            expect(Bundle.first.current() == 3 and Bundle.second.current() == 4)
+            surface.render
+            local box = Bundle.first.rectangle()
+            local x, y = box.x + box.width / 2, box.y + box.height / 2
+            surface.input.press(x, y, 4)
+            surface.input.motion(x + 20, y, 4)
+            surface.input.release(x + 20, y, 4)
+            expect(Bundle.first.current() ~= 3)
+            expect(math.abs(Bundle.second.current() - Bundle.first.current() - 1) < 1e-9)
+            Bundle.disconnect
+            expect(not pcall Bundle.Group.values)
+        end
+        -- Real native activation, in addition to the shared programmatic value protocol.
+        surface.with_content do(place) return place.checkbox with
+            caption = "Native toggle"
+            value = false
+        end end do(toggle)
+            local notifications = 0
+            toggle.connect { changed = do(value) expect value; notifications += 1 end }
+            surface.render
+            local box = toggle.rectangle()
+            surface.input.press(box.x + 8, box.y + box.height / 2, 0)
+            surface.input.release(box.x + 8, box.y + box.height / 2, 0)
+            expect(toggle.current() and notifications == 0)
+            Application.pump
+            expect(notifications == 1)
+        end
+    end with
+        opened() = nil
+        unavailable = reason -> error reason
+    end
+end
+print("BUI controls: " .. checks .. " checks passed across " .. exercised .. " catalog kinds")

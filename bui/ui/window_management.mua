@@ -1,0 +1,97 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+-- A request is not a promise that a window manager honored it. Unsupported host requests
+-- are explicit outcomes; in particular Wayland has no global positioning or focus request here.
+local for_surface = do(Application, window)
+    local Native, owner, Acquisition = Application.native, window.owner, Application.protocols.acquisition
+    local query = do(key)
+        owner.check "window manager query"
+        if not window.pointer then return Acquisition.unavailable "not a native window" end
+        local first, second = ffi.new "double[1]", ffi.new "double[1]"
+        if Native.BK_window_wm_get(window.pointer, key, first, second) == 0 then
+            return Acquisition.unavailable("window host cannot query " .. key)
+        end
+        return Acquisition.ready { first = tonumber first[0], second = tonumber second[0] }
+    end
+    local backend = do()
+        if ffi.os == "Windows" then return "windows" end
+        return query "pos" { ready() = "x11", unavailable() = "wayland" }
+    end
+    local supported = {
+        windows = { pos = true, minsize = true, maxsize = true, resizable = true, state = true,
+            lift = true,
+            lower = true,
+            focus = true, topmost = true, alpha = true, override = true, disabled = true },
+        x11 = { pos = true,
+            minsize = true,
+            maxsize = true, resizable = true, lift = true, lower = true, focus = true },
+        wayland = { minsize = true, maxsize = true, state = true },
+    }
+    local request = do(key, first, second)
+        owner.mutate "window manager request"
+        if not window.pointer then return Acquisition.unavailable "not a native window" end
+        local host = backend()
+        if not supported[host][key] or (host == "wayland" and key == "state" and first == 2) then
+            return Acquisition.unavailable("window host does not support " .. key)
+        end
+        Native.BK_window_wm(window.pointer, key, first, second or 0)
+        Application.check_error
+        return Acquisition.ready(nil)
+    end
+    local size_request = do(key)
+        return do(width, height)
+            return request(key,
+                Check.integer(width, "window width", 1, 32768),
+                Check.integer(height, "window height", 1, 32768))
+        end
+    end
+    local flag_request = do(key)
+        return do(enabled) return request(key, Check.boolean(enabled, key) and 1 or 0) end
+    end
+    local states = { normal = 0, minimized = 1, hidden = 2, maximized = 3 }
+    local manager = define
+        position = do() return query "pos" end
+        screen = do() return query "screen" end
+        pointer = do() return query "pointer" end
+        scale = do() return query "scale" end
+        state = do() return query "state" end
+        move = do(x, y) return request("pos",
+                Check.integer(x, "window x"), Check.integer(y, "window y")) end
+        minimum = size_request "minsize"
+        maximum = size_request "maxsize"
+        resizable = do(horizontal, vertical)
+            return request("resizable", Check.boolean(horizontal, "horizontal resize") and 1 or 0,
+                Check.boolean(vertical, "vertical resize") and 1 or 0)
+        end
+        set_state = do(name)
+            local code = assert(states[name], "unknown window state")
+            return request("state", code)
+        end
+        raise = do() return request("lift", 0) end
+        lower = do() return request("lower", 0) end
+        focus = do() return request("focus", 0) end
+        topmost = flag_request "topmost"
+        borderless = flag_request "override"
+        disabled = flag_request "disabled"
+        opacity = do(value) return request("alpha", Check.number(value, "opacity", 0, 1)) end
+    end
+    local gpu = do(enabled)
+        owner.mutate "window GPU"
+        Check.boolean(enabled, "window GPU")
+        if not window.pointer then return Acquisition.unavailable "not a native window" end
+        Native.BK_window_set_gpu(window.pointer, enabled and 1 or 0)
+        return Acquisition.ready(nil)
+    end
+    local gpu_state = do()
+        owner.check "window GPU state"
+        if not window.pointer then return Application.protocols.gpu.software() end
+        local raster = Native.BK_window_raster window.pointer
+        if Native.BUI_raster_gpu_pending raster ~= 0 then return Application.protocols.gpu.starting() end
+        if Native.BK_window_gpu window.pointer ~= 0 then return Application.protocols.gpu.hardware() end
+        return Application.protocols.gpu.software()
+    end
+    return define .manager, .gpu, .gpu_state end
+end
+
+return define .for_surface end

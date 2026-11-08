@@ -1,0 +1,177 @@
+local Check = require "bui.ui.check"
+
+-- These are the closed shapes understood by every menu consumer. They contain no native state.
+local Entry = family "menu entry"
+local Entries = checker("dense list of menu entries", do(value)
+        if not pcall(Check.array, value, "menu entries") then return false end
+        for _, entry in ipairs value do
+            if not check(Entry, entry) then return false end
+        end
+        return true
+    end)
+local Command = struct
+    caption: String
+    icon: String
+    shortcut: String
+    checked: Optional Boolean
+    enabled: Boolean
+    action: Function
+end
+local Submenu = struct
+    caption: String
+    icon: String
+    shortcut: String
+    checked: Optional Boolean
+    enabled: Boolean
+    children: Entries
+end
+local Separator = struct {}
+Entry { Command, Submenu, Separator }
+
+local appearance_fields = { caption = true,
+    icon = true, shortcut = true, checked = true, enabled = true }
+local command_fields = { ..appearance_fields, action = true }
+local submenu_fields = { ..appearance_fields, children = true }
+local fields = { ..appearance_fields, action = true, children = true, separator = true }
+local appearance = do(source)
+    local caption = Check.string(source.caption, "menu caption")
+    assert(caption ~= "-", "use separator for a menu separator")
+    local checked = source.checked
+    if checked ~= nil then Check.boolean(checked, "menu checked") end
+    return with
+        .caption
+        icon = Check.string(Check.default(source.icon, ""), "menu icon")
+        shortcut = Check.string(Check.default(source.shortcut, ""), "menu shortcut")
+        .checked
+        enabled = Check.boolean(Check.default(source.enabled, true), "menu enabled")
+    end
+end
+
+-- Parse supplied data into fresh nominal descriptions, including descriptions edited after a build.
+-- Paths/depth are inherited; the size budget is accumulated; ancestors are local to this reading.
+local describe = do(items)
+    local ancestors, count = {}, 0
+    local read_entries
+    local read_command = do(supplied, at)
+        Check.keys(supplied, command_fields, at)
+        return Command with ..appearance supplied
+            action = Check.callable(supplied.action, at .. " action")
+        end
+    end
+    local read_submenu = do(supplied, depth, at)
+        Check.keys(supplied, submenu_fields, at)
+        local attributes = appearance supplied
+        local children = read_entries(supplied.children, depth + 1, at .. ".children")
+        return Submenu { ..attributes, .children }
+    end
+    local Checking = define
+        Command = do(node, recurse, depth, at)
+            return read_command({ ..node }, at)
+        end
+        Submenu = do(node, recurse, depth, at)
+            return read_submenu({ ..node }, depth, at)
+        end
+        Separator = do(node, recurse, depth, at)
+            Check.keys(node, {}, at)
+            return Separator {}
+        end
+    end
+    local recheck = Entry.pass "recheck and copy a menu entry" with ..Checking end
+    read_entries = do(sources, depth, path)
+        Check.array(sources, path)
+        assert(depth <= 32, path .. ": menu nesting is too deep")
+        assert(not ancestors[sources], path .. ": cyclic menu")
+        ancestors[sources] = true
+        local entries = {}
+        for index, source in ipairs sources do
+            local at = path .. "[" .. index .. "]"
+            count += 1
+            assert(count <= 10000, at .. ": menu is too large")
+            if check(Entry, source) then
+                entries[index] = recheck(source, depth, at)
+            else
+                Check.keys(source, fields, at)
+                -- Only own supplied fields are input. Accessors cannot invent children or actions.
+                local supplied = { ..source }
+                local separator = Check.boolean(Check.default(supplied.separator, false),
+                    "separator")
+                if separator then
+                    Check.keys(supplied, { separator = true }, at)
+                    entries[index] = Separator {}
+                else
+                    supplied.separator = nil
+                    assert(not (supplied.action ~= nil and supplied.children ~= nil),
+                        at .. ": a submenu cannot also have an action")
+                    if supplied.children ~= nil then entries[index] = read_submenu(supplied,
+                            depth, at)
+                    else entries[index] = read_command(supplied, at) end
+                end
+            end
+        end
+        ancestors[sources] = nil
+        return entries
+    end
+    return read_entries(items, 1, "menu")
+end
+
+local Writing = define
+    Command = do(node, recurse)
+        return { caption = node.caption, icon = node.icon, shortcut = node.shortcut,
+            checked = node.checked, enabled = node.enabled, action = node.action }
+    end
+    Submenu = do(node, recurse)
+        local children = {}
+        for index, child in ipairs node.children do children[index] = recurse child end
+        return { caption = node.caption, icon = node.icon, shortcut = node.shortcut,
+            checked = node.checked, enabled = node.enabled, .children }
+    end
+    Separator = do(node, recurse)
+        return { separator = true }
+    end
+end
+local write_entry = Entry.pass "write a menu description as supplied data" with ..Writing end
+
+-- An inspectable, round-trippable representation, independent of native allocation and dispatch.
+local write = do(entries)
+    local written = {}
+    for index, entry in ipairs(describe entries) do written[index] = write_entry entry end
+    return written
+end
+
+-- Each builder owns its output; nested builders produce their own lists, never a shared current menu.
+local menu
+menu = do(body: Function): Table
+    local entries, active = {}, true
+    local item = do(options)
+        assert(active, "menu builder has ended")
+        local descriptions = describe { options }
+        assert(active, "menu builder has ended")
+        entries[#entries + 1] = descriptions[1]
+    end
+    local separator = do() item { separator = true } end
+    local submenu = do(options)
+        assert(active, "menu builder has ended")
+        Check.keys(options, { caption = true, icon = true, enabled = true }, "submenu")
+        local supplied = { ..options }
+        local caption, icon, enabled = supplied.caption, supplied.icon, supplied.enabled
+        return do(build)
+            assert(active, "menu builder has ended")
+            item { .caption, .icon, .enabled, children = menu build }
+        end
+    end
+    local succeeded, problem = pcall(body,
+        define .item, .separator, .submenu end)
+    active = false
+    if not succeeded then error(problem, 0) end
+    return describe entries
+end
+
+return define
+    .Entry
+    .Command
+    .Submenu
+    .Separator
+    .describe
+    .write
+    .menu
+end

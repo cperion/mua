@@ -1,0 +1,126 @@
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Descriptions = require "bui.ui.menu_descriptions"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+if jit then jit.off(true, true) end
+
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "menu lowering check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local same
+same = do(left, right)
+    if type left ~= "table" or type right ~= "table" then return left == right end
+    for key, value in pairs left do if not same(value, right[key]) then return false end end
+    for key in pairs right do if left[key] == nil then return false end end
+    return true
+end
+
+-- A pure reference projection and an independent observation of the actual C publication.
+local Reference = define
+    Command = do(node, recurse)
+        return { text = node.caption, shortcut = node.shortcut, enabled = node.enabled,
+            checked = node.checked, action = true, children = {} }
+    end
+    Submenu = do(node, recurse)
+        local children = {}
+        for index, child in ipairs node.children do children[index] = recurse child end
+        return { text = node.caption, shortcut = node.shortcut, enabled = node.enabled,
+            checked = node.checked, action = false, .children }
+    end
+    Separator = do(node, recurse) return { text = "-" } end
+end
+local interpret = Descriptions.Entry.pass "interpret menu presentation" with ..Reference end
+local native_entries
+native_entries = do(specifications, count, actions)
+    local result = {}
+    for index = 0, count - 1 do
+        local specification = specifications[index]
+        local text = ffi.string specification.text
+        if text == "-" then result[index + 1] = { .text }
+        else
+            local checked
+            if specification.checked >= 0 then checked = specification.checked == 1 end
+            result[index + 1] = { .text, shortcut = ffi.string specification.shortcut,
+                enabled = specification.enabled ~= 0, .checked, action = specification.fn ~= nil,
+                children = native_entries(specification.sub, specification.nsub, actions) }
+            if specification.fn ~= nil then
+                actions[#actions + 1] = { call = specification.fn, token = specification.data }
+            end
+        end
+    end
+    return result
+end
+local observed, actions
+local Watched = meta { index = do(_, key) return Native[key] end } with
+    BK_menubutton_set_items = do(node, specifications, count)
+        actions = {}
+        observed = native_entries(specifications, count, actions)
+        Native.BK_menubutton_set_items(node, specifications, count)
+    end
+end
+Ui.with_application Watched do(Application)
+    Application.gpu_default false
+    Application.with_surface { width = 200, height = 100 } do(surface)
+        local delivered = {}
+        local report = do(word)
+            return do() delivered[#delivered + 1] = word end
+        end
+        local source = Descriptions.menu do(Menu)
+            Menu.item { caption = "Root", action = report "root", checked = false }
+            Menu.submenu { caption = "Left" } do(Inner)
+                Inner.item { caption = "First", action = report "left", checked = true }
+                Inner.separator
+                Inner.submenu { caption = "Deep" } do(Deep)
+                    Deep.item { caption = "Last", action = report "deep" }
+                end
+            end
+            Menu.submenu { caption = "Right", enabled = false } do(Inner)
+                Inner.item { caption = "Sibling", action = report "right", shortcut = "Ctrl+R" }
+            end
+        end
+        local expected = {}
+        for index, entry in ipairs source do expected[index] = interpret entry end
+        surface.with_content do(place) return place.menu_button "Menu" end do(button)
+            local baseline = Application.statistics().registrations
+            local previous = button.menu source
+            expect(same(observed, expected) and #actions == 4)
+            expect(Application.statistics().registrations == baseline + 4)
+            local old_actions = actions
+            for _, action in ipairs actions do action.call action.token end
+            expect(#delivered == 0)
+            Application.pump
+            expect(table.concat(delivered, ",") == "root,left,deep,right")
+
+            -- A later lowering error revokes its earlier registrations and preserves publication.
+            refuses(|| -> button.menu { { caption = "Tentative", action = report "never" },
+                    { caption = "Bad", icon = "NOT_AN_ICON", action = report "never" } },
+                "unknown menu icon")
+            expect(same(observed, expected) and Application.statistics().registrations == baseline + 4)
+            old_actions[1].call old_actions[1].token
+            Application.pump
+            expect(delivered[#delivered] == "root")
+
+            local replacement = button.menu { { caption = "Replacement",
+                    action = report "replacement" } }
+            local current_action = actions[1]
+            previous
+            expect(#observed == 1 and observed[1].text == "Replacement")
+            old_actions[1].call old_actions[1].token
+            current_action.call current_action.token
+            Application.pump
+            expect(#delivered == 6 and delivered[6] == "replacement")
+            current_action.call current_action.token
+            replacement
+            Application.pump
+            expect(#delivered == 6 and #observed == 0)
+            expect(Application.statistics().registrations == baseline)
+        end
+    end { opened() = nil, unavailable = reason -> error reason }
+end
+print("BUI menu lowering: " .. checks .. " checks passed")

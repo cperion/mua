@@ -1,0 +1,118 @@
+-- The menu language is testable without loading BUI or opening a surface.
+local Menus = require "bui.ui.menu_descriptions"
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "menu description check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local action = do() error "describing a menu must not execute its action" end
+local source = {
+    { caption = "Run", .action, checked = false },
+    { separator = true },
+    { caption = "More", enabled = false, children = { { caption = "Again", .action } } },
+}
+local entries = Menus.describe source
+expect(Menus.Entry.is(entries[1], Menus.Command))
+expect(Menus.Entry.is(entries[2], Menus.Separator))
+expect(Menus.Entry.is(entries[3], Menus.Submenu))
+expect(entries[1].checked == false and entries[3].checked == nil and not entries[3].enabled)
+source[1].caption = "changed"
+source[3].children[1].caption = "changed child"
+expect(entries[1].caption == "Run" and entries[3].children[1].caption == "Again")
+
+local Counting = define
+    Command = do(node, recurse) return 1 end
+    Separator = do(node, recurse) return 1 end
+    Submenu = do(node, recurse)
+        local count = 1
+        for _, child in ipairs node.children do count += recurse child end
+        return count
+    end
+end
+local count = Menus.Entry.pass "count every menu entry" with ..Counting end
+local count_commands = Menus.Entry.pass "count only menu commands" with ..Counting
+    Separator = do(node, recurse) return 0 end
+    Submenu = do(node, recurse)
+        local count = 0
+        for _, child in ipairs node.children do count += recurse child end
+        return count
+    end
+end
+expect(count entries[3] == 2 and count_commands entries[3] == 1)
+refuses(|| -> Menus.Entry.pass "incomplete" { Command = Counting.Command }, "no handler")
+refuses(|| -> Menus.Entry.pass "unknown" { ..Counting, Unexpected = do() end }, "Unexpected")
+refuses(|| -> count { caption = "Run", .action }, "menu entry")
+refuses(|| -> Menus.Command { ..entries[1], children = {} }, "children")
+refuses(|| -> Menus.Submenu with
+    caption = "Invalid"
+    icon = ""
+    shortcut = ""
+    enabled = true
+    children = { { caption = "not a nominal entry" } }
+end, "dense list of menu entries")
+
+local written = Menus.write entries
+expect(written[2].separator and written[1].action == action)
+local reread = Menus.describe written
+expect(reread ~= entries and reread[3].children ~= entries[3].children)
+expect(reread[1].caption == "Run" and reread[1].checked == false and reread[3].checked == nil)
+expect(reread[3].children[1].action == action)
+written[3].children[1].caption = "independent output"
+expect(reread[3].children[1].caption == "Again" and entries[3].children[1].caption == "Again")
+entries[1].caption = "bad\0caption"
+refuses(|| -> Menus.describe entries, "without NUL")
+entries[1].caption = "Run"
+rawset(entries[1], "children", {})
+refuses(|| -> Menus.describe entries, "unknown field children")
+rawset(entries[1], "children", nil)
+
+local escaped, nested
+local built = Menus.menu do(Menu)
+    escaped = Menu
+    Menu.item { caption = "Before", .action }
+    nested = Menus.menu do(Inner)
+        Inner.separator
+        Menu.item { caption = "Explicit outer use", .action }
+    end
+    Menu.submenu { caption = "Submenu" } do(Inner) Inner.item { caption = "Child", .action } end
+end
+expect(#built == 3 and #nested == 1 and Menus.Entry.is(nested[1], Menus.Separator))
+expect(built[2].caption == "Explicit outer use" and built[3].children[1].caption == "Child")
+refuses(escaped.separator, "builder has ended")
+refuses(|| -> Menus.menu do(Menu) escaped = Menu; error "body failed" end, "body failed")
+refuses(escaped.separator, "builder has ended")
+
+local cyclic = { { caption = "Cycle" } }
+cyclic[1].children = cyclic
+refuses(|| -> Menus.describe cyclic, "cyclic menu")
+local nominal_cycle = Menus.describe { { caption = "Nominal cycle", children = {} } }
+nominal_cycle[1].children[1] = nominal_cycle[1]
+refuses(|| -> Menus.describe nominal_cycle, "cyclic menu")
+local deep = { { caption = "Leaf", .action } }
+for _ = 1, 31 do deep = { { caption = "Level", children = deep } } end
+expect(#Menus.describe deep == 1)
+refuses(|| -> Menus.describe { { caption = "Too deep", children = deep } }, "nesting is too deep")
+local many = {}
+for index = 1, 5000 do many[index] = { caption = "Repeated", .action } end
+refuses(|| -> Menus.describe { { caption = "First", children = many },
+        { caption = "Second", children = many } }, "menu is too large")
+refuses(|| -> Menus.describe { { caption = "Both", .action, children = {} } }, "cannot also")
+refuses(|| -> Menus.describe { { separator = true, caption = "Not a separator" } }, "unknown field")
+refuses(|| -> Menus.describe { { caption = "-", .action } }, "use separator")
+refuses(|| -> Menus.describe { { caption = "Wrong boolean", enabled = 0, .action } }, "boolean")
+local fabricated = meta { index = {[2] = { separator = true } } } with
+    [1] = { separator = true },
+    [3] = { separator = true }
+end
+refuses(|| -> Menus.describe fabricated, "array")
+local inherited = meta { index = { .action } } { caption = "Own fields only" }
+refuses(|| -> Menus.describe { inherited }, "action")
+local inherited_caption = meta { index = { caption = "Inherited" } } {}
+refuses(|| -> Menus.menu do(Menu)
+        Menu.submenu inherited_caption do() end
+    end, "menu caption")
+print("BUI menu descriptions: " .. checks .. " checks passed")

@@ -2,6 +2,10 @@ local ffi = require "ffi"
 local Scope = require "bui.ui.scope"
 local Check = require "bui.ui.check"
 local Mount = require "bui.ui.mount"
+local Menus = require "bui.ui.menus"
+local Interaction = require "bui.ui.interaction"
+local WindowManagement = require "bui.ui.window_management"
+local Interop = require "bui.ui.interop"
 
 if jit then jit.off(true, true) end
 
@@ -63,6 +67,7 @@ local clipboard_for = do(Native, owner, context, Acquisition, check_error)
     local read = do()
         owner.mutate "read clipboard"
         local pointer = Native.BK_clipboard_get context
+        check_error
         if pointer == nil then return Acquisition.unavailable "clipboard is empty" end
         local succeeded, text = pcall(ffi.string, pointer)
         Native.mua_bui_free pointer
@@ -168,11 +173,12 @@ local capabilities_for = do(Application, window)
         local undo_count = Native.BK_undo_depth(context, redo_count)
         return { undo = tonumber undo_count, redo = tonumber redo_count[0] }
     end
-    local close_popups = do()
-        owner.mutate "close popups"
-        Native.BK_close_popups context
-    end
     return define
+        ..Menus.for_surface(Application, window)
+        ..Interaction.for_surface(Application, window)
+        ..WindowManagement.for_surface(Application, window)
+        ..Interop.for_surface(Application, window)
+        ..Application.dialogs_for(window, owner)
         with_content = content("content", window.root)
         with_header = content("header", window.header)
         .after
@@ -188,7 +194,6 @@ local capabilities_for = do(Application, window)
         .undo
         .redo
         .undo_depth
-        .close_popups
         input = input_for(Native, owner, context, Application.check_error)
         clipboard = clipboard_for(Native, owner, context,
             Application.protocols.acquisition, Application.check_error)
@@ -219,16 +224,16 @@ local acquire_raster = do(Application, window)
     return Acquisition.ready(nil)
 end
 
-local with_acquired_surface = do(Application, options, acquire)
-    return do(body)
-        Application.owner.mutate "open surface"
-        Check.keys(options, { title = true, width = true, height = true }, "surface options")
-        Check.callable(body, "surface body")
-        local width = Check.integer(Check.default(options.width, 640), "width", 1, 32768)
-        local height = Check.integer(Check.default(options.height, 480), "height", 1, 32768)
-        local title = Check.string(Check.default(options.title, "Mua"), "title")
-        local Native, Opening = Application.native, Application.protocols.opening
-        return Scope.with_owner(Application.owner.child "surface") do(owner)
+-- Acquisition is shared by bounded surfaces and retained child-dialog activities.
+local acquire_surface = do(Application, parent, options, acquire, host_services)
+    parent.mutate "open surface"
+    Check.keys(options, { title = true, width = true, height = true }, "surface options")
+    local width = Check.integer(Check.default(options.width, 640), "width", 1, 32768)
+    local height = Check.integer(Check.default(options.height, 480), "height", 1, 32768)
+    local title = Check.string(Check.default(options.title, "Mua"), "title")
+    local Native, Opening = Application.native, Application.protocols.opening
+    return Scope.prepare(parent, do()
+            local owner = parent.child "surface"
             local root = Native.BK_node_new "column"
             assert(root ~= nil, "surface root allocation failed")
             owner.defer do() Native.BK_node_free root end
@@ -243,20 +248,43 @@ local with_acquired_surface = do(Application, options, acquire)
             assert(context ~= nil, "context allocation failed")
             owner.defer do() Native.BK_context_free context end
             Native.BK_context_set_header(context, header)
-            local window = { .owner, .context, .root, .header, .width, .height }
+            local window = { .owner, .context, .root, .header, .width, .height, .host_services }
             local host, callbacks = Application.attach_surface window
             Native.BK_context_set_host(context, host)
             return acquire(Application, window, title) with
-                unavailable = Opening.unavailable
+                unavailable = do(reason)
+                    owner.close
+                    return Opening.unavailable reason
+                end
                 ready = do()
                     if window.pointer then Native.BK_window_set_callbacks(window.pointer, callbacks) end
                     owner.activate
                     Application.check_error
-                    return Opening.opened(body(capabilities_for(Application, window)))
+                    window.capabilities = capabilities_for(Application, window)
+                    return Opening.opened window
+                end
+            end
+        end)
+end
+
+local with_acquired_surface = do(Application, options, acquire, host_services)
+    return do(body)
+        Check.callable(body, "surface body")
+        return acquire_surface(Application, Application.owner, options, acquire, host_services) with
+            unavailable = Application.protocols.opening.unavailable
+            opened = do(window)
+                return Scope.with_owner window.owner do()
+                    return Application.protocols.opening.opened(body window.capabilities)
                 end
             end
         end
     end
+end
+
+-- A child inherits the launching surface's native/offscreen integration, not its callback lifetime.
+local open_child = do(Application, parent_window, parent, options)
+    local acquire = parent_window.pointer and acquire_window or acquire_raster
+    return acquire_surface(Application, parent, options, acquire)
 end
 
 -- Own a native window, its context and mounted children for the body lifetime.
@@ -269,4 +297,20 @@ local with_surface = do(Application, options)
     return with_acquired_surface(Application, options, acquire_raster)
 end
 
-return define .with_window, .with_surface end
+-- An embedding host drives pump/input/render; synchronous services never run on worker threads.
+local with_host = do(Application, Services)
+    Check.keys(Services, { request = true, cursor = true, warp = true, wake = true,
+            schedule = true, read_clipboard = true, write_clipboard = true }, "embedded host")
+    local copied = {}
+    for name, service in pairs Services do copied[name] = Check.callable(service, name) end
+    return do(options)
+        return with_acquired_surface(Application, options, acquire_raster, copied)
+    end
+end
+
+return define
+    .with_window
+    .with_surface
+    .open_child
+    .with_host
+end

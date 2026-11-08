@@ -1,0 +1,199 @@
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Widgets = require "bui.ui.widgets"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+if jit then jit.off(true, true) end
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "integration check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local ready = outcome -> outcome { ready = value -> value, unavailable = reason -> error reason }
+local opened = outcome -> outcome { opened = value -> value, unavailable = reason -> error reason }
+local unlinked, linked = 0, 0
+local Watched = meta { index = do(_, key) return Native[key] end } with
+    BK_link_fields = do(fields, count)
+        expect(Native.BK_node_parent fields[0] == nil,
+            "linking activated the native parent-vector hook")
+        if count == 2 then unlinked += 1 else linked += 1 end
+        Native.BK_link_fields(fields, count)
+    end
+end
+Ui.with_application Watched do(Application)
+    Application.gpu_default false
+    local look = Application.appearance()
+    expect(look.unit > 0 and look.scale > 0 and #look.theme > 0 and not look.gpu)
+    expect(#Application.icons() > 0 and Application.typography.ui_width "abc" >= 0)
+    expect(ready(Application.icon_info Application.icons()[1]).glyphs > 0)
+    expect(ready(Application.evaluate_number "1/3 + 2^2") > 4)
+    expect(Application.evaluate_number "invalid!" { ready() = false, unavailable() = true })
+    expect(Application.theme_color "NOT_A_COLOR" { ready() = false, unavailable() = true })
+    Application.animations true
+    Application.slug false
+    expect(not Application.appearance().slug)
+    Application.recent_searches.enable true
+    Application.recent_searches.clear
+    Application.recent_searches.load_best_effort "no-such-search-history"
+    expect(Application.images.source_info "no-such-image" { ready() = false, unavailable() = true })
+    local expired_wake
+    ready(Application.with_keep_alive do(KeepAlive)
+            expired_wake = KeepAlive.wake
+            KeepAlive.wake
+            Application.pump
+            return 42
+        end)
+    refuses(expired_wake, "activity has ended")
+    local source = Application.resources.convert_pixels with
+        format = "nv12_601"
+        width = 2
+        height = 2
+        bytes = string.rep(string.char 235, 4) .. string.char(128, 128)
+    end
+    expect(#source.argb == 16 and source.width == 2)
+    local words = ffi.new "uint32_t[4]"
+    ffi.copy(words, source.argb, 16)
+    expect(words[0] == 4294967295)
+    refuses(|| -> Application.resources.convert_pixels with
+        format = "nv12_709"
+        width = 1
+        height = 2
+        bytes = ""
+    end, "even")
+    local raster = ready(Application.resources.acquire_raster { width = 32, height = 32 })
+    raster.with_frame {} do(Paint)
+        Paint.widget_base with
+            rectangle = { 0, 0, 32, 32 }
+            start_color = { 1, 0, 0, 1 }
+            end_color = { 0, 0, 1, 1 }
+        end
+        Paint.widget { kind = "label", rectangle = { 0, 0, 32, 32 }, text = "A" }
+        local previous = Native.GPU_backend_sink_get()
+        Paint.with_primitive_sink do()
+            local sink = Native.GPU_backend_sink_get()
+            expect(sink.begin_frame == nil and sink.end_frame == nil)
+            local points = ffi.new("float[3][2]", { { 0, 0 }, { 3, 0 }, { 0, 3 } })
+            local colors = ffi.new("float[3][4]",
+                { { 1, 1, 1, 1 }, { 1, 1, 1, 1 }, { 1, 1, 1, 1 } })
+            sink.triangles(sink.user,
+                ffi.cast("const float (*)[2]", points), ffi.cast("const float (*)[4]", colors), 3)
+        end
+        expect(Native.GPU_backend_sink_get() == previous)
+        refuses(|| -> Paint.widget { kind = "typo", rectangle = { 0, 0, 1, 1 } },
+            "unknown drawn widget")
+    end
+    expect(#ready(raster.pixels()).bytes == 4096)
+    local calls, copied, late = 0, nil, nil
+    local previous = Native.GPU_backend_sink_get()
+    Application.with_render_sink define
+        begin_frame = do(size) expect(size.width == 32 and size.height == 32); calls += 1 end
+        triangles = do(vertices)
+            copied = vertices
+            refuses(|| -> Application.theme "dark", "forbidden during draw")
+            calls += 1
+        end
+        end_frame = do() calls += 1 end
+    end do(Sink)
+        late = Sink
+        Sink.viewport(32, 32)
+        local sink = Native.bui_get_render_sink()
+        expect(sink == Native.GPU_backend_sink_get())
+        sink.begin_frame(sink.user, 32, 32)
+        local points = ffi.new("float[3][2]", { { 0, 0 }, { 20, 0 }, { 0, 20 } })
+        local colors = ffi.new("float[3][4]", { { 1, 0, 0, 1 }, { 0, 1, 0, 1 }, { 0, 0, 1, 1 } })
+        sink.triangles(sink.user,
+            ffi.cast("const float (*)[2]", points), ffi.cast("const float (*)[4]", colors), 3)
+        points[0][0] = 900
+        expect(copied.points[1][1] == 0)
+        Application.with_render_sink {} do()
+            expect(Native.GPU_backend_sink_get() ~= sink)
+        end
+        expect(Native.GPU_backend_sink_get() == sink)
+        sink.end_frame sink.user
+    end
+    expect(calls == 3 and Native.GPU_backend_sink_get() == previous)
+    refuses(|| -> late.viewport(1, 1), "activity has ended")
+
+    local requests, wakes, scheduled, written = 0, 0, 0, nil
+    local Services = define
+        request = do() requests += 1 end
+        wake = do() wakes += 1 end
+        schedule = do(delay) expect(delay >= 0); scheduled += 1 end
+        read_clipboard = do()
+            refuses(|| -> Application.scale 1, "forbidden during service")
+            return Ui.Acquisition.ready "host clipboard"
+        end
+        write_clipboard = do(text) written = text end
+    end
+    opened(Application.with_host(Services) { width = 300, height = 300 } do(surface)
+            local before = requests
+            surface.with_content do(place)
+                local first = place.number { value = 1 }
+                local slot = place.slot {}
+                local second = slot.replace do(children) return children.number { value = 2 } end
+                local disconnect = place.link_fields { first, second }
+                expect(linked == 1)
+                slot.clear
+                expect(unlinked == 2)
+                disconnect
+                expect(unlinked == 2)
+                local normal = place.normal { value = { -1, 0, 0 } }
+                expect(normal.current()[1] == -1)
+                local meter = place.meter with
+                    minimum = 0
+                    maximum = 10
+                    value = 7
+                    low = 3
+                    high = 8
+                end
+                expect(meter.current() == 7)
+                local list = place.list { items = { "One", "Two" }, selection_mode = "multiple" }
+                expect(#list.items() == 2)
+                list.mark(2, true)
+                list.clear_marks
+                list.move_view("vertical", 0)
+                expect(list.view("vertical").total >= 1)
+                local ramp = place.ramp { interpolation = "constant" }
+                expect(#ramp.stops() >= 2)
+                place.node_editor { zoom = 1, pan_x = 0, pan_y = 0 } do(editor)
+                    editor.graph_node { x = 10, y = 20, graph_width = 140, selected = true }
+                end
+                refuses(|| -> ramp.configure { interpolation = "invented" }, "unknown choice")
+                refuses(|| -> normal.set { 0, 0, 0 }, "must not be zero")
+                return first
+            end do(first)
+                expect(requests == before and wakes > 0)
+                Application.pump
+                expect(requests > before)
+                expect(ready(surface.clipboard.read()) == "host clipboard")
+                surface.clipboard.write "copied text"
+                expect(written == nil)
+                Application.pump
+                expect(written == "copied text")
+                local fired = false
+                surface.after 0 do() fired = true end
+                expect(scheduled > 0 and not fired)
+                Application.pump
+                expect fired
+                surface.render
+                expect(#ready(surface.pixels()).bytes == 300 * 300 * 4)
+                local escaped
+                surface.with_native do(Borrow)
+                    escaped = Borrow
+                    local raw = Borrow.handles()
+                    expect(raw.context ~= nil and raw.raster ~= nil and raw.window == nil)
+                    expect(Native.BK_context_root raw.context == raw.root)
+                    expect(Native.BK_node_ref raw.root == nil)
+                    refuses(surface.close, "forbidden during service")
+                end
+                refuses(escaped.handles, "borrow has ended")
+                expect(surface.manager.position() { ready() = false, unavailable() = true })
+                expect(surface.gpu false { ready() = false, unavailable() = true })
+            end
+        end)
+end
+refuses(|| -> Widgets.Setting.pass "missing publication kind" {}, "no handler")
+print("BUI integration: " .. checks .. " checks passed")

@@ -1,0 +1,101 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+local managers = { none = 0, pack = 1, grid = 2, place = 3 }
+local manager_names = {[0] = "none", "pack", "grid", "place" }
+local sides = { top = 0, bottom = 1, left = 2, right = 3 }
+local fills = { none = 0, horizontal = 1, vertical = 2, both = 3 }
+local anchors = { center = 0, north = 1, south = 2, west = 4, east = 8,
+    northwest = 5, northeast = 9, southwest = 6, southeast = 10, all = 15 }
+local integer_fields = { padx0 = 0, padx1 = 0, pady0 = 0, pady1 = 0, ipadx = 0, ipady = 0,
+    row = 0, column = 0, rowspan = 1, columnspan = 1 }
+local number_fields = { x = true, y = true, relx = true, rely = true,
+    width = true, height = true, relwidth = true, relheight = true }
+local allowed = { manager = true,
+    side = true, fill = true, anchor = true, sticky = true, expand = true }
+for name in pairs integer_fields do allowed[name] = true end
+for name in pairs number_fields do allowed[name] = true end
+
+local node_snapshot = do(Native, pointer)
+    local bounds = ffi.new "int[4]"
+    Native.BK_node_rect(pointer, bounds)
+    return { kind = ffi.string(Native.BK_node_type pointer), x = tonumber bounds[0],
+        y = tonumber bounds[1], width = tonumber bounds[2], height = tonumber bounds[3],
+        children = tonumber(Native.BK_node_child_count pointer) }
+end
+
+-- Geometry is separate from control properties: frame children choose pack, grid or place.
+local for_control = do(record)
+    local Native, owner, node = record.native, record.owner, record.node
+    local layout = do(options)
+        owner.mutate "configure geometry"
+        Check.keys(options, allowed, "geometry")
+        local manager = options.manager and assert(managers[options.manager],
+            "unknown geometry manager")
+        local values = {}
+        for key, value in pairs options do
+            if key == "side" then values[key] = assert(sides[value], "unknown pack side")
+            elseif key == "fill" then values[key] = assert(fills[value], "unknown pack fill")
+            elseif key == "anchor" or key == "sticky" then values[key] = assert(anchors[value],
+                    "unknown anchor")
+            elseif key == "expand" then values[key] = Check.boolean(value, "expand") and 1 or 0
+            elseif integer_fields[key] then values[key] = Check.integer(value,
+                    key, integer_fields[key], 32768)
+            elseif number_fields[key] then values[key] = Check.number(value, key, -32768, 32768) end
+        end
+        owner.mutate "publish geometry"
+        if manager then Native.BK_geom_set_manager(node, manager) end
+        for key, value in pairs values do Native.BK_geom_set(node, key, value) end
+    end
+    local reset_placement = do()
+        owner.mutate "reset placement"
+        Native.BK_geom_set(node, "reset_place", 1)
+    end
+    local geometry = do()
+        owner.check "geometry"
+        local result = { manager = manager_names[Native.BK_geom_manager node] }
+        for _, key in ipairs { "side", "fill", "expand", "anchor", "row", "column", "rowspan",
+            "columnspan", "sticky", "reqwidth", "reqheight" } do
+            result[key] = tonumber(Native.BK_geom_get(node, key))
+        end
+        return result
+    end
+    local inspect = do() owner.check "inspect control"; return node_snapshot(Native, node) end
+    local children = do()
+        owner.check "inspect children"
+        local result = {}
+        for index = 0, Native.BK_node_child_count node - 1 do
+            result[#result + 1] = node_snapshot(Native, Native.BK_node_child(node, index))
+        end
+        return result
+    end
+    local parent = do()
+        owner.check "inspect parent"
+        local pointer = Native.BK_node_parent node
+        if pointer == nil then return record.application.protocols.selection.empty() end
+        return record.application.protocols.selection.selected(node_snapshot(Native, pointer))
+    end
+    local Layout = define
+        .layout
+        .reset_placement
+        .geometry
+        .inspect
+        .children
+        .parent
+    end
+    if record.kind ~= "frame" then return Layout end
+    local grid_track = do(axis, index, weight, minimum)
+        owner.mutate "configure grid track"
+        assert(axis == "row" or axis == "column", "grid axis expects row or column")
+        Check.integer(index, "track index", 1, 1024)
+        Check.number(weight, "track weight", 0, 1e6)
+        Check.integer(Check.default(minimum, 0), "minimum track size", 0, 32768)
+        Native.BK_frame_grid_weight(node,
+            axis == "column" and 1 or 0, index - 1, weight, minimum or 0)
+    end
+    return define ..Layout
+        .grid_track
+    end
+end
+
+return define .for_control, .node_snapshot end

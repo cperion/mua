@@ -2,12 +2,32 @@
 -- ownership, mounting, delivery and these closed protocols belong to this library.
 local Application = require "bui.ui.application"
 local Descriptions = require "bui.ui.descriptions"
+local Collections = require "bui.ui.collections"
+local Menus = require "bui.ui.menus"
+local Graphs = require "bui.ui.graphs"
 
 local Opening = oneof { opened: Any, unavailable: String }
 local Acquisition = oneof { ready: Any, unavailable: String }
 local Frame = oneof { next_frame: Unit, finished: Unit }
 local Selection = oneof { selected: Table, empty: Unit }
 local Playback = oneof { loading: Unit, playing: Unit, paused: Unit, ended: Unit, failed: Unit }
+local Scrolling = oneof { moveto: Number, units: Number }
+local GraphChange = oneof
+    moved: Table
+    selection: Table
+    input: Table
+    collapsed: Table
+    links: Table
+    deletion: Table
+    order: Table
+end
+local Gpu = oneof { software: Unit, starting: Unit, hardware: Unit }
+local Input = oneof { consumed: Unit, ignored: Unit }
+local Dialog = oneof { accepted: Any, cancelled: Unit }
+local Choice = oneof { browsing: Unit, accepted: Table, cancelled: Unit }
+local consume_input = do(decision: Input): Boolean
+    return decision { consumed() = true, ignored() = false }
+end
 
 local continue_frame = do(decision: Frame): Boolean
     return decision {
@@ -20,7 +40,13 @@ local Protocols = define
     acquisition = Acquisition
     selection = Selection
     playback = Playback
+    gpu = Gpu
+    dialog = Dialog
+    choice = Choice
+    graph_change = GraphChange
+    scrolling = Scrolling
     .continue_frame
+    .consume_input
 end
 
 -- Own the integration, all child activities, and their deterministic completion.
@@ -48,5 +74,15 @@ return define
     .Frame
     .Selection
     .Playback
+    .Gpu
+    .GraphChange
+    .Scrolling
+    sockets = Graphs.sockets
+    .Input
+    .Dialog
+    .Choice
     .using_clock
+    forest = Collections.forest
+    menu = Menus.menu
+    keymap = Menus.keymap
 end

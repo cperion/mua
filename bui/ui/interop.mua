@@ -1,0 +1,153 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Scope = require "bui.ui.scope"
+local Handles = require "bui.ui.handles"
+
+if jit then jit.off(true, true) end
+local packed = do(..values) = values
+local pools = meta { mode = "k" } {}
+local sinks = do(Application)
+    if pools[Application] then return pools[Application] end
+    local callback = do(signature, name, snapshot)
+        return Application.callback(signature, do(token, ..arguments)
+                local receiver = Application.resolve token
+                if receiver and receiver[name] then receiver[name](snapshot(..arguments)) end
+            end, nil, "draw")
+    end
+    local vertices = do(coordinates, colors, count, size)
+        Check.integer(count, "primitive vertex count", 0, 1048576)
+        assert(count == 0 or (coordinates ~= nil and colors ~= nil), "missing primitive storage")
+        local points, channels = {}, {}
+        for index = 0, count - 1 do
+            points[#points + 1] = { tonumber coordinates[index][0], tonumber coordinates[index][1] }
+            channels[#channels + 1] = { tonumber colors[index][0], tonumber colors[index][1],
+                tonumber colors[index][2], tonumber colors[index][3] }
+        end
+        return { .points, colors = channels, size = size and tonumber size or nil }
+    end
+    local Callbacks = define
+        begin_frame = callback("void (*)(void *, int, int)",
+            "begin_frame", |width, height| -> { .width, .height })
+        scissor = callback("void (*)(void *, int, int, int, int)",
+            "clip", |x, y, width, height| -> { .x, .y, .width, .height })
+        triangles = callback("void (*)(void *, const float (*)[2], const float (*)[4], int)",
+            "triangles", vertices)
+        lines = callback("void (*)(void *, const float (*)[2], const float (*)[4], int)",
+            "lines", vertices)
+        points = callback("void (*)(void *, const float (*)[2], const float (*)[4], int, float)",
+            "points", vertices)
+        text = callback("void (*)(void *, float, float, const char *, float, const float *)",
+            "text",
+            do(x, y, text, size, color)
+                assert(color ~= nil, "missing primitive text color")
+                return { .x, .y, .size, text = text ~= nil and ffi.string text or "",
+                    color = { tonumber color[0],
+                        tonumber color[1], tonumber color[2], tonumber color[3] } }
+            end)
+        end_frame = callback("void (*)(void *)", "end_frame", do() end)
+    end
+    pools[Application] = Callbacks
+    Application.owner.defer do() pools[Application] = nil end
+    return Callbacks
+end
+
+-- The primitive sink is a separate synchronous integration surface, not the kit renderer.
+local for_application = do(Application)
+    local Native, root = Application.native, Application.owner
+    local active_owner = root
+    local with_render_sink = do(Services)
+        Check.keys(Services, { begin_frame = true, clip = true, triangles = true, lines = true,
+                points = true, text = true, end_frame = true }, "primitive sink services")
+        local copied = {}
+        for name, service in pairs Services do copied[name] = Check.callable(service, name) end
+        return do(body)
+            root.mutate "install primitive sink"
+            Check.callable(body, "sink body")
+            local parent = active_owner
+            return Scope.with_owner(parent.child "primitive sink") do(owner)
+                local Callbacks = sinks Application
+                local token = Application.register(owner, copied)
+                local sink = ffi.new "BuiGpuSink[1]"
+                sink[0].user = token
+                for name, callback in pairs Callbacks do sink[0][name] = callback end
+                local previous = Native.GPU_backend_sink_get()
+                owner.defer do()
+                    Native.GPU_backend_sink_set previous
+                    active_owner = parent
+                end
+                Native.GPU_backend_sink_set sink
+                active_owner = owner
+                owner.activate
+                local viewport = do(width, height)
+                    owner.mutate "primitive viewport"
+                    Native.GPU_viewport_size_set(Check.integer(width, "viewport width", 0, 32768),
+                        Check.integer(height, "viewport height", 0, 32768))
+                end
+                local results = packed(body define .viewport end)
+                Application.check_error
+                -- Retain the exact native structure until after the producer returns.
+                assert(sink[0].user == token)
+                return unpack(results, 1, results.n)
+            end
+        end
+    end
+    return define .with_render_sink end
+end
+
+-- Explicitly unsafe: raw pointers may be used during the body, never freed, replaced, or retained.
+local for_surface = do(Application, window)
+    local Native, owner = Application.native, window.owner
+    local with_native = do(body)
+        owner.mutate "borrow native integration"
+        Check.callable(body, "native borrow body")
+        local active = true
+        local handles = do()
+            owner.check "native borrow"
+            assert(active, "native borrow has ended")
+            return { library = Native,
+                context = window.context, root = window.root, header = window.header,
+                window = window.pointer,
+                raster = window.pointer and Native.BK_window_raster window.pointer or window.raster,
+                handle = window.pointer and Native.BK_window_handle window.pointer or nil }
+        end
+        local results = packed(pcall(Application.serve,
+                do() return body define .handles end end))
+        active = false
+        if not results[1] then error(results[2], 0) end
+        Application.check_error
+        return unpack(results, 2, results.n)
+    end
+    local pixels = do()
+        owner.mutate "copy surface pixels"
+        local raster = window.pointer and Native.BK_window_raster window.pointer or window.raster
+        local width, height = Native.BUI_raster_width raster, Native.BUI_raster_height raster
+        local pointer = Native.BUI_raster_pixels raster
+        if pointer == nil then return Application.protocols.acquisition.unavailable "surface pixels unavailable" end
+        return Application.protocols.acquisition.ready with
+            width = tonumber width
+            height = tonumber height
+            bytes = ffi.string(pointer, width * height * 4)
+        end
+    end
+    local present = do(Raster)
+        owner.mutate "present raster"
+        local pointer = Handles.get(Raster, "raster")
+        assert(Scope.same_integration(owner, Handles.owner(Raster, "raster")),
+            "resource belongs to another application")
+        local Acquisition = Application.protocols.acquisition
+        if not window.pointer then return Acquisition.unavailable "not a native window" end
+        if Native.BUI_raster_is_gpu pointer ~= 0 or Native.BUI_raster_gpu_pending pointer ~= 0 then
+            return Acquisition.unavailable "an offscreen GPU raster is not attached to this window"
+        end
+        if ffi.os ~= "Windows" then
+            return Acquisition.unavailable "software native raster presentation requires Win32"
+        end
+        if Native.BUI_raster_present_native(pointer, Native.BK_window_handle window.pointer, 1) == 0 then
+            return Acquisition.unavailable "native raster presentation unavailable"
+        end
+        return Acquisition.ready(nil)
+    end
+    return define .with_native, .pixels, .present end
+end
+
+return define .for_application, .for_surface end

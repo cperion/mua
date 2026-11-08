@@ -1,0 +1,96 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Layout = require "bui.ui.layout"
+
+if jit then jit.off(true, true) end
+
+local byte_offset = do(text, position, name)
+    Check.integer(position, name, -1, #text)
+    local byte = position >= 0 and text:byte(position + 1) or nil
+    assert(not byte or byte < 128 or byte >= 192, name .. " splits a UTF-8 sequence")
+    return position
+end
+
+-- IME composition uses UTF-8 byte offsets, never UTF-16 units or character indexes.
+local for_surface = do(Application, window)
+    local Native, owner, context = Application.native, window.owner, window.context
+    local compose = do(options)
+        owner.mutate "update IME composition"
+        Check.keys(options, { result = true, composite = true, cursor = true,
+                start = true, stop = true }, "IME composition")
+        local result = Check.string(Check.default(options.result, ""), "IME result")
+        local composite = Check.string(Check.default(options.composite, ""), "IME composite")
+        local cursor = byte_offset(composite, Check.default(options.cursor, -1), "IME cursor")
+        local first = byte_offset(composite, Check.default(options.start, -1), "IME start")
+        local last = byte_offset(composite, Check.default(options.stop, -1), "IME stop")
+        assert((first == -1 and last == -1) or (first >= 0 and last >= first),
+            "invalid IME selection")
+        local event = ffi.new "BKImeEvent[1]"
+        event[0].result, event[0].composite = result, composite
+        event[0].cursor_pos, event[0].sel_start, event[0].sel_end = cursor, first, last
+        owner.mutate "publish IME composition"
+        local consumed = Native.BK_ime_event(context, 1, event) ~= 0
+        Application.check_error
+        return consumed
+    end
+    local start = do()
+        owner.mutate "start IME composition"
+        local consumed = Native.BK_ime_event(context, 0, nil) ~= 0
+        Application.check_error
+        return consumed
+    end
+    local finish = do()
+        owner.mutate "finish IME composition"
+        local consumed = Native.BK_ime_event(context, 2, nil) ~= 0
+        Application.check_error
+        return consumed
+    end
+    local state = do()
+        owner.mutate "synchronize IME state"
+        local state = ffi.new "BKImeState[1]"
+        local changed = Native.BK_ime_state(context, state) ~= 0
+        return { .changed, enabled = state[0].enabled ~= 0, restart = state[0].restart ~= 0,
+            x = tonumber state[0].x, y = tonumber state[0].y }
+    end
+    local composing = do()
+        owner.check "IME composition state"
+        return Native.BK_ime_composing context ~= 0
+    end
+    local ime = define
+        .start
+        .compose
+        .finish
+        .state
+        .composing
+    end
+    local interaction = do()
+        owner.check "interaction state"
+        local selection = do(pointer)
+            if pointer == nil then return Application.protocols.selection.empty() end
+            return Application.protocols.selection.selected(Layout.node_snapshot(Native, pointer))
+        end
+        return with
+            cursor = tonumber(Native.BK_cursor context)
+            hover = selection(Native.BK_hover context)
+            focus = selection(Native.BK_focus context)
+            modal = Native.BK_modal_active context ~= 0
+            tooltip = Native.BK_tooltip_visible context ~= 0
+            popups = tonumber(Native.BK_popup_count context)
+            animating = Native.BK_animating context ~= 0
+            needs_render = Native.BK_needs_render context ~= 0
+        end
+    end
+    local clear_focus = do()
+        owner.mutate "clear focus"
+        Native.BK_focus_node(context, nil)
+        Application.check_error
+    end
+    local pointer = do(horizontal, vertical)
+        owner.mutate "set input pointer"
+        Native.BK_set_pointer(context,
+            Check.integer(horizontal, "pointer x"), Check.integer(vertical, "pointer y"))
+    end
+    return define .ime, .interaction, .clear_focus, .pointer end
+end
+
+return define .for_surface end

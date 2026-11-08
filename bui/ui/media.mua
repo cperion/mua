@@ -384,6 +384,19 @@ local images = do(Application)
             format = format_name(Native, info[0].format)
         end
     end
+    local source_info = do(path)
+        owner.mutate "inspect retained image source"
+        local info = ffi.new "BKImageInfo[1]"
+        if Native.BK_image_info(Check.string(path, "image source"), info) == 0 then
+            return Acquisition.unavailable "image source information unavailable"
+        end
+        return Acquisition.ready with
+            width = tonumber info[0].width
+            height = tonumber info[0].height
+            frames = tonumber info[0].frames
+            format = format_name(Native, info[0].format)
+        end
+    end
     local budget = do(count)
         owner.mutate "image cache budget"
         Native.BK_image_set_budget(Check.integer(count, "cache bytes", 0,
@@ -427,6 +440,7 @@ local images = do(Application)
     end
     return define
         .inspect
+        .source_info
         .budget
         .threads
         .prefetch

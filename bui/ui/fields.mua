@@ -1,0 +1,205 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+local controls = meta { mode = "k" } {}
+local groups = meta { mode = "k" } {}
+local anchors = meta { mode = "k" } {}
+local anchor_for = do(Application)
+    if anchors[Application] then return anchors[Application] end
+    local pointer = Application.native.BK_node_new "number"
+    assert(pointer ~= nil, "field-link anchor allocation failed")
+    anchors[Application] = pointer
+    -- Native linking marks the first field's parent as a vector. Its keyboard
+    -- handler concatenates every child into a fixed 512-byte buffer. A detached
+    -- anchor avoids that implicit/unsafe hook; clipboard work stays explicit below.
+    Application.owner.defer do()
+        anchors[Application] = nil
+        Application.native.BK_node_free pointer
+    end
+    return pointer
+end
+
+-- Identity is private; copying functions is not permission to relink arbitrary native nodes.
+local remember = do(Capabilities, record)
+    controls[Capabilities] = record
+    record.owner.defer do() controls[Capabilities] = nil end
+    return Capabilities
+end
+local alias = do(Original, Copy)
+    local record = controls[Original]
+    if record then remember(Copy, record) end
+    return Copy
+end
+
+local for_owner = do(Application, owner, window)
+    local link_fields = do(fields)
+        owner.mutate "link number fields"
+        Check.array(fields, "linked fields")
+        assert(#fields >= 2 and #fields <= 64, "link 2..64 number fields")
+        local records, seen = {}, {}
+        local pointers = ffi.new("BKNode *[?]", #fields + 1)
+        for index, Field in ipairs fields do
+            local record = assert(controls[Field], "expected a mounted number field")
+            record.owner.check "link field"
+            assert(record.application == Application and record.window == window,
+                "linked fields must share a surface")
+            assert(record.kind == "number" or record.kind == "slider",
+                "only number fields and sliders can be linked")
+            assert(not seen[record], "duplicate linked field")
+            seen[record], records[index], pointers[index] = true, record, record.node
+        end
+        owner.mutate "publish field links"
+        local anchor = anchor_for Application
+        pointers[0] = anchor
+        for _, record in ipairs records do if groups[record] then groups[record]() end end
+        local active = true
+        local retire = do()
+            if not active then return end
+            active = false
+            -- The first participant to retire unlinks all peers before any native node is freed.
+            -- Scope may already have revoked every sibling, but their destructors have not run.
+            for _, record in ipairs records do
+                -- An unlinked field retains only the inert integration-owned anchor,
+                -- never a retired real peer. The anchor outlives all mounted fields.
+                local isolated = ffi.new("BKNode *[2]", { anchor, record.node })
+                Application.native.BK_link_fields(isolated, 2)
+                groups[record] = nil
+            end
+        end
+        for _, record in ipairs records do
+            groups[record] = retire
+            record.owner.defer retire
+        end
+        owner.defer retire
+        Application.native.BK_link_fields(pointers, #records + 1)
+        local check_group = do()
+            owner.check "linked fields"
+            assert(active, "linked field activity has ended")
+            for _, record in ipairs records do record.owner.check "linked field" end
+        end
+        local values = do()
+            check_group
+            local copied = {}
+            for index, record in ipairs records do
+                copied[index] = tonumber(Application.native.BK_get_num(record.node, "value"))
+            end
+            return copied
+        end
+        local publish_values = do(supplied, notify)
+            owner.mutate "set linked values"
+            check_group
+            Check.array(supplied, "linked values")
+            assert(#supplied == #records, "one value is required per linked field")
+            local copied = {}
+            for index = 1, #records do copied[index] = Check.number(supplied[index], "linked value") end
+            check_group
+            for index, record in ipairs records do
+                Application.native.BK_set_num(record.node,
+                    notify and "set_value" or "value", copied[index])
+                Application.check_error
+            end
+        end
+        local set_values = do(supplied) publish_values(supplied, false) end
+        local copy = do()
+            owner.mutate "copy linked values"
+            local parts = {}
+            for index, value in ipairs values() do parts[index] = string.format("%.17g", value) end
+            Application.native.BK_clipboard_set(window.context,
+                "[" .. table.concat(parts, ", ") .. "]")
+            Application.check_error
+        end
+        local paste = do()
+            owner.mutate "paste linked values"
+            check_group
+            local Acquisition = Application.protocols.acquisition
+            local pointer = Application.native.BK_clipboard_get window.context
+            Application.check_error
+            if pointer == nil then return Acquisition.unavailable "clipboard unavailable" end
+            local text = ffi.string pointer
+            Application.native.mua_bui_free pointer
+            local inner = #text <= 8192 and text:match "^%s*%[(.-)%]%s*$"
+            local parsed, valid = {}, inner ~= nil and inner ~= false
+            if inner then
+                for part in (inner .. ","):gmatch "(.-)," do
+                    local value = tonumber part
+                    if not pcall(Check.number, value, "clipboard value") then valid = false; break end
+                    parsed[#parsed + 1] = value
+                    if #parsed > #records then valid = false; break end
+                end
+            end
+            if not valid or #parsed ~= #records then return Acquisition.unavailable "clipboard is not a matching numeric vector" end
+            publish_values(parsed, true)
+            return Acquisition.ready(nil)
+        end
+        local disconnect = do() owner.mutate "disconnect field links"; retire end
+        return disconnect, define
+            .values
+            .set_values
+            .copy
+            .paste
+        end
+    end
+    return define .link_fields end
+end
+
+-- Reading and moving a scrolled view is separate from mutating its contents.
+local for_control = do(record)
+    local Native, owner, node = record.native, record.owner, record.node
+    local axis_name = do(axis)
+        assert(axis == "horizontal" or axis == "vertical",
+            "view axis expects horizontal or vertical")
+        return axis == "horizontal" and "x" or "y"
+    end
+    local view = do(axis)
+        owner.check "view"
+        local prefix = axis_name axis
+        return { first = tonumber(Native.BK_get_num(node, prefix .. "first")),
+            last = tonumber(Native.BK_get_num(node, prefix .. "last")),
+            total = tonumber(Native.BK_get_num(node, prefix .. "total")),
+            visible = tonumber(Native.BK_get_num(node, prefix .. "visible")) }
+    end
+    record.view_snapshot = do() return { horizontal = view "horizontal",
+            vertical = view "vertical" } end
+    local move_view = do(axis, fraction)
+        owner.mutate "move view"
+        Native.BK_set_num(node,
+            axis_name axis .. "view", Check.number(fraction, "view fraction", 0, 1))
+        record.application.check_error
+    end
+    local scroll_view = do(axis, units)
+        owner.mutate "scroll view"
+        Native.BK_set_num(node,
+            axis_name axis .. "scroll", Check.integer(units, "scroll units", -1000000, 1000000))
+        record.application.check_error
+    end
+    local Views = define .view, .move_view, .scroll_view end
+    if record.kind ~= "list" then return Views end
+    local items = do()
+        owner.check "list items"
+        local values = {}
+        for index = 0, Native.BK_strs_count(node, "items") - 1 do
+            values[#values + 1] = ffi.string(Native.BK_strs_get(node, "items", index))
+        end
+        return values
+    end
+    local mark = do(index, marked)
+        owner.mutate "mark list item"
+        Check.integer(index, "list index", 1, Native.BK_strs_count(node, "items"))
+        Native.BK_set_num(node, "mark" .. (index - 1), Check.boolean(marked, "marked") and 1 or 0)
+    end
+    local clear_marks = do() owner.mutate "clear list marks"; Native.BK_set_num(node,
+            "clearmarks", 1) end
+    return define ..Views
+        .items
+        .mark
+        .clear_marks
+    end
+end
+
+return define
+    .remember
+    .alias
+    .for_owner
+    .for_control
+    lookup = Control -> controls[Control]
+end

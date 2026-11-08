@@ -1,0 +1,125 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Scope = require "bui.ui.scope"
+local Handles = require "bui.ui.handles"
+
+local description = do(options)
+    Check.keys(options,
+        { text = true, family = true, flags = true, size = true }, "text description")
+    local text = Check.string(options.text, "text")
+    assert(#text <= 1048576, "text description is too long")
+    return with
+        .text
+        family = Check.string(Check.default(options.family, ""), "font family")
+        flags = Check.integer(Check.default(options.flags, 0), "font flags", 0, 7)
+        size = Check.number(Check.default(options.size, 14), "font size", 1, 4096)
+    end
+end
+
+-- Own the description, not the native cache entry. Every use rechecks its generation.
+local acquire = do(Application, owner, options)
+    owner.mutate "prepare text"
+    local text = description options
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    local generation, pointer, measured = nil, nil, ffi.new "float[1]"
+    local refresh = do()
+        owner.check "prepared text"
+        if generation ~= tonumber(Native.BUI_text_generation()) then
+            pointer = Native.BUI_text_prepare(text.family, text.flags, text.size,
+                text.text, #text.text, measured)
+            generation = tonumber(Native.BUI_text_generation())
+        end
+        return pointer
+    end
+    if refresh() == nil then return Acquisition.unavailable "text has no drawable native run" end
+    local width = do()
+        if refresh() == nil then return Acquisition.unavailable "text run is unavailable" end
+        return Acquisition.ready(tonumber measured[0])
+    end
+    local mask = do()
+        local run = refresh()
+        if run == nil then return Acquisition.unavailable "text run is unavailable" end
+        local width, height, origin, ascent = ffi.new "int[1]", ffi.new "int[1]",
+        ffi.new "int[1]", ffi.new "int[1]"
+        local pixels = Native.BUI_text_run_mask(run, width, height, origin, ascent)
+        if pixels == nil then return Acquisition.unavailable "text mask is unavailable" end
+        return Acquisition.ready with
+            width = tonumber width[0]
+            height = tonumber height[0]
+            origin = tonumber origin[0]
+            ascent = tonumber ascent[0]
+            bytes = ffi.string(pixels, width[0] * height[0])
+        end
+    end
+    return Acquisition.ready(Handles.register(define
+        .width
+        .mask
+    end, owner, "text", refresh))
+end
+
+-- Preparation can persist under its resource owner or be bounded by one activity body.
+local resources = do(Application, owner)
+    local acquire_text = options -> Scope.prepare(owner, || -> acquire(Application, owner, options))
+    local with_text = do(options)
+        return do(body)
+            Check.callable(body, "prepared text body")
+            return Scope.with_owner(owner.child "prepared text") do(temporary)
+                return acquire(Application, temporary, options) with
+                    unavailable = Application.protocols.acquisition.unavailable
+                    ready = do(Text)
+                        temporary.activate
+                        return Application.protocols.acquisition.ready(body Text)
+                    end
+                end
+            end
+        end
+    end
+    return define .acquire_text, .with_text end
+end
+
+-- Font registration is application-global; measurements and masks are copied results.
+local for_application = do(Application)
+    local Native, owner, Acquisition = Application.native, Application.owner, Application.protocols.acquisition
+    local available = do() owner.check "text backend"; return Native.BUI_text_native() ~= 0 end
+    local measure = do(options)
+        owner.mutate "measure text"
+        local text = description options
+        local width = ffi.new "float[1]"
+        owner.mutate "measure checked text"
+        if Native.BUI_text_measure(text.family, text.flags, text.size, text.text, #text.text, width) == 0 then
+            return Acquisition.unavailable "native text measurement unavailable"
+        end
+        return Acquisition.ready(tonumber width[0])
+    end
+    local add_font = do(family, flags, bytes)
+        owner.mutate "register font"
+        Check.string(family, "font family")
+        Check.integer(flags, "font style", 0, 3)
+        assert(type bytes == "string" and #bytes <= 2147483647, "font bytes expected")
+        if Native.BUI_text_add_font(family, flags, bytes, #bytes) == 0 then
+            return Acquisition.unavailable "font could not be registered"
+        end
+        return Acquisition.ready(nil)
+    end
+    local ui_width = do(text)
+        owner.check "measure UI text"
+        Check.string(text, "UI text")
+        return tonumber(Native.BK_text_width(text, #text))
+    end
+    local default_font = do()
+        owner.check "default font"
+        local length = ffi.new "int[1]"
+        local bytes = Native.BUI_text_default_font length
+        if bytes == nil then return Acquisition.unavailable "no embedded default font" end
+        return Acquisition.ready(ffi.string(bytes, length[0]))
+    end
+    return define
+        .available
+        .measure
+        .add_font
+        .default_font
+        .ui_width
+    end
+end
+
+return define .description, .resources, .for_application end

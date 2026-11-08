@@ -51,10 +51,10 @@ local with_callbacks = do(Native)
             local registration = registrations[tonumber(ffi.cast("uintptr_t", token))]
             if registration and registration.owner.is_alive() then return registration.value end
         end
-        local deliver = do(delivery)
+        local in_phase = do(role, body)
             local previous = phase
-            phase = "notification"
-            local results = packed(pcall delivery)
+            phase = role
+            local results = packed(pcall body)
             phase = previous
             if not results[1] then error(results[2], 0) end
             check_error
@@ -71,8 +71,10 @@ local with_callbacks = do(Native)
             .callback
             .register
             .resolve
-            .deliver
             .statistics
+            deliver = body -> in_phase("notification", body)
+            paint = body -> in_phase("draw", body)
+            serve = body -> in_phase("service", body)
             failed = || -> failed
         end
         local results = packed(pcall(body, Boundary))

@@ -1,0 +1,290 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Fields = require "bui.ui.fields"
+
+local Socket = family "graph socket"
+local Input = struct { caption: String, type: String, value: Optional Number }
+local Output = struct { caption: String, type: String }
+Socket { Input, Output }
+local field = do(value, name, size)
+    Check.string(value, name)
+    assert(#value <= size and not value:find("|", 1, true),
+        name .. " exceeds the native field or contains |")
+    return value
+end
+local appearance = do(source)
+    return { caption = field(source.caption, "socket caption", 63),
+        type = field(Check.default(source.type, "float"), "socket type", 23) }
+end
+local input = do(source)
+    Check.keys(source, { caption = true, type = true, value = true }, "input socket")
+    local copied = { ..source }
+    local value = copied.value
+    if value ~= nil then Check.number(value, "socket value", -1e30, 1e30) end
+    local attributes = appearance copied
+    if value ~= nil and (attributes.type == "bool" or attributes.type == "boolean") then
+        assert(value == 0 or value == 1, "boolean socket value must be zero or one")
+    end
+    if value ~= nil and attributes.type == "int" then Check.integer(value,
+            "integer socket", -1e30, 1e30) end
+    return Input { ..attributes, .value }
+end
+local output = do(source)
+    Check.keys(source, { caption = true, type = true }, "output socket")
+    return Output(appearance { ..source })
+end
+local Checking = define
+    Input = do(node, recurse) return input node end
+    Output = do(node, recurse) return output node end
+end
+local recheck = Socket.pass "recheck a graph socket" with ..Checking end
+local Writing = define
+    Input = do(node, recurse)
+        return "i|" .. node.caption .. "|" .. node.type .. "|" .. (node.value == nil and "" or tostring node.value)
+    end
+    Output = do(node, recurse) return "o|" .. node.caption .. "|" .. node.type end
+end
+local write = Socket.pass "lower graph sockets to the native string grammar" with ..Writing end
+local sockets = do(body)
+    Check.callable(body, "socket description body")
+    local active, result = true, {}
+    local add = do(Constructor)
+        return do(options)
+            assert(active, "socket builder has ended")
+            assert(#result < 1024, "too many graph sockets")
+            result[#result + 1] = Constructor options
+        end
+    end
+    local succeeded, problem = pcall(body,
+        define input = add input, output = add output end)
+    active = false
+    if not succeeded then error(problem, 0) end
+    return result
+end
+local strings = do(Native, node)
+    local count = tonumber(Native.BK_strs_count(node, "items"))
+    local values = {}
+    for index = 0, count - 1 do values[index + 1] = ffi.string(Native.BK_strs_get(node,
+                "items", index)) end
+    return values
+end
+local read_sockets = do(Native, node)
+    local result = {}
+    for _, text in ipairs strings(Native, node) do
+        local direction, caption, kind, value = text:match "^([io])|([^|]*)|([^|]*)|?(.*)$"
+        assert(direction, "invalid native socket description")
+        if direction == "i" then
+            result[#result + 1] = input with
+                .caption
+                type = kind
+                value = value ~= "" and tonumber value or nil
+            end
+        else result[#result + 1] = output { .caption, type = kind } end
+    end
+    return result
+end
+local publish = do(Native, node, values)
+    local array, retained = Check.strings(values, "graph strings")
+    Native.BK_set_strs(node, "items", array, #retained)
+end
+local node_index = do(Native, editor, node)
+    for index = 0, Native.BK_node_child_count editor - 1 do
+        if Native.BK_node_child(editor, index) == node then return index end
+    end
+    error("graph node does not belong to this editor", 0)
+end
+local link_indices = do(text)
+    local from, output, to, input = text:match "^(%d+) (%d+) (%d+) (%d+)$"
+    assert(from, "invalid native graph link")
+    return tonumber from, tonumber output, tonumber to, tonumber input
+end
+local remove_incident = do(Native, editor, node, removing)
+    local index = node_index(Native, editor, node)
+    local remaining = {}
+    for _, text in ipairs strings(Native, editor) do
+        local from, output, to, input = link_indices text
+        if from ~= index and to ~= index then
+            if removing then
+                if from > index then from -= 1 end
+                if to > index then to -= 1 end
+            end
+            remaining[#remaining + 1] = string.format("%d %d %d %d", from, output, to, input)
+        end
+    end
+    publish(Native, editor, remaining)
+end
+local counts = Socket.pass "count socket directions" with
+    Input = do(node, recurse, counts) counts.inputs += 1 end
+    Output = do(node, recurse, counts) counts.outputs += 1 end
+end
+local socket_counts = do(Native, node)
+    local result = { inputs = 0, outputs = 0 }
+    for _, socket in ipairs read_sockets(Native, node) do counts(socket, result) end
+    return result
+end
+
+local for_control = do(record, create)
+    local Application, Native, owner, node = record.application, record.native, record.owner, record.node
+    local Change = Application.protocols.graph_change
+    if record.kind == "graphnode" then
+        local identity = {}
+        local graph_identity = do() owner.check "graph identity"; return identity end
+        owner.defer do()
+            local editor = Native.BK_node_parent node
+            if editor ~= nil then remove_incident(Native, editor, node, true) end
+        end
+        local sockets = do() owner.check "graph sockets"; return read_sockets(Native, node) end
+        local set_sockets = do(descriptions)
+            owner.mutate "replace graph sockets"
+            Check.array(descriptions, "graph sockets")
+            assert(#descriptions <= 1024, "too many graph sockets")
+            local values = {}
+            for index, description in ipairs descriptions do values[index] = write(recheck description) end
+            owner.mutate "publish graph sockets"
+            local parent = Native.BK_node_parent node
+            if parent ~= nil then remove_incident(Native, parent, node, false) end
+            publish(Native, node, values)
+        end
+        local graph_state = do()
+            owner.check "graph node state"
+            return { id = identity,
+                x = tonumber(Native.BK_get_num(node, "nx")),
+                y = tonumber(Native.BK_get_num(node, "ny")),
+                width = tonumber(Native.BK_get_num(node, "nwidth")),
+                selected = Native.BK_get_num(node, "selected") ~= 0,
+                collapsed = Native.BK_get_num(node, "collapsed") ~= 0,
+                active = Native.BK_get_num(node, "active") ~= 0,
+                sockets = sockets() }
+        end
+        local graph_rectangle = do()
+            owner.check "graph rectangle"
+            local editor = Native.BK_node_parent node
+            assert(editor ~= nil, "graph node is detached")
+            local bounds = ffi.new "int[4]"
+            Native.BK_node_rect(editor, bounds)
+            local state = graph_state()
+            local scale = tonumber(Native.BK_scale()) * tonumber(Native.BK_get_num(editor, "zoom"))
+            return { x = tonumber bounds[0] + tonumber(Native.BK_get_num(editor, "panx")) + state.x * scale,
+                y = tonumber bounds[1] + tonumber(Native.BK_get_num(editor, "pany")) + state.y * scale,
+                width = state.width * scale,
+                height = (state.collapsed and 20 or 30 + #state.sockets * 22) * scale }
+        end
+        record.event_snapshot = do(kind, reference, first, second)
+            if kind == 1 then
+                local state = graph_state()
+                if first == 1 then return "changed", Change.moved state
+                elseif first == 2 then return "changed", Change.selection state
+                elseif first == 3 then return "changed", Change.input { .state, index = second + 1 }
+                elseif first == 4 then return "changed", Change.collapsed state end
+                error "unknown native graph node event"
+            end
+        end
+        return define
+            .sockets
+            .set_sockets
+            .graph_state
+            .graph_identity
+            .graph_rectangle
+        end
+    end
+    if record.kind ~= "nodeeditor" then return {} end
+    local peer = do(Control)
+        local found = Fields.lookup Control
+        assert(found and found.kind == "graphnode", "expected a managed graph node")
+        found.owner.check "graph node"
+        assert(found.window == record.window and Native.BK_node_parent found.node == node,
+            "graph node does not belong to this editor")
+        return found
+    end
+    local nodes = do()
+        owner.check "graph nodes"
+        local result = {}
+        for index = 0, Native.BK_node_child_count node - 1 do
+            local found = Application.find_node(Native.BK_node_child(node, index))
+            assert(found and found.kind == "graphnode", "unmanaged graph node")
+            result[#result + 1] = found.capabilities
+        end
+        return result
+    end
+    local links = do()
+        owner.check "graph links"
+        local children, result = nodes(), {}
+        for _, text in ipairs strings(Native, node) do
+            local from, output, to, input = link_indices text
+            assert(children[from + 1] and children[to + 1], "invalid native graph endpoint")
+            result[#result + 1] = { from = children[from + 1], output = output + 1,
+                to = children[to + 1], input = input + 1 }
+        end
+        return result
+    end
+    local set_links = do(descriptions)
+        owner.mutate "replace graph links"
+        Check.array(descriptions, "graph links")
+        assert(#descriptions <= 1024, "too many graph links")
+        local values, targets = {}, {}
+        for index, description in ipairs descriptions do
+            Check.keys(description,
+                { from = true, output = true, to = true, input = true }, "graph link")
+            local supplied = { ..description }
+            local from, to = peer supplied.from, peer supplied.to
+            local output = Check.integer(supplied.output,
+                "output socket", 1, socket_counts(Native, from.node).outputs)
+            local input = Check.integer(supplied.input,
+                "input socket", 1, socket_counts(Native, to.node).inputs)
+            local source, target = node_index(Native, node, from.node), node_index(Native,
+                node, to.node)
+            local identity = target .. ":" .. input
+            assert(not targets[identity], "an input already has a link")
+            targets[identity] = true
+            values[index] = string.format("%d %d %d %d", source, output - 1, target, input - 1)
+        end
+        owner.mutate "publish graph links"
+        publish(Native, node, values)
+    end
+    local remove_node = do(Control)
+        owner.mutate "remove graph node"
+        peer(Control).owner.close()
+    end
+    local add_node = do(options) owner.mutate "add graph node"; return create options end
+    local fit_view = do() owner.mutate "fit graph view"; Native.BK_set_num(node, "view_all", 1) end
+    local graph_view = do()
+        owner.check "graph view"
+        return { zoom = tonumber(Native.BK_get_num(node, "zoom")),
+            x = tonumber(Native.BK_get_num(node, "panx")),
+            y = tonumber(Native.BK_get_num(node, "pany")) }
+    end
+    local states = do(selected_only)
+        local result = {}
+        for _, Control in ipairs nodes() do
+            local state = Control.graph_state()
+            if not selected_only or state.selected then result[#result + 1] = state end
+        end
+        return result
+    end
+    record.event_snapshot = do(kind, reference, first, second)
+        if kind == 1 then
+            if first == 10 then
+                local copied = {}
+                for _, link in ipairs links() do
+                    copied[#copied + 1] = { from = link.from.graph_identity(),
+                        to = link.to.graph_identity(),
+                        output = link.output, input = link.input }
+                end
+                return "changed", Change.links copied
+            elseif first == 11 then return "changed", Change.deletion(states true)
+            elseif first == 12 then return "changed", Change.order(states false) end
+            error "unknown native graph editor event"
+        end
+    end
+    return define
+        .nodes
+        .links
+        .set_links
+        .remove_node
+        .add_node
+        .fit_view
+        .graph_view
+    end
+end
+
+return define .Socket, .Input, .Output, .sockets, .for_control end

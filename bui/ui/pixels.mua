@@ -1,0 +1,36 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+local formats = { argb = 0, nv12_601 = 1, nv12_709 = 2 }
+
+-- Convert copied ARGB/NV12 rows to an owned image-source value, without publishing cache keys.
+local for_owner = do(Application, owner)
+    local convert_pixels = do(source)
+        owner.check "convert pixels"
+        Check.keys(source, { format = true, bytes = true, width = true, height = true,
+                first_row = true, rows = true }, "pixel source")
+        source = { ..source }
+        local format = assert(formats[source.format], "unknown pixel format")
+        local width = Check.integer(source.width, "pixel width", 1, 16384)
+        local height = Check.integer(source.height, "pixel height", 1, 16384)
+        if format ~= 0 then assert(width % 2 == 0 and height % 2 == 0,
+                "NV12 dimensions must be even") end
+        local first = Check.integer(Check.default(source.first_row, 1), "first row", 1, height)
+        local rows = Check.integer(Check.default(source.rows, height - first + 1),
+            "row count", 1, height - first + 1)
+        local length = width * height * (format == 0 and 4 or 1.5)
+        assert(type source.bytes == "string" and #source.bytes == length,
+            "incorrect pixel byte count")
+        local storage = ffi.new("uint32_t[?]", math.ceil(length / 4))
+        ffi.copy(storage, source.bytes, length)
+        local pixmap = ffi.new "BuiPixmap[1]"
+        pixmap[0].px, pixmap[0].w, pixmap[0].h, pixmap[0].format = storage, width, height, format
+        local pixels = ffi.new("uint32_t[?]", width * rows)
+        owner.check "read converted pixels"
+        Application.native.BUI_pixmap_read(pixmap, first - 1, rows, pixels)
+        return { argb = ffi.string(pixels, width * rows * 4), .width, height = rows }
+    end
+    return define .convert_pixels end
+end
+
+return define .for_owner end

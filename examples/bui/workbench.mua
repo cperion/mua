@@ -1,0 +1,135 @@
+-- A graph-review component: owned collections, commands, custom drawing and file completion.
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Native = require("bui.ffi").load(arg[1] or ("./build/bui/" ..
+        (ffi.os == "Windows" and "mua_bui.dll" or "libmua_bui.so")))
+
+local workspace = do(inputs)
+    return do(Notify)
+        return do(place)
+            local graph, source, output, tree
+            local touches = 0
+            local refresh = do()
+                tree.replace_forest(Ui.forest {
+                        { id = "document", label = inputs.title, expanded = true, children = {
+                                { id = "source", label = "Source" },
+                                { id = "output", label = "Output" },
+                            } },
+                    })
+                Notify.status "Document refreshed"
+            end
+            local choose = do()
+                place.choose_file { title = "Choose a document", browser = { directory = "." } } do(result)
+                    result with
+                        accepted = paths -> Notify.status("Selected " .. table.concat(paths, ", "))
+                        cancelled = || -> Notify.status "File choice cancelled"
+                    end
+                end {
+                    opened() = nil,
+                    unavailable = Notify.status,
+                }
+            end
+            place.row { spacing = 12 } do(toolbar)
+                local menu = toolbar.menu_button "Document"
+                menu.menu(Ui.menu do(Menu)
+                        Menu.item { caption = "Refresh", action = refresh }
+                        Menu.item { caption = "Choose file", action = choose }
+                    end)
+                toolbar.button "Fit graph" do() graph.fit_view end
+            end
+            place.row { spacing = 12, fill = true } do(panes)
+                tree = panes.tree { width = 180, height = 280 }
+                tree.connect with
+                    changed = do(selection)
+                        selection { selected = item -> Notify.status("Selected " .. item.label), empty() = nil }
+                    end
+                end
+                graph = panes.node_editor { width = 500, height = 280 } do(nodes)
+                    source = nodes.graph_node { caption = "Source", x = 25, y = 25 }
+                    source.set_sockets(Ui.sockets do(Socket)
+                            Socket.output { caption = "Color", type = "color" }
+                            Socket.input { caption = "Exposure", type = "float", value = 1 }
+                        end)
+                    output = nodes.graph_node { caption = "Output", x = 280, y = 70 }
+                    output.set_sockets(Ui.sockets do(Socket) Socket.input { caption = "Color", type = "color" } end)
+                end
+                graph.set_links { { from = source, output = 1, to = output, input = 1 } }
+            end
+            local identities = {[source.graph_identity()] = source,
+                [output.graph_identity()] = output }
+            local changes = define
+                moved = state -> Notify.status(string.format("Moved node to %.0f, %.0f",
+                        state.x, state.y))
+                selection = state -> Notify.status(state.selected and "Node selected" or "Node deselected")
+                input = change -> Notify.status("Edited input " .. change.index)
+                collapsed = state -> Notify.status(state.collapsed and "Node collapsed" or "Node expanded")
+                links = links -> Notify.status("Graph has " .. #links .. " links")
+                deletion = do(states)
+                    for _, state in ipairs states do
+                        local node = identities[state.id]
+                        if node then graph.remove_node node; identities[state.id] = nil end
+                    end
+                    Notify.status "Selected nodes removed"
+                end
+                order = || -> Notify.status "Graph stacking order changed"
+            end
+            local changed = change -> change changes
+            source.connect { .changed }
+            output.connect { .changed }
+            graph.connect { .changed }
+            place.panel "Synchronous drawing, deferred notification" do(body)
+                local preview = body.custom { height = 100 }
+                preview.behavior with
+                    width = 650
+                    height = 100
+                    event = do(event, Services)
+                        if event.kind == "pressed" then
+                            touches += 1
+                            Services.invalidate
+                            Services.post(Notify.status, "Preview pressed " .. touches .. " times")
+                            return Ui.Input.consumed()
+                        end
+                        return Ui.Input.ignored()
+                    end
+                    draw = do(Paint, box)
+                        Paint.rectangle { ..box, color = { 0.07, 0.12, 0.2, 1 } }
+                        Paint.circle with
+                            x = box.x + box.width / 2
+                            y = box.y + box.height / 2
+                            radius = 20 + touches % 10
+                            color = { 0.2, 0.75, 0.6, 1 }
+                        end
+                    end
+                end
+            end
+            refresh
+            return define .refresh, .choose end
+        end
+    end
+end
+
+Ui.with_application Native do(Application)
+    Application.gpu_default false
+    Application.theme "dark"
+    local headless = arg[2] == "--headless"
+    local open = headless and Application.with_surface or Application.with_window
+    open { title = "Mua / graph review", width = 760, height = 600 } do(window)
+        window.with_content do(place)
+            place.label { caption = "Graph review", bold = true, font_scale = 1.5 }
+            local status = place.label "Ready"
+            local review = workspace { title = "Example document" }
+            return place.include(review define status = status.display end)
+        end do(Workspace)
+            window.bind_keys(Ui.keymap do(Keys) Keys.bind "Ctrl+r" Workspace.refresh end)
+            if headless then
+                window.render
+                Application.pump
+                window.render
+            else
+                window.show
+                if arg[2] == "--smoke" then window.after 250 window.close end
+                Application.run
+            end
+        end
+    end { opened() = print "BUI workbench completed.", unavailable = reason -> error reason }
+end

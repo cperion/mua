@@ -1,0 +1,230 @@
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "graphics check " .. checks)
+end
+local ready = result -> result { ready = value -> value, unavailable = reason -> error reason }
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local red, green, blue, white = { 1, 0, 0, 1 }, { 0, 1, 0, 1 }, { 0, 0, 1, 1 }, { 1, 1, 1, 1 }
+local image_bytes = string.char(255, 0, 0, 255):rep 4
+local expired_raster, expired_paint, expired_view, expired_texture, expired_text
+Ui.with_application Native do(Application)
+    Application.gpu_default false
+    local Image = ready(Application.resources.acquire_image with
+        rgba = image_bytes
+        width = 2
+        height = 2
+    end)
+    local Texture = ready(Application.resources.acquire_texture { image = Image })
+    expect(ready(Texture.size()).width == 2)
+    Texture.update(0, 0, { rgba = string.char(0, 255, 0, 255), width = 1, height = 1 })
+    ready(Texture.copy_image Image)
+    refuses(|| -> Texture.update(0, 0, { rgba = "short", width = 2, height = 2 }), "too small")
+    ready(Application.resources.with_texture { width = 1, height = 1 } do(texture)
+            expired_texture = texture
+            expect(ready(texture.size()).height == 1)
+        end)
+    refuses(expired_texture.size, "activity has ended")
+    -- Evolving video textures have one transfer owner, even when decoder output is pending.
+    Application.resources.with_video "../bui/tests/videos/clip.mp4" do(Video)
+        ready(Application.resources.with_texture { video = Video } do(Texture)
+                local have_frame, failed = false, false
+                local deadline = os.clock() + 3
+                repeat
+                    Texture.refresh() with
+                        ready = do(size) have_frame = size.width == 96 and size.height == 54 end
+                        unavailable() = nil
+                    end
+                    Application.pump
+                    failed = Video.state() { loading() = false, playing() = false, paused() = false,
+                        ended() = false, failed() = true }
+                until have_frame or failed or os.clock() >= deadline
+                expect(have_frame or failed)
+                if ffi.os == "Windows" then expect have_frame end
+                refuses(|| -> Application.resources.acquire_texture { video = Video },
+                    "transfer owner")
+                refuses(|| -> Texture.update(0, 0, { width = 1, height = 1, rgba = image_bytes }),
+                    "updated by refresh")
+            end)
+        ready(Application.resources.with_texture { video = Video } do(Texture)
+                Texture.refresh() with
+                    ready = size -> expect(size.height == 54)
+                    unavailable = reason -> expect(type reason == "string")
+                end
+            end)
+    end with
+        ready() = nil
+        unavailable = reason -> expect(type reason == "string")
+    end
+    local fabricated = 0
+    local fake_pixels = meta with
+        index = do(_, name)
+            if name == "rgba" then fabricated += 1; return image_bytes end
+        end
+    end { width = 1, height = 1 }
+    refuses(|| -> Texture.update(0, 0, fake_pixels), "needs RGBA")
+    expect(fabricated == 0)
+    local Text
+    if Application.typography.available() then
+        expect(ready(Application.typography.measure { text = "Mua", size = 16 }) > 0)
+        Text = ready(Application.resources.acquire_text { text = "Mua", size = 16 })
+        expect(ready(Text.width()) > 0)
+        local mask = ready(Text.mask())
+        expect(#mask.bytes == mask.width * mask.height)
+        Application.typography.default_font() with
+            unavailable() = nil
+            ready = do(bytes)
+                local generation = tonumber(Native.BUI_text_generation())
+                ready(Application.typography.add_font("mua-regression", 0, bytes))
+                expect(tonumber(Native.BUI_text_generation()) > generation)
+                expect(ready(Text.width()) > 0 and #ready(Text.mask()).bytes > 0)
+                expect(ready(Application.typography.measure with
+                    text = "Mua"
+                    family = "mua-regression"
+                    size = 16
+                end) > 0)
+            end
+        end
+        ready(Application.resources.with_text { text = "Temporary" } do(text) expired_text = text end)
+        refuses(expired_text.width, "activity has ended")
+        Application.typography.add_font("invalid", 0, "not a font") with
+            ready() = error "invalid font was accepted"
+            unavailable = reason -> expect(type reason == "string")
+        end
+    end
+    ready(Application.resources.with_raster { width = 64, height = 64 } do(Raster)
+            expired_raster = Raster
+            expect(Raster.size().width == 64)
+            Raster.with_frame {} do(Paint)
+                expired_paint = Paint
+                Paint.rectangle { width = 64, height = 64, color = white }
+                Paint.rectangle { width = 16, height = 16, color = red }
+                Paint.with_clip { 4, 4, 4, 4 } do(View)
+                    expired_view = View
+                    View.rectangle { width = 64, height = 64, color = green }
+                end
+                refuses(|| -> Raster.with_frame {} do() end, "forbidden during draw")
+                refuses(Raster.pixels, "forbidden during draw")
+                Paint.outline { x = 20, y = 20, width = 8, height = 8, color = blue }
+                Paint.round_rectangle { x = 30, width = 8, height = 8, radius = 2, color = blue }
+                Paint.circle { x = 20, y = 20, radius = 2, color = red }
+                Paint.ellipse { x = 30, y = 30, radius_x = 3, radius_y = 2, color = green }
+                Paint.line { x = 40, y = 40, x2 = 50, y2 = 50, color = blue }
+                Paint.polygon({ { 30, 40 }, { 35, 40 }, { 35, 45 } }, red)
+                Paint.triangles({ { 30, 40 }, { 35, 40 }, { 35, 45 } }, { red, green, blue })
+                Paint.points({ { 20, 50 } }, { red }, 2)
+                local vertices = {}
+                vertices[1] = meta with
+                    index = do()
+                        fabricated += 1
+                        vertices[2] = { x = 1, y = 1 }
+                        return 0
+                    end
+                end { y = 0 }
+                refuses(|| -> Paint.mesh { .vertices, indices = { 1, 1, 1 } }, "vertex x")
+                expect(fabricated == 0 and #vertices == 1)
+                Paint.shadow with
+                    x = 45
+                    y = 10
+                    width = 5
+                    height = 5
+                    radius = 1
+                    size = 2
+                    alpha = 0.5
+                end
+                Paint.hsv_circle { x = 50, y = 50, radius = 4 }
+                Paint.sphere { x = 40, y = 50, radius = 3, light = { 0, 0, 1 }, color = red }
+                Paint.gradient with
+                    x = 50
+                    y = 20
+                    width = 8
+                    height = 8
+                    top_left = red
+                    top_right = green
+                    bottom_right = blue
+                    bottom_left = white
+                end
+                ready(Paint.image({ 60, 60, 2, 2 }, Image))
+                ready(Paint.mesh with
+                    vertices = { { x = 40, y = 40 }, { x = 48, y = 40 }, { x = 48, y = 48 } }
+                    indices = { 1, 2, 3 }
+                    texture = Texture
+                end)
+                Paint.with_view { 60, 0, 4, 4 } do(View)
+                    View.with_primitive_sink do()
+                        local sink = Native.GPU_backend_sink_get()
+                        local coordinates = ffi.new("float[3][2]",
+                            { { 0, 0 }, { 64, 0 }, { 64, 64 } })
+                        local colors = ffi.new("float[3][4]", { blue, blue, blue })
+                        sink.scissor(sink.user, 0, 0, 0, 0)
+                        sink.triangles(sink.user, ffi.cast("const float (*)[2]", coordinates),
+                            ffi.cast("const float (*)[4]", colors), 3)
+                        sink.scissor(sink.user, 62, 0, 1, 1)
+                        colors = ffi.new("float[3][4]", { red, red, red })
+                        sink.triangles(sink.user, ffi.cast("const float (*)[2]", coordinates),
+                            ffi.cast("const float (*)[4]", colors), 3)
+                    end
+                end
+                if Text then
+                    ready(Paint.text_run({ 16, 60 }, Text, blue))
+                    ready(Paint.text({ 16, 40 }, { text = "A", size = 10 }, red))
+                end
+            end
+            refuses(|| -> expired_paint.rectangle { width = 1, height = 1, color = red },
+                "drawing activity has ended")
+            refuses(|| -> expired_view.rectangle { width = 1, height = 1, color = red },
+                "drawing activity has ended")
+            local pixels = ready(Raster.pixels())
+            expect(#pixels.bytes == 64 * 64 * 4)
+            local values = ffi.new "uint32_t[4096]"
+            ffi.copy(values, pixels.bytes, #pixels.bytes)
+            expect(values[0] == 0xff0000 and values[4 * 64 + 4] == 0x00ff00)
+            expect(values[64 + 50] == 0xffffff and values[64 + 61] == 0xff and values[62] == 0xff0000)
+            expect(#Raster.damage() > 0)
+            Raster.with_frame {} do() end
+            expect(#Raster.damage() == 0)
+            refuses(|| -> Raster.with_frame {} do() error("paint failed", 0) end, "paint failed")
+            Raster.with_frame { region = { 0, 0, 2, 2 } } do(Paint)
+                Paint.rectangle { width = 64, height = 64, color = blue }
+            end
+            pixels = ready(Raster.pixels())
+            ffi.copy(values, pixels.bytes, #pixels.bytes)
+            expect(values[0] == 0xff and values[4 * 64 + 4] == 0x00ff00)
+            Raster.invalidate
+            Raster.with_frame {} do() end
+            expect(#Raster.damage() > 0)
+            Raster.gpu_state() { software() = expect true,
+                starting() = error "unexpected GPU", hardware() = error "unexpected GPU" }
+            local escaped_gpu
+            Raster.with_gpu do(Gpu)
+                escaped_gpu = Gpu
+                local state = Gpu.poll_gpu()
+                expect(type state.changed == "boolean")
+                state.state { software() = nil, starting() = nil, hardware() = nil }
+                Raster.with_frame {} do(Paint) Paint.rectangle with
+                    width = 64
+                    height = 64
+                    color = blue
+                end end
+            end with
+                ready = do()
+                    refuses(escaped_gpu.gpu_state, "activity has ended")
+                    expect(Raster.gpu_state() { software() = true,
+                            starting() = false, hardware() = false })
+                end
+                unavailable = reason -> expect(type reason == "string")
+            end
+            -- Immediate drawing may use a live sibling resource; it is not a retained loan.
+            ready(Application.resources.with_image { rgba = image_bytes, width = 2, height = 2 } do(Temporary)
+                    Raster.with_frame {} do(Paint) ready(Paint.image({ 0, 0, 2, 2 }, Temporary)) end
+                end)
+        end)
+    refuses(expired_raster.size, "activity has ended")
+end
+print("BUI graphics: " .. checks .. " checks passed")

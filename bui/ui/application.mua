@@ -6,6 +6,11 @@ local Callbacks = require "bui.ui.callbacks"
 local Dispatch = require "bui.ui.dispatch"
 local Surface = require "bui.ui.surface"
 local Media = require "bui.ui.media"
+local Resources = require "bui.ui.resources"
+local Typography = require "bui.ui.typography"
+local Dialogs = require "bui.ui.dialogs"
+local Environment = require "bui.ui.environment"
+local Interop = require "bui.ui.interop"
 
 if jit then jit.off(true, true) end
 
@@ -62,10 +67,17 @@ local with_application = do(Native, Protocols, body, clock)
                 return Scope.with_owner(Scope.new(nil, "application", Boundary)) do(owner)
                     owner.defer do() Native.BK_image_exit end
                     local Driver = Dispatch.new(Native, owner, Boundary, Protocols, now)
-                    local Application = define ..Driver
+                    local Application
+                    local dialogs_for = do(window, parent)
+                        return Dialogs.for_owner(Application, window, parent, Surface.open_child)
+                    end
+                    Application = define ..Driver
                         native = Native
                         protocols = Protocols
                         .owner
+                        .dialogs_for
+                        paint = Boundary.paint
+                        serve = Boundary.serve
                         callback = Boundary.callback
                         check_error = Boundary.check_error
                         register = Boundary.register
@@ -80,15 +92,25 @@ local with_application = do(Native, Protocols, body, clock)
                         owner.mutate "open surface"
                         return Surface.with_surface(Application, options)
                     end
-                    return body define ..appearance(Native, owner)
+                    local with_host = do(Services)
+                        owner.mutate "open embedded surface"
+                        return Surface.with_host(Application, Services)
+                    end
+                    return body define
+                        ..appearance(Native, owner)
+                        ..Environment.for_application Application
+                        ..Interop.for_application Application
                         .with_window
                         .with_surface
-                        resources = Media.resources(Application, owner)
+                        .with_host
+                        resources = Resources.for_owner(Application, owner)
                         images = Media.images Application
+                        typography = Typography.for_application Application
                         statistics = Driver.statistics
                         run = Driver.run
                         pump = Driver.pump
                         quit = Driver.quit
+                        with_keep_alive = Driver.with_keep_alive
                     end
                 end
             end

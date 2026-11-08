@@ -1,0 +1,54 @@
+local Canvas = require "bui.ui.canvas"
+local Language = require "bui.ui.canvas_language"
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "canvas language check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local examples = {
+    { kind = "rectangle", coordinates = { 0, 0, 20, 30 } },
+    { kind = "oval", coordinates = { 0, 0, 20, 30 } },
+    { kind = "line", coordinates = { 0, 0, 20, 30, 40, 10 } },
+    { kind = "polygon", coordinates = { 0, 0, 20, 30, 40, 10 } },
+    { kind = "text", coordinates = { 4, 8 }, text = "Checked text", family = "sans", size = 18 },
+    { kind = "arc", coordinates = { 0, 0, 20, 30 }, start = 20, extent = 200 },
+    { kind = "image", coordinates = { 0, 0, 20, 30 }, rgba = string.char(255, 0, 0, 255),
+        image_width = 1, image_height = 1 },
+    { kind = "round_rectangle", coordinates = { 0, 0, 20, 30 }, radius = 5 },
+}
+local seen = {}
+local Observing = {}
+for _, name in ipairs Language.Shape.kinds do
+    Observing[name] = do(node, recurse) seen[name] = true; return node.id end
+end
+local observe = Language.Shape.pass "observe all drawing shapes" Observing
+for index, source in ipairs examples do
+    local description = Canvas.describe(source.kind, source, index)
+    local shape = Language.read description
+    expect(observe shape == index)
+    local written = Language.write shape
+    expect(written.kind == source.kind and written.id == index)
+    local again = Canvas.describe(written.kind, written, written.id)
+    expect(again.coordinates[1] == source.coordinates[1])
+    written.coordinates[1] = 900
+    expect(shape.coordinates[1] ~= 900)
+end
+for _, name in ipairs Language.Shape.kinds do expect seen[name] end
+refuses(|| -> Language.Shape.pass "forgetful" {}, "no handler")
+local rounded = Language.read(Canvas.describe("rectangle",
+        { coordinates = { 0, 0, 4, 4 }, radius = 2 }, 1))
+expect(Language.write(rounded).kind == "round_rectangle")
+local image = Language.read(Canvas.describe("image",
+        { coordinates = { 1, 2 }, source = "fixture.png" }, 1))
+expect(image.source with
+    path = path -> path == "fixture.png"
+    pixels() = false
+    image() = false
+    video() = false
+end)
+refuses(|| -> image.source { path() = nil }, "handler")
+print("BUI canvas language: " .. checks .. " checks passed")

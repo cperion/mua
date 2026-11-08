@@ -1,0 +1,88 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+-- The integration owns native globals; these are not independent per-window settings.
+local for_application = do(Application)
+    local Native, owner, Acquisition = Application.native, Application.owner, Application.protocols.acquisition
+    local appearance = do()
+        owner.check "appearance"
+        return { theme = ffi.string(Native.BK_theme_name()), scale = tonumber(Native.BK_scale()),
+            unit = tonumber(Native.BK_unit()), gpu = Native.BUI_gpu_default() ~= 0,
+            slug = Native.BUI_gpu_slug() ~= 0, version = ffi.string(Native.BK_version_string()) }
+    end
+    local theme_color = do(name)
+        owner.check "theme color"
+        local channels = ffi.new "float[4]"
+        if Native.BK_theme_color(Check.string(name, "theme color"), channels) == 0 then
+            return Acquisition.unavailable "unknown theme color"
+        end
+        return Acquisition.ready { tonumber channels[0],
+            tonumber channels[1], tonumber channels[2], tonumber channels[3] }
+    end
+    local icons = do()
+        owner.check "icon catalog"
+        local names = {}
+        for index = 0, Native.BK_icon_list_count() - 1 do
+            names[#names + 1] = ffi.string(Native.BK_icon_list_name index)
+        end
+        return names
+    end
+    local icon_info = do(name)
+        owner.check "icon information"
+        local identifier = Native.BK_icon_id(Check.string(name, "icon name"))
+        if identifier == 0 then return Acquisition.unavailable "unknown icon" end
+        local canonical = Native.BK_icon_name identifier
+        return Acquisition.ready with
+            id = tonumber identifier
+            name = canonical ~= nil and ffi.string canonical or name
+            glyphs = tonumber(Native.BK_icon_count())
+        end
+    end
+    local animations = do(enabled)
+        owner.mutate "animation policy"
+        Native.BK_set_animations(Check.boolean(enabled, "animations") and 1 or 0)
+    end
+    local slug = do(enabled)
+        owner.mutate "Slug policy"
+        Native.BUI_gpu_set_slug(Check.boolean(enabled, "Slug") and 1 or 0)
+    end
+    local evaluate_number = do(expression)
+        owner.check "evaluate number"
+        local number = ffi.new "double[1]"
+        if Native.BK_eval_number(Check.string(expression, "number expression"), number) == 0 then
+            return Acquisition.unavailable "invalid number expression"
+        end
+        local value = tonumber number[0]
+        if value ~= value or value == math.huge or value == -math.huge then
+            return Acquisition.unavailable "number expression is not finite"
+        end
+        return Acquisition.ready value
+    end
+    local search_storage = do(operation)
+        return do(path)
+            owner.mutate "search history storage"
+            operation(Check.string(path, "search history path"))
+        end
+    end
+    local recent_searches = define
+        enable = do(enabled)
+            owner.mutate "search history policy"
+            Native.BK_recent_searches_enable(Check.boolean(enabled, "search history") and 1 or 0)
+        end
+        clear = do() owner.mutate "clear search history"; Native.BK_recent_searches_clear end
+        load_best_effort = search_storage Native.BK_recent_searches_load
+        save_best_effort = search_storage Native.BK_recent_searches_save
+    end
+    return define
+        .appearance
+        .theme_color
+        .icons
+        .icon_info
+        .animations
+        .slug
+        .evaluate_number
+        .recent_searches
+    end
+end
+
+return define .for_application end

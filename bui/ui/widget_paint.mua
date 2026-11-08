@@ -1,0 +1,77 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+local kinds = { button = 1, toggle = 2, checkbox = 3, radio = 4, number = 5, slider = 6,
+    text = 7, menu = 8, pulldown = 9, menu_item = 10, list_item = 11, swatch = 12,
+    progress = 13, tab = 14, panel_header = 15, disclosure = 16, menu_background = 17,
+    tooltip_background = 18, separator = 19, label = 20, arrow = 21, box = 22 }
+local copy_rectangle = do(destination, value, name)
+    Check.array(value, name)
+    assert(#value == 4, name .. " needs four coordinates")
+    for index = 1, 4 do destination[index - 1] = Check.number(value[index], name, -1e7, 1e7) end
+end
+local copy_color = do(destination, value, name)
+    local channels = Check.color(value, name)
+    ffi.copy(destination, channels, 16)
+end
+
+-- The paint activity supplies the subject and borrow check; no widget or native handle is created.
+local for_paint = do(Native, pointer, check)
+    local widget = do(options)
+        check
+        Check.keys(options,
+            { kind = true, state = true, corners = true, align = true, rectangle = true,
+                clip = true, text_rectangle = true, value = true, color = true, auxiliary = true,
+                text = true, detail = true }, "widget drawing")
+        local item = ffi.new "BKWidgetDraw[1]"
+        item[0].kind = assert(kinds[options.kind], "unknown drawn widget")
+        item[0].state = Check.integer(Check.default(options.state, 0), "widget state bits", 0, 1023)
+        item[0].corners = Check.integer(Check.default(options.corners, 15), "widget corners", 0, 15)
+        local alignments = { default = -1, left = 0, center = 1, right = 2 }
+        item[0].align = assert(alignments[Check.default(options.align, "default")],
+            "unknown text alignment")
+        copy_rectangle(item[0].rect, options.rectangle, "widget rectangle")
+        assert(item[0].rect[2] >= 0 and item[0].rect[3] >= 0, "negative widget dimensions")
+        if options.clip then copy_rectangle(item[0].clip, options.clip, "widget clip") end
+        if options.text_rectangle then copy_rectangle(item[0].text_rect,
+                options.text_rectangle, "text rectangle") end
+        if options.auxiliary then copy_rectangle(item[0].aux, options.auxiliary, "widget auxiliary") end
+        item[0].value = Check.number(Check.default(options.value, 0), "widget value", -1e7, 1e7)
+        if options.color then copy_color(item[0].color, options.color, "widget color")
+        else item[0].color[3] = item[0].kind == 20 and -1 or 1 end
+        local text = Check.string(Check.default(options.text, ""), "widget text")
+        local detail = Check.string(Check.default(options.detail, ""), "widget detail")
+        item[0].text, item[0].text2 = text, detail
+        check
+        Native.BK_draw_widget(pointer, item)
+    end
+    local widget_base = do(options)
+        check
+        Check.keys(options, { rectangle = true, radius = true, inner_radius = true, corners = true,
+                start_color = true,
+                end_color = true, outline = true, emboss = true, horizontal = true,
+                checkerboard = true, pixel_size = true }, "widget base")
+        local base = ffi.new "BuiWidgetBase[1]"
+        copy_rectangle(base[0].rect, options.rectangle, "widget rectangle")
+        assert(base[0].rect[2] >= 0 and base[0].rect[3] >= 0, "negative widget dimensions")
+        base[0].rad = Check.number(Check.default(options.radius, 4), "outer radius", 0, 1e7)
+        base[0].radi = Check.number(Check.default(options.inner_radius,
+                math.max(0, base[0].rad - 1)), "inner radius", 0, base[0].rad)
+        base[0].corners = Check.integer(Check.default(options.corners, 15), "corners", 0, 15)
+        base[0].pixelsize = Check.number(Check.default(options.pixel_size, 1),
+            "pixel size", 0.01, 1000)
+        base[0].shade_horizontal = Check.boolean(Check.default(options.horizontal, false),
+            "horizontal shade") and 1 or 0
+        base[0].alpha_checker = Check.boolean(Check.default(options.checkerboard, false),
+            "checkerboard") and 1 or 0
+        copy_color(base[0].inner1, options.start_color, "start color")
+        copy_color(base[0].inner2, options.end_color, "end color")
+        copy_color(base[0].outline, Check.default(options.outline, { 0, 0, 0, 0 }), "outline")
+        copy_color(base[0].emboss, Check.default(options.emboss, { 0, 0, 0, 0 }), "emboss")
+        check
+        Native.BUI_raster_widget_base(pointer, base)
+    end
+    return define .widget, .widget_base end
+end
+
+return define .for_paint end

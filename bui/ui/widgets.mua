@@ -15,17 +15,24 @@ end
 local Control = { caption = "text" }
 local Container = { ..Control, container = true }
 local NumberValue = { ..Control, value_type = "number" }
-kinds("column row split grid box panel scroll frame node_editor=nodeeditor graph_node=graphnode area_header=areaheader",
-    Container)
-kinds("tabs side_tabs=sidetabs sidebar", { ..Container, value_type = "number" })
-kinds("label separator button decorator popover menu_button=menubutton menu_bar=menubar", Control)
-kinds("toggle checkbox radio", { ..Control, value_type = "boolean", caption = "label" })
+kinds("column row split grid box frame node_editor=nodeeditor area_header=areaheader", Container)
+kinds("panel", { ..Container, native_body = true })
+kinds("scroll", { ..Container, managed_body = "column" })
+kinds("tabs side_tabs=sidetabs sidebar", { ..Container, value_type = "integer" })
+kinds("label separator button menu_button=menubutton tree graph_node=graphnode", Control)
+kinds("menu_bar=menubar", Container)
+kinds("popover", { ..Container, native_body = true })
+kinds("toggle checkbox radio decorator", { ..Control, value_type = "boolean", caption = "label" })
 kinds("number slider", { ..NumberValue, caption = "label" })
-kinds("dropdown enum list tree grid_view=gridview scrollbar", NumberValue)
-kinds("text search hotkey textarea", { ..Control, value_type = "string" })
+kinds("dropdown enum", { ..Control, value_type = "integer", caption = "label" })
+kinds("list grid_view=gridview", { ..Control, value_type = "integer" })
+kinds("scrollbar", { ..Control, value_type = "fraction", value_key = "first" })
+kinds("text search hotkey textarea", { ..Control, value_type = "string", caption = "label" })
 kinds("swatch", { ..Control, value_type = "color" })
-kinds("progress meter", { ..Control, value_type = "fraction" })
-kinds("ramp curve normal histogram canvas image custom video file_browser=filebrowser", Control)
+kinds("progress", { ..Control, value_type = "fraction" })
+kinds("meter", NumberValue)
+kinds("normal", { ..Control, value_type = "normal" })
+kinds("ramp curve histogram canvas image custom video file_browser=filebrowser", Control)
 
 local common_properties = {}
 local properties_of = do(names, value_type)
@@ -45,26 +52,94 @@ local properties = with ..common_properties
     step = { key = "step", type = "number", order = 1 }
     default = { key = "default", type = "number", order = 2 }
     height_units = { key = "height", type = "number" }
-    width = { key = "reqwidth", type = "integer", geometry = true }
-    height = { key = "reqheight", type = "integer", geometry = true }
+    width = { key = "reqwidth", type = "integer", geometry = true, high = 32768 }
+    height = { key = "reqheight", type = "integer", geometry = true, high = 32768 }
 end
+
+-- Per-kind language: properties with the same spelling need not have the same domain.
+local kind_properties = {
+    filebrowser = {
+        directory = { key = "directory", type = "string" },
+        filename = { key = "filename", type = "string" },
+        button = { key = "button", type = "string" },
+        search = { key = "search", type = "string" },
+        bookmarks_file = { key = "bookmarks_file", type = "string" },
+        filters = { key = "filters", type = "strings" },
+        mode = { key = "mode", type = "choice", codes = { open = 0, save = 1, directory = 2 } },
+        multiple = { key = "multiple", type = "boolean" },
+        show_hidden = { key = "show_hidden", type = "boolean" },
+        filter = { key = "filter", type = "integer", low = 0 },
+        sort = { key = "sort", type = "choice", codes = { name = 0, time = 1, size = 2 } },
+        invert = { key = "invert", type = "boolean" },
+    },
+    graphnode = {
+        x = { key = "nx", type = "number", low = -1000000, high = 1000000 },
+        y = { key = "ny", type = "number", low = -1000000, high = 1000000 },
+        graph_width = { key = "nwidth", type = "number", low = 40, high = 32768 },
+        selected = { key = "selected", type = "boolean" },
+        active = { key = "active", type = "boolean" },
+    },
+    nodeeditor = {
+        zoom = { key = "zoom", type = "number", low = 0.09, high = 2.31 },
+        pan_x = { key = "panx", type = "number", low = -1000000, high = 1000000 },
+        pan_y = { key = "pany", type = "number", low = -1000000, high = 1000000 },
+    },
+    ramp = { interpolation = { key = "interpolation", type = "choice",
+            codes = { linear = 0, ease = 1, spline = 2, constant = 3 } } },
+    curve = {
+        channels = { key = "channels", type = "integer", low = 1, high = 4, order = 1 },
+        channel = { key = "channel", type = "integer", low = 0, high = 3, order = 2 },
+    },
+    meter = {
+        low = { key = "low", type = "number" }, high = { key = "high", type = "number" },
+        optimum = { key = "optimum", type = "number" },
+    },
+    scrollbar = {
+        first = { key = "first", type = "fraction" }, last = { key = "last", type = "fraction" },
+    },
+}
+local selection_mode = { key = "selmode", type = "choice",
+    codes = { single = 0, multiple = 1, extended = 2, optional = 3 } }
+kind_properties.list = { .selection_mode }
+kind_properties.tree = { .selection_mode }
 
 local specification = do(descriptor, name)
     if name == "caption" then return { key = descriptor.caption, type = "string" } end
     if name == "value" and descriptor.value_type then
         return with
-            key = descriptor.value_type == "fraction" and "factor" or "value"
+            key = descriptor.value_key or (descriptor.value_type == "fraction" and "factor" or "value")
             type = descriptor.value_type
             order = 3
         end
     end
-    return properties[name]
+    local specialized = kind_properties[descriptor.kind]
+    return specialized and specialized[name] or properties[name]
 end
 
 local ValueChecking = {
     boolean = |value, name| -> Check.boolean(value, name) and 1 or 0,
-    number = |value, name| -> Check.number(value, name),
-    integer = |value, name, property| -> Check.integer(value, name, property.geometry and 0 or nil),
+    number = |value, name, property| -> Check.number(value, name, property.low, property.high),
+    integer = |value, name, property| -> Check.integer(value, name,
+        property.geometry and 0 or property.low, property.high),
+    choice = do(value, name, property)
+        Check.string(value, name)
+        local code = assert(property.codes[value], name .. ": unknown choice")
+        return code
+    end,
+    normal = do(value, name)
+        Check.array(value, name)
+        assert(#value == 3, name .. ": expected three direction components")
+        local direction = ffi.new "float[4]"
+        local length = 0
+        for index = 1, 3 do
+            direction[index - 1] = Check.number(value[index], name, -1, 1)
+            length += value[index] * value[index]
+        end
+        assert(length > 0, name .. ": direction must not be zero")
+        for index = 0, 2 do direction[index] = direction[index] / math.sqrt length end
+        direction[3] = 1
+        return direction
+    end,
     fraction = |value, name| -> Check.number(value, name, 0, 1),
     string = do(value, name, property)
         Check.string(value, name)
@@ -75,6 +150,52 @@ local ValueChecking = {
     color = Check.color,
     strings = Check.strings
 }
+
+-- Checked options lower to a closed publication language, separate from native execution.
+local Setting = family "widget setting"
+local NumberSetting = struct { name: String, key: String, order: Number, value: Number }
+local StringSetting = struct { name: String, key: String, order: Number, value: String }
+local ColorSetting = struct { name: String, key: String, order: Number, value: Any }
+local StringsSetting = struct
+    name: String
+    key: String
+    order: Number
+    value: Any
+    retained: Table
+    count: Number
+end
+local GeometrySetting = struct { name: String, key: String, order: Number, value: Number }
+Setting { NumberSetting, StringSetting, ColorSetting, StringsSetting, GeometrySetting }
+local Instructions = define
+    boolean = NumberSetting
+    number = NumberSetting
+    integer = NumberSetting
+    fraction = NumberSetting
+    choice = NumberSetting
+    string = StringSetting
+    color = ColorSetting
+    normal = ColorSetting
+    strings = StringsSetting
+end
+local Publishing = define
+    NumberSetting = do(node, recurse, record)
+        return record.native.BK_set_num(record.node, node.key, node.value)
+    end
+    StringSetting = do(node, recurse, record)
+        return record.native.BK_set_str(record.node, node.key, node.value)
+    end
+    ColorSetting = do(node, recurse, record)
+        return record.native.BK_set_color(record.node, node.key, node.value)
+    end
+    StringsSetting = do(node, recurse, record)
+        return record.native.BK_set_strs(record.node, node.key, node.value, node.count)
+    end
+    GeometrySetting = do(node, recurse, record)
+        record.native.BK_geom_set(record.node, node.key, node.value)
+        return 1
+    end
+end
+local publish = Setting.pass "publish a checked widget setting" with ..Publishing end
 
 -- Check a complete update before changing C; limits precede initial values deterministically.
 local prepare = do(descriptor, options)
@@ -88,22 +209,24 @@ local prepare = do(descriptor, options)
         assert(options.minimum <= options.maximum, "minimum exceeds maximum")
     end
     for name, value in pairs options do
+        assert(name ~= "items" or (descriptor.kind ~= "graphnode" and descriptor.kind ~= "nodeeditor"),
+            "use sockets or set_links for graph descriptions")
         local property = specification(descriptor, name)
         if not property then error(descriptor.kind .. ": unknown property " .. tostring name, 3) end
         local normalized, retained = ValueChecking[property.type](value,
             descriptor.kind .. "." .. name, property)
-        prepared[#prepared + 1] = with
+        local Instruction = property.geometry and GeometrySetting or Instructions[property.type]
+        prepared[#prepared + 1] = Instruction with
             .name
-            specification = property
+            key = property.key
+            order = property.order or 0
             value = normalized
             .retained
             count = property.type == "strings" and #value or nil
         end
     end
     table.sort(prepared, do(left, right)
-            local left_order,
-            right_order = left.specification.order or 0, right.specification.order or 0
-            if left_order ~= right_order then return left_order < right_order end
+            if left.order ~= right.order then return left.order < right.order end
             return left.name < right.name
         end)
     return prepared
@@ -121,17 +244,7 @@ local apply = do(record, prepared)
     end
     assert(not minimum or not maximum or minimum <= maximum, "minimum exceeds maximum")
     for _, entry in ipairs prepared do
-        local property, accepted = entry.specification
-        if property.geometry then
-            Native.BK_geom_set(node, property.key, entry.value)
-            accepted = 1
-        elseif property.type == "string" then
-            accepted = Native.BK_set_str(node, property.key, entry.value)
-        elseif property.type == "color" then
-            accepted = Native.BK_set_color(node, property.key, entry.value)
-        elseif property.type == "strings" then
-            accepted = Native.BK_set_strs(node, property.key, entry.value, entry.count)
-        else accepted = Native.BK_set_num(node, property.key, entry.value) end
+        local accepted = publish(entry, record)
         assert(accepted == 1, record.kind .. ": native property refused " .. entry.name)
     end
     record.limits = { .minimum, .maximum }
@@ -142,13 +255,16 @@ local current = do(record)
     record.owner.check "read current value"
     local Native, node, kind = record.native, record.node, record.descriptor.value_type
     if kind == "string" then return ffi.string(Native.BK_get_str(node, "value")) end
-    if kind == "color" then
+    if kind == "color" or kind == "normal" then
         local channels = ffi.new "float[4]"
         assert(Native.BK_get_color(node, "value", channels) == 1)
+        if kind == "normal" then return { tonumber channels[0],
+                tonumber channels[1], tonumber channels[2] } end
         return { tonumber channels[0],
             tonumber channels[1], tonumber channels[2], tonumber channels[3] }
     end
-    local value = tonumber(Native.BK_get_num(node, kind == "fraction" and "factor" or "value"))
+    local value = tonumber(Native.BK_get_num(node,
+            record.descriptor.value_key or (kind == "fraction" and "factor" or "value")))
     if kind == "boolean" then return value ~= 0 end
     return value
 end
@@ -160,17 +276,22 @@ local event_names = {
     [16] = "submitted",[17] = "view_changed",[18] = "scrolled",[19] = "configured",
     [20] = "key_released",
 }
-local notifications = {}
+local notifications = { expanded = true }
 for _, name in pairs event_names do notifications[name] = true end
 
 -- Copy transient native payloads before C returns; notification delivery never borrows them.
 local snapshot = do(record, kind, reference, first, second)
+    if record.event_snapshot then
+        local name, payload = record.event_snapshot(kind, reference, first, second)
+        if name then return name, payload end
+    end
     local name = event_names[kind]
     if not name then return end
     if name == "changed" then
         if record.change_snapshot then return name, record.change_snapshot() end
         if record.descriptor.value_type then return name, current record end
     end
+    if name == "view_changed" and record.view_snapshot then return name, record.view_snapshot() end
     if name == "configured" then
         local bounds = ffi.new "int[4]"
         record.native.BK_node_rect(record.node, bounds)
@@ -186,6 +307,7 @@ end
 
 return define
     .catalog
+    .Setting
     .prepare
     .apply
     .current

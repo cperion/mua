@@ -6,6 +6,15 @@ local Editors = require "bui.ui.editors"
 local Canvas = require "bui.ui.canvas"
 local Media = require "bui.ui.media"
 local Handles = require "bui.ui.handles"
+local Collections = require "bui.ui.collections"
+local Menus = require "bui.ui.menus"
+local Resources = require "bui.ui.resources"
+local Custom = require "bui.ui.custom"
+local Layout = require "bui.ui.layout"
+local FileBrowser = require "bui.ui.file_browser"
+local Fields = require "bui.ui.fields"
+local Graphs = require "bui.ui.graphs"
+local Containers = require "bui.ui.containers"
 
 if jit then jit.off(true, true) end
 
@@ -22,7 +31,7 @@ local checked_vocabulary = do(owner, Capabilities)
         else Public[name] = capability end
     end
     if Handles.kind Capabilities then return Handles.alias(Capabilities, Public, owner) end
-    return Public
+    return Fields.alias(Capabilities, Public)
 end
 
 -- Snapshot delivery belongs to a connection's lifetime, not a reusable native address.
@@ -115,12 +124,17 @@ local capabilities_for = do(record)
     end
 end
 
-local node = do(Application, window, parent_owner, parent_node, descriptor, options)
+local placement, mount
+local node
+node = do(Application, window, parent_owner, parent_node, descriptor, options)
     parent_owner.mutate("assemble " .. descriptor.kind)
     local prepared = Widgets.prepare(descriptor, options)
     return Scope.prepare(parent_owner, do()
             local owner = parent_owner.child descriptor.kind
             local Native = Application.native
+            local graph_parent = ffi.string(Native.BK_node_type parent_node) == "nodeeditor"
+            assert(graph_parent == (descriptor.kind == "graphnode"),
+                "graph nodes must be direct children of a node editor, which accepts only graph nodes")
             local pointer = Native.BK_node_new descriptor.kind
             assert(pointer ~= nil, "native widget unavailable: " .. descriptor.kind)
             owner.defer do() Native.BK_node_free pointer end
@@ -143,15 +157,30 @@ local node = do(Application, window, parent_owner, parent_node, descriptor, opti
                 ..Editors.for_control(record, Control)
                 ..Canvas.for_control record
                 ..Media.for_control record
+                ..Collections.for_control record
+                ..Menus.for_control record
+                ..Custom.for_control record
+                ..Layout.for_control record
+                ..FileBrowser.for_control record
+                ..Fields.for_control record
+                ..Containers.for_control(record, do(installer, body)
+                        local installed = mount(Application, window, owner, pointer, installer)
+                        return Scope.with_owner installed.owner do() return body installed.capabilities end
+                    end)
+                ..Graphs.for_control(record, do(options)
+                        return Application.assembling do()
+                            return node(Application,
+                                window, owner, pointer, Widgets.catalog.graph_node, options).capabilities
+                        end
+                    end)
             end
+            Fields.remember(record.capabilities, record)
             record.ready = true
             owner.activate
             Application.check_error
             return record
         end)
 end
-
-local placement, mount
 
 -- Prepare detached content, then publish once; rejection never exposes a partial subtree.
 mount = do(Application, window, parent_owner, parent_node, installer)
@@ -160,7 +189,8 @@ mount = do(Application, window, parent_owner, parent_node, installer)
             local owner = parent_owner.child "mounted component"
             return Application.assembling do()
                 local Native = Application.native
-                local root = Native.BK_node_new "column"
+                local graph = ffi.string(Native.BK_node_type parent_node) == "nodeeditor"
+                local root = Native.BK_node_new(graph and "nodeeditor" or "column")
                 assert(root ~= nil, "component root allocation failed")
                 owner.defer do() Native.BK_node_free root end
                 Native.BK_set_num(root, "padding", 0)
@@ -170,7 +200,15 @@ mount = do(Application, window, parent_owner, parent_node, installer)
                     installer(placement(Application, window, owner, root)))
                 owner.check "publish component"
                 Application.check_error
-                assert(Native.BK_node_add(parent_node, root, -1) == 1, "cannot publish component")
+                if graph then
+                    -- Graph children must stay direct children. Prepare under a detached
+                    -- editor, then transfer the checked children without an intervening frame.
+                    while Native.BK_node_child_count root > 0 do
+                        assert(Native.BK_node_add(parent_node, Native.BK_node_child(root, 0), -1) == 1,
+                            "cannot publish graph component")
+                    end
+                else assert(Native.BK_node_add(parent_node, root, -1) == 1,
+                        "cannot publish component") end
                 owner.activate
                 return { .owner, .root, .capabilities }
             end
@@ -189,7 +227,16 @@ placement = do(Application, window, owner, parent_node)
                             return Application.assembling do()
                                 local container = node(Application, window, owner,
                                     parent_node, descriptor, options)
-                                body(placement(Application, window, container.owner, container.node))
+                                local parent = container.node
+                                if descriptor.native_body then
+                                    parent = Application.native.BK_node_child(parent, 0)
+                                    assert(parent ~= nil, name .. " has no native body")
+                                elseif descriptor.managed_body then
+                                    parent = node(Application, window, container.owner, parent,
+                                        Widgets.catalog[descriptor.managed_body],
+                                        { fill = true, padding = 0 }).node
+                                end
+                                body(placement(Application, window, container.owner, parent))
                                 return container.capabilities
                             end
                         end)
@@ -238,12 +285,15 @@ placement = do(Application, window, owner, parent_node)
         owner.mutate "schedule timer"
         return do(body) return Application.after(owner, window, milliseconds, body) end
     end
-    return define ..Controls
+    return define
+        ..Controls
+        ..Application.dialogs_for(window, owner)
+        ..Fields.for_owner(Application, owner, window)
         .include
         .slot
         .after
         animate = body -> Application.animate(owner, window, body)
-        resources = Media.resources(Application, owner)
+        resources = Resources.for_owner(Application, owner)
     end
 end
 
@@ -256,4 +306,4 @@ local with_content = do(Application, window, parent_node, installer, body)
     end
 end
 
-return define .with_content, .notify end
+return define .with_content, .notify, .mount end

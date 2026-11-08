@@ -3,6 +3,8 @@ local Check = require "bui.ui.check"
 local Queue = require "bui.ui.queue"
 local Widgets = require "bui.ui.widgets"
 local Mount = require "bui.ui.mount"
+local Menus = require "bui.ui.menus"
+local Scope = require "bui.ui.scope"
 
 if jit then jit.off(true, true) end
 
@@ -19,6 +21,33 @@ local new = do(Native, owner, Boundary, Protocols, now)
     local windows, nodes, timers = {}, {}, {}
     local next_timer, assembly_depth = 0, 0
     local running, quitting, woken = false, false, false
+    local keep_alive, wake_ready = 0, false
+    local wake_callback = Boundary.callback("void (*)(void)", do() woken = true end)
+    local with_keep_alive = do(body)
+        owner.mutate "keep integration alive"
+        Check.callable(body, "keep-alive body")
+        if not wake_ready then
+            if Native.BK_window_wake_init wake_callback == 0 then
+                Native.BK_window_wake_init(nil)
+                return Protocols.acquisition.unavailable "native wake integration unavailable"
+            end
+            wake_ready = true
+        end
+        return Scope.with_owner(owner.child "keep-alive") do(lifetime)
+            keep_alive += 1
+            Native.BK_window_set_keep_alive 1
+            lifetime.defer do()
+                keep_alive -= 1
+                Native.BK_window_set_keep_alive(keep_alive > 0 and 1 or 0)
+            end
+            lifetime.activate
+            local wake = do()
+                lifetime.check "wake integration"
+                Native.BK_window_wake
+            end
+            return Protocols.acquisition.ready(body define .wake end)
+        end
+    end
 
     local has_due = do()
         local current_time = now()
@@ -75,6 +104,11 @@ local new = do(Native, owner, Boundary, Protocols, now)
             end
         end
         timer_owner.activate
+        if window.host_services and window.host_services.schedule then
+            local succeeded, problem = pcall(Boundary.serve,
+                do() window.host_services.schedule milliseconds end)
+            if not succeeded then timer_owner.close; error(problem, 0) end
+        end
         poll_timers
         return timer_owner.close
     end
@@ -93,6 +127,10 @@ local new = do(Native, owner, Boundary, Protocols, now)
 
     local emitted = Boundary.callback("void (*)(void *, BKNode *, int, void *, double, double)",
         do(_, pointer, kind, reference, first, second)
+            if kind == 3 then
+                Menus.dispatch(Boundary, Delivery, reference)
+                return
+            end
             local record = nodes[tostring pointer]
             if record and record.ready and record.owner.is_alive() then
                 local name, payload = Widgets.snapshot(record, kind, reference, first, second)
@@ -141,10 +179,35 @@ local new = do(Native, owner, Boundary, Protocols, now)
                 end
             end
         end)
+    local post_host = do(surface, name, ..arguments)
+        local Services = surface.window.host_services
+        if Services and Services[name] then
+            Delivery.post(surface.window.owner, Services[name], ..arguments)
+            if Services.wake then Services.wake end
+        end
+    end
+    local redraw = Boundary.callback("void (*)(void *)", do(token)
+            local surface = Boundary.resolve token
+            if surface then post_host(surface, "request") end
+        end, nil, "service")
+    local cursor_changed = Boundary.callback("void (*)(void *, int)", do(token, code)
+            local surface = Boundary.resolve token
+            if surface then post_host(surface, "cursor", tonumber code) end
+        end, nil, "service")
+    local warp = Boundary.callback("void (*)(void *, int, int)", do(token, x, y)
+            local surface = Boundary.resolve token
+            if surface then post_host(surface, "warp", tonumber x, tonumber y) end
+        end, nil, "service")
     local clipboard_get = Boundary.callback("char *(*)(void *)", do(token)
             local surface = Boundary.resolve token
-            if not surface or not surface.clipboard_text then return nil end
+            if not surface then return nil end
             local text = surface.clipboard_text
+            local Services = surface.window.host_services
+            if Services and Services.read_clipboard then
+                local outcome: Protocols.acquisition = Services.read_clipboard()
+                text = outcome { ready = value -> Check.string(value, "host clipboard"), unavailable() = nil }
+            end
+            if text == nil then return nil end
             local pointer = Native.mua_bui_malloc(#text + 1)
             if pointer == nil then return nil end
             ffi.copy(pointer, text, #text + 1)
@@ -152,7 +215,10 @@ local new = do(Native, owner, Boundary, Protocols, now)
         end, nil, "service")
     local clipboard_set = Boundary.callback("void (*)(void *, const char *)", do(token, text)
             local surface = Boundary.resolve token
-            if surface then surface.clipboard_text = ffi.string text end
+            if surface then
+                surface.clipboard_text = ffi.string text
+                post_host(surface, "write_clipboard", surface.clipboard_text)
+            end
         end, nil, "service")
     local schedule = Boundary.callback("void (*)(void *, int, int)",
         do(token, milliseconds, identifier)
@@ -160,6 +226,9 @@ local new = do(Native, owner, Boundary, Protocols, now)
             if not surface then return end
             local window = surface.window
             local request = { deadline = now() + milliseconds / 1000 }
+            if window.host_services and window.host_services.schedule then
+                window.host_services.schedule milliseconds
+            end
             surface.toolkit_timers[identifier] = request
             Delivery.post(window.owner, do()
                     if surface.toolkit_timers[identifier] ~= request then return end
@@ -182,6 +251,9 @@ local new = do(Native, owner, Boundary, Protocols, now)
         local host = ffi.new "BKHost[1]"
         host[0].data = token
         host[0].emit = emitted
+        host[0].request = redraw
+        host[0].set_cursor = cursor_changed
+        host[0].warp = warp
         host[0].clipboard_get = clipboard_get
         host[0].clipboard_set = clipboard_set
         host[0].schedule = schedule
@@ -250,7 +322,7 @@ local new = do(Native, owner, Boundary, Protocols, now)
         with_dispatch do()
             while true do
                 turn
-                if quitting or not has_windows() then break end
+                if quitting or (not has_windows() and keep_alive == 0) then break end
                 if Delivery.pending() or has_due() then Native.BK_window_pump
                 else Native.BK_window_run end
             end
@@ -275,13 +347,17 @@ local new = do(Native, owner, Boundary, Protocols, now)
     Native.BK_window_set_stop_check stop
     owner.defer do()
         Native.BK_window_set_stop_check(nil)
+        if wake_ready then Native.BK_window_wake_init(nil) end
+        Native.BK_window_set_keep_alive 0
         Delivery.clear
     end
     return define
         .after
         .animate
         .attach_surface
+        .with_keep_alive
         .track_node
+        find_node = do(pointer) return nodes[tostring pointer] end
         .each_node
         .assembling
         .run

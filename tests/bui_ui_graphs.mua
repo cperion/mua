@@ -1,0 +1,116 @@
+local Ui = require "bui.ui"
+local Graphs = require "bui.ui.graphs"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+if jit then jit.off(true, true) end
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "graph check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local expired, first_socket
+local source = Ui.sockets do(Socket)
+    expired = Socket
+    Socket.output { caption = "Value", type = "float" }
+    Socket.input { caption = "Scale", value = 2 }
+end
+first_socket = source[1]
+expect(check(Graphs.Socket, first_socket))
+refuses(|| -> expired.input { caption = "Late" }, "builder has ended")
+refuses(|| -> Ui.sockets do(Socket) Socket.input { caption = "bad|field" } end, "contains |")
+refuses(|| -> Graphs.Socket.pass "incomplete" {}, "no handler")
+local escaped_node, escaped_editor
+Ui.with_application Native do(Application)
+    Application.gpu_default false
+    Application.with_surface { width = 600, height = 400 } do(surface)
+        local first, second, graph, placement, events = nil, nil, nil, nil, {}
+        surface.with_content do(place)
+            refuses(|| -> place.graph_node {}, "direct children")
+            graph = place.node_editor { height = 350 } do(editor)
+                placement = editor
+                refuses(|| -> editor.label "Invalid", "only graph nodes")
+                first = editor.include do(component)
+                    return component.graph_node { caption = "First", x = 20, y = 20 }
+                end
+                second = editor.graph_node { caption = "Second", x = 250, y = 20 }
+                first.set_sockets source
+                second.set_sockets(Ui.sockets do(Socket) Socket.input { caption = "Value", value = 0 } end)
+            end
+            graph.set_links { { from = first, output = 1, to = second, input = 1 } }
+            return graph
+        end do(mounted)
+            escaped_node, escaped_editor = first, mounted
+            expect(#mounted.nodes() == 2)
+            expect(mounted.nodes()[1].graph_identity() == first.graph_identity())
+            expect(mounted.links()[1].to.graph_identity() == second.graph_identity())
+            local copied = first.sockets()
+            copied[1].caption = "Changed outside"
+            expect(first.sockets()[1].caption == "Value")
+            first_socket.caption = "Mutated source"
+            expect(first.sockets()[1].caption == "Value")
+            refuses(|| -> mounted.configure { items = { "0 0 1 0" } }, "use sockets")
+            refuses(|| -> mounted.set_links { { from = first, output = 2, to = second, input = 1 } },
+                "output socket")
+            refuses(|| -> mounted.set_links {
+                    { from = first, output = 1, to = second, input = 1 },
+                    { from = first, output = 1, to = second, input = 1 },
+                }, "already has a link")
+            expect(#mounted.links() == 1)
+            local tentative
+            refuses(|| -> placement.include do(children)
+                    tentative = children.graph_node { caption = "Tentative" }
+                    error("graph preparation failed", 0)
+                end, "graph preparation failed")
+            expect(#mounted.nodes() == 2 and #mounted.links() == 1)
+            refuses(tentative.graph_state, "activity has ended")
+            local more = mounted.add_node { caption = "Third", x = 250, y = 180 }
+            more.set_sockets(Ui.sockets do(Socket) Socket.input { caption = "Value" } end)
+            mounted.set_links {
+                { from = first, output = 1, to = second, input = 1 },
+                { from = first, output = 1, to = more, input = 1 },
+            }
+            mounted.remove_node second
+            expect(#mounted.nodes() == 2 and #mounted.links() == 1)
+            expect(mounted.links()[1].to.graph_identity() == more.graph_identity())
+            refuses(second.graph_state, "activity has ended")
+            first.connect { changed = do(change) events[#events + 1] = change end }
+            mounted.connect { changed = do(change) events[#events + 1] = change end }
+            surface.render
+            local box = first.graph_rectangle()
+            surface.input.press(box.x + 30, box.y + 10, 0)
+            surface.input.motion(box.x + 50, box.y + 30, 0)
+            surface.input.release(box.x + 50, box.y + 30, 0)
+            expect(#events == 0)
+            Application.pump
+            local moved, reordered = false, false
+            for _, change in ipairs events do
+                change with
+                    moved = do(state) moved = true; expect(state.id == first.graph_identity() and state.x > 20) end
+                    order = do(states) reordered = true; expect(#states == 2) end
+                    selection = do(state) expect state.selected end
+                    input = do() error "unexpected input" end
+                    collapsed = do() error "unexpected collapse" end
+                    links = do() error "unexpected link edit" end
+                    deletion = do() error "unexpected deletion" end
+                end
+            end
+            expect(moved and reordered)
+            expect(mounted.links()[1].from.graph_identity() == first.graph_identity())
+            more.set_sockets(Ui.sockets do(Socket) Socket.input { caption = "Replacement" } end)
+            expect(#mounted.links() == 0)
+            mounted.fit_view
+            expect(mounted.graph_view().zoom > 0)
+            mounted.remove_node first
+            expect(#mounted.nodes() == 1)
+        end
+    end with
+        opened() = nil
+        unavailable = reason -> error reason
+    end
+end
+refuses(escaped_node.sockets, "activity has ended")
+refuses(escaped_editor.links, "activity has ended")
+print("BUI graphs: " .. checks .. " checks passed")

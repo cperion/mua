@@ -1,0 +1,169 @@
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+if jit then jit.off(true, true) end
+local checks = 0
+local expect = do(condition, detail)
+    checks += 1
+    assert(condition, "service check " .. checks .. (detail and ": " .. detail or ""))
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+local opened = result -> result { opened = value -> value, unavailable = reason -> error reason }
+local last_class, last_token, last_node
+local Watched = meta { index = do(_, key) return Native[key] end } with
+    BK_custom_set = do(node, class, token)
+        if class ~= nil then
+            last_class = ffi.new("BKCustomClass", class[0])
+            last_token, last_node = token, node
+        end
+        return Native.BK_custom_set(node, class, token)
+    end
+end
+Ui.with_application Watched do(Application)
+    Application.gpu_default false
+    local acquire = arg[2] == "--window" and Application.with_window or Application.with_surface
+    opened(acquire { width = 400, height = 300 } do(surface)
+            local custom, field, frame, label
+            if arg[2] == "--window" then
+                expect(surface.gpu false { ready() = true, unavailable() = false })
+                expect(surface.gpu_state() { software() = true,
+                        starting() = false, hardware() = false })
+                expect(surface.manager.minimum(100, 100) { ready() = true, unavailable() = false })
+                expect(surface.manager.scale() { ready = value -> value.first > 0, unavailable() = false })
+                surface.manager.topmost false { ready() = nil, unavailable() = nil }
+                surface.with_native do(Borrow) expect(Borrow.handles().handle ~= nil) end
+                Application.resources.with_raster { width = 8, height = 8 } do(Raster)
+                    Raster.with_frame {} do(Paint)
+                        Paint.rectangle { width = 8, height = 8, color = { 1, 0, 0, 1 } }
+                    end
+                    local accepted = surface.present(Raster) { ready() = true,
+                        unavailable() = false }
+                    expect(accepted == (ffi.os == "Windows"))
+                end { ready() = nil, unavailable = reason -> error reason }
+            end
+            local settle = do(predicate)
+                local now = require("bui.ui.clock").now
+                local deadline = now() + 2
+                repeat
+                    Application.pump
+                    surface.render
+                until predicate() or now() >= deadline
+            end
+            local painted, prepared, delivered = 0, 0, 0
+            local events, escaped_service, escaped_paint = {}
+            surface.with_content do(place)
+                frame = place.frame { width = 300, height = 80 } do(children)
+                    label = children.label "Geometry"
+                    label.layout { manager = "grid", row = 0, column = 0, sticky = "all" }
+                end
+                frame.grid_track("column", 1, 1, 100)
+                custom = place.custom { height = 100 }
+                custom.behavior define
+                    width = 120
+                    height = 80
+                    event = do(event, Services)
+                        events[#events + 1] = event
+                        escaped_service = Services
+                        refuses(surface.close, "forbidden during service")
+                        Services.cursor "crosshair"
+                        Services.invalidate
+                        Services.post(do(snapshot) delivered += 1; expect(snapshot == event) end,
+                            event)
+                        return Ui.Input.consumed()
+                    end
+                    frame = do(Services)
+                        prepared += 1
+                        refuses(surface.close, "forbidden during frame")
+                        return Ui.Frame.finished()
+                    end
+                    draw = do(Paint, rectangle)
+                        painted += 1
+                        escaped_paint = Paint
+                        refuses(surface.close, "forbidden during draw")
+                        Paint.rectangle with
+                            x = rectangle.x
+                            y = rectangle.y
+                            width = rectangle.width
+                            height = rectangle.height
+                            color = { 1, 0, 0, 1 }
+                        end
+                    end
+                end
+                field = place.textarea { value = "before", height = 60 }
+            end do()
+                if arg[2] == "--window" then
+                    surface.show
+                    settle(|| -> prepared > 0)
+                else surface.render end
+                local bounds = custom.rectangle()
+                expect(prepared >= 1 and painted >= 1,
+                    ("prepared=%d painted=%d bounds=%d,%d %dx%d"):format(
+                        prepared, painted, bounds.x, bounds.y, bounds.width, bounds.height))
+                expect(custom.natural_size().width == 120)
+                expect(label.geometry().manager == "grid" and label.rectangle().width >= 100)
+                expect(label.inspect().kind == "label" and #frame.children() == 1)
+                expect(label.parent() { selected = value -> value.kind == "frame", empty() = false })
+                label.layout { manager = "place", x = 10, y = 5, width = 100, height = 20 }
+                settle(|| -> label.rectangle().width == 100 and label.rectangle().height == 20)
+                expect(label.rectangle().width == 100 and label.rectangle().height == 20,
+                    "placed dimensions")
+                label.reset_placement
+                refuses(|| -> label.layout { manager = "invalid" }, "unknown geometry")
+                refuses(|| -> frame.grid_track("row", 0, 1), "range")
+                local rectangle = custom.rectangle()
+                surface.input.press(rectangle.x + 10, rectangle.y + 10, 0)
+                surface.input.release(rectangle.x + 10, rectangle.y + 10, 0)
+                expect(custom.focused() and #events >= 3 and delivered == 0)
+                expect(surface.input.key("a", "a", 0))
+                expect(events[#events].kind == "key_pressed" and events[#events].text == "a")
+                Application.pump
+                expect(delivered == #events)
+                refuses(escaped_service.focused, "activity has ended")
+                refuses(|| -> escaped_paint.rectangle with
+                    width = 1
+                    height = 1
+                    color = { 1, 1, 1, 1 }
+                end, "activity has ended")
+                local old_class, old_token = last_class, last_token
+                local replacement = custom.behavior { event = do() return Ui.Input.ignored() end }
+                expect(not surface.input.key("b", "b", 0))
+                local event = ffi.new("BKCustomEvent[1]", { { type = 6 } })
+                expect(old_class.event(old_token, last_node, event) == 0)
+                replacement
+                expect(last_class.event(last_token, last_node, event) == 0)
+                field.focus
+                field.move_caret 6
+                surface.render
+                expect surface.ime.state().enabled
+                expect(surface.ime.start())
+                expect(surface.ime.compose { composite = "é", cursor = 2, start = 0, stop = 2 })
+                expect(surface.ime.composing())
+                refuses(|| -> surface.ime.compose { composite = "é", cursor = 1 }, "UTF-8")
+                expect(surface.ime.compose { result = "é" })
+                surface.ime.finish
+                expect(field.current():find("é", 1, true) and not surface.ime.composing())
+                surface.clear_focus
+                expect(surface.interaction().focus { selected() = false, empty() = true })
+            end
+            refuses(custom.focused, "activity has ended")
+        end)
+end
+-- A bad service result is captured at the C boundary and raised after input returns.
+refuses(|| -> Ui.with_application Native do(Application)
+        Application.gpu_default false
+        opened(Application.with_surface { width = 100, height = 100 } do(surface)
+                surface.with_content do(place)
+                    local custom = place.custom { height = 90 }
+                    custom.behavior { event = do() return Ui.Frame.finished() end }
+                    return custom
+                end do(custom)
+                    surface.render
+                    local bounds = custom.rectangle()
+                    surface.input.press(bounds.x + 4, bounds.y + 4, 0)
+                end
+            end)
+    end, "Input")
+print("BUI services: " .. checks .. " checks passed")
