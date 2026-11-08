@@ -315,15 +315,36 @@ the library does not claim that the video player supports them. Playback is mute
 
 ## Implementation and verification
 
-`bui/ui.mua` owns the Mua protocols and activity vocabulary; `descriptions.mua` owns pure drawing
-assembly. `scope.lua` and `queue.lua` are native-independent ownership/delivery machinery.
-`application.lua` owns native dispatch; `mount.lua` is the single mounting engine;
-`widgets.lua` supplies checked property descriptions; specialized modules extend that engine.
+The managed implementation is Mua throughout `bui/ui/`, not a Mua façade over a Lua framework.
+It follows [the activity guide](designing-and-writing-mua.md) and the vocabulary/composition
+patterns in `examples/lisp.mua`. Raw declarations and library loading remain in `bui.ffi`.
+
+- `application.mua` is the composition root: it owns the exclusive integration and composes
+  the driver, resource and appearance vocabularies. There is no `Application` superclass.
+- `scope.mua` owns private acquisition ledgers. Each owner supplies closure-backed verbs, not
+  writable `children`, `cleanups` or lifecycle fields. `with_owner` completes on every exit;
+  `prepare` adopts successful acquisitions or revokes/releases only the tentative entries.
+- `callbacks.mua` owns trampoline lifetimes, phase restrictions and captured native failures;
+  `queue.mua` owns bounded FIFO delivery; `dispatch.mua` owns deadlines and native wakeups.
+  These responsibilities have separate private state rather than one mutable application record.
+- `surface.mua` supplies native-window and offscreen acquisition activities over one mounting
+  engine in `mount.mua`. Control, editor, canvas and presentation capabilities compose by spread;
+  overlapping names are errors, not silent overwrites by extension order.
+- `widgets.mua` supplies checked property descriptions. `descriptions.mua` builds drawing data;
+  `canvas.mua` consumes it. `media.mua` owns image/animation/video activities and loader policy;
+  `handles.mua` checks resource identities and retained loans.
+
+Copying a capability vocabulary shares its captured state; a new activity creates independent
+state. No native pointer, destructor or callback registration becomes caller-owned merely because
+its vocabulary was copied.
 
 Native publication rechecks owner liveness after input normalization; an input accessor that
 retires a mount cannot cause a subsequent write through its freed node. Dense arrays require
 actual entries, not metatable-synthesized values for holes.
 
+`tests/bui_ui_ownership.mua` tests the Mua activities without a desktop: private ledgers,
+independent versus shared captures, rollback sibling revocation, multiple/nil results, narrowed
+loans, cancelled delivery, synchronous-service restrictions and stale registration identities.
 `tests/bui_ui.lua` covers completion, partial failure, discarded delivery, slot replacement,
 independent mounts, focus during failed assembly, copied values, callbacks, timers, editors,
 canvas retention and native animation. `tests/bui_ui_media.lua` covers copied pixels, strided
@@ -335,7 +356,9 @@ deadline. `--require-video` makes missing decoding a test failure.
 
 CTest runs headless UI/media tests and the composed example; `BUI_FFI_TEST_WINDOW=ON` adds
 bounded real-window tests, and `BUI_FFI_TEST_VIDEO=ON` additionally requires working video
-playback. The raw ABI suite remains separate.
+playback. Set `MUA_LUAJIT_EXECUTABLE` to the LuaJIT with the syntax backport required by Mua
+(the same runtime used for the Lisp example); CMake checks this at configuration time.
+`LUAJIT_EXECUTABLE` continues to select the raw ABI/FFI test runtime. The raw ABI suite remains separate.
 
 Remaining design families include tree forests, complete menus and key maps, dialogs,
 custom drawing/services, raster/texture activities (including media texture transfer), IME and advanced

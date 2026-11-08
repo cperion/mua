@@ -1,0 +1,108 @@
+local ffi = require "ffi"
+
+-- Supply a default only for absence; false is never a missing number or string.
+local default = do(value, fallback)
+    if value == nil then return fallback end
+    return value
+end
+
+-- Reject coercions and non-finite values before numbers cross the native boundary.
+local number = do(value, name, minimum, maximum)
+    if type value ~= "number" or value ~= value or value == math.huge or value == -math.huge
+    or (minimum and value < minimum) or (maximum and value > maximum) then
+        error(name .. ": expected a finite number in range", 3)
+    end
+    return value
+end
+
+-- Native counts and indexes are signed integers unless a caller supplies other bounds.
+local integer = do(value, name, minimum, maximum)
+    number(value, name, minimum or -2147483648, maximum or 2147483647)
+    if value % 1 ~= 0 then error(name .. ": expected an integer", 3) end
+    return value
+end
+
+-- Text passed as a C string must not contain an embedded terminator.
+local string = do(value, name)
+    if type value ~= "string" or value:find("\0", 1, true) then
+        error(name .. ": expected a string without NUL bytes", 3)
+    end
+    return value
+end
+
+-- Booleans are values, not Lua truthiness converted to a native flag.
+local boolean = do(value, name)
+    if type value ~= "boolean" then error(name .. ": expected a boolean", 3) end
+    return value
+end
+
+-- A supplied continuation must be an ordinary function.
+local callable = do(value, name)
+    if type value ~= "function" then error(name .. ": expected a function", 3) end
+    return value
+end
+
+-- Descriptions are tables, never arbitrary indexable native objects.
+local table_value = do(value, name)
+    if type value ~= "table" then error(name .. ": expected a table", 3) end
+    return value
+end
+
+-- Dense arrays have no holes or keyed extras; metatables cannot fabricate missing entries.
+local array = do(value, name)
+    table_value(value, name)
+    local count = #value
+    for key in pairs value do
+        if type key ~= "number" or key % 1 ~= 0 or key < 1 or key > count then
+            error(name .. ": expected a dense array", 3)
+        end
+    end
+    for index = 1, count do
+        if rawget(value, index) == nil then error(name .. ": array contains a hole", 3) end
+    end
+    return value
+end
+
+-- Reject unknown supplied fields instead of silently passing misspellings into C.
+local keys = do(value, allowed, name)
+    table_value(value, name)
+    for key in pairs value do
+        if not allowed[key] then error(name .. ": unknown field " .. tostring key, 3) end
+    end
+    return value
+end
+
+-- Copy four checked RGBA channels to storage suitable for an immediate native call.
+local color = do(value, name)
+    array(value, name)
+    if #value ~= 4 then error(name .. ": expected four RGBA channels", 3) end
+    local channels = ffi.new "float[4]"
+    for index = 1, 4 do channels[index - 1] = number(value[index], name, 0, 1) end
+    return channels
+end
+
+-- Return both the native pointers and their retained string storage.
+local strings = do(value, name)
+    array(value, name)
+    local pointers = ffi.new("const char *[?]", math.max(1, #value))
+    local retained = {}
+    for index, text in ipairs value do
+        retained[index] = string(text, name)
+        pointers[index - 1] = retained[index]
+    end
+    return pointers, retained
+end
+
+return define
+    .default
+    .number
+    .integer
+    .string
+    .boolean
+    .callable
+    table = table_value
+    .array
+    .keys
+    .color
+    .strings
+end

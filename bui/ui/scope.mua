@@ -1,0 +1,158 @@
+-- Ownership is an activity ledger, not a superclass for UI objects. Its vocabulary closes
+-- over the ledger; copying that vocabulary neither copies state nor acquires another owner.
+local ledgers = meta { mode = "k" } {}
+
+local packed = do(..values) = values
+
+local ledger_of = do(owner)
+    return assert(ledgers[owner], "expected an activity owner")
+end
+
+local revoke
+revoke = do(ledger)
+    ledger.state = "closing"
+    for _, child in ipairs ledger.children do revoke(ledger_of child) end
+end
+
+local release
+release = do(ledger, failures)
+    while #ledger.children > 0 do
+        release(ledger_of ledger.children[#ledger.children], failures)
+    end
+    for index = #ledger.cleanups, 1, -1 do
+        local cleanup = ledger.cleanups[index].cleanup
+        ledger.cleanups[index] = nil
+        if cleanup then
+            local succeeded, problem = pcall cleanup
+            if not succeeded and not failures.present then
+                failures.present, failures.problem = true, problem
+            end
+        end
+    end
+    ledger.state = "closed"
+    if ledger.parent then
+        local siblings = ledger_of(ledger.parent).children
+        for index = #siblings, 1, -1 do
+            if ledger_of siblings[index] == ledger then
+                table.remove(siblings, index)
+                break
+            end
+        end
+    end
+end
+
+-- Create an acquiring owner; children inherit their parent's integration guard and lifetime.
+local new
+new = do(parent, label, Guard)
+    local inherited = parent and ledger_of parent
+    if parent then parent.mutate("acquire " .. label) end
+    local ledger = with
+        .parent
+        .label
+        state = "acquiring"
+        children = {}
+        cleanups = {}
+        guard = inherited and inherited.guard or Guard
+        integration = inherited and inherited.integration or {}
+    end
+    local owner
+    local is_alive = do()
+        return (ledger.state == "acquiring" or ledger.state == "live")
+        and (not parent or parent.is_alive())
+    end
+    local check = do(operation)
+        if not is_alive() then
+            error((operation or "use") .. ": " .. label .. " activity has ended", 3)
+        end
+        if ledger.guard then ledger.guard.check_error end
+    end
+    local mutate = do(operation)
+        check operation
+        if ledger.guard then ledger.guard.assert_mutation operation end
+    end
+    local activate = do()
+        check "publish"
+        ledger.state = "live"
+    end
+    local contains = do(other)
+        while other do
+            if other == owner then return true end
+            other = ledger_of(other).parent
+        end
+        return false
+    end
+    local defer = do(cleanup: Function): Function
+        check "register cleanup"
+        local entry = { .cleanup }
+        ledger.cleanups[#ledger.cleanups + 1] = entry
+        return do() entry.cleanup = nil end
+    end
+    local close = do()
+        if ledger.state == "closed" or ledger.state == "closing" then return end
+        if ledger.guard then ledger.guard.assert_mutation("complete " .. label) end
+        -- No destructor may observe a still-live sibling in the retiring subtree.
+        revoke ledger
+        local failures = {}
+        release(ledger, failures)
+        if failures.present then error(failures.problem, 0) end
+    end
+    owner = define
+        .is_alive
+        .check
+        .mutate
+        .activate
+        .contains
+        .defer
+        .close
+        child = name -> new(owner, name)
+        child_count = || -> #ledger.children
+    end
+    ledgers[owner] = ledger
+    if inherited then inherited.children[#inherited.children + 1] = owner end
+    return owner
+end
+
+-- Distinguish separate integrations without exposing their mutable application state.
+local same_integration = do(first, second)
+    return ledger_of(first).integration == ledger_of(second).integration
+end
+
+-- Complete the owner on every exit, preserving nil results and the original body failure.
+local with_owner = do(owner)
+    return do(body)
+        assert(type body == "function", "activity body expects a function")
+        local results = packed(pcall(body, owner))
+        local cleaned, problem = pcall owner.close
+        if not results[1] then error(results[2], 0) end
+        if not cleaned then error(problem, 0) end
+        return unpack(results, 2, results.n)
+    end
+end
+
+-- Adopt successful acquisitions; a failed preparation releases only its new ledger entries.
+-- Domain mutations and external I/O are not rolled back by this activity.
+local prepare = do(owner, body)
+    owner.mutate "prepare owned resources"
+    local ledger = ledger_of owner
+    local child_count, cleanup_count = #ledger.children, #ledger.cleanups
+    local results = packed(pcall body)
+    if not results[1] then
+        -- Revoke all tentative siblings before releasing any of them, just as close does.
+        for index = child_count + 1, #ledger.children do
+            revoke(ledger_of ledger.children[index])
+        end
+        local failures = {}
+        while #ledger.children > child_count do
+            release(ledger_of ledger.children[#ledger.children], failures)
+        end
+        for index = #ledger.cleanups, cleanup_count + 1, -1 do
+            local cleanup = ledger.cleanups[index].cleanup
+            ledger.cleanups[index] = nil
+            if cleanup then pcall cleanup end
+        end
+        error(results[2], 0)
+    end
+    return unpack(results, 2, results.n)
+end
+
+return define .new, .same_integration, .with_owner, .prepare end

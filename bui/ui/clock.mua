@@ -1,0 +1,32 @@
+local ffi = require "ffi"
+
+-- Monotonic seconds measure deadlines; os.clock measures CPU time and cannot drive idle timers.
+local now
+if ffi.os == "Windows" then
+    ffi.cdef [[
+        int __stdcall QueryPerformanceCounter(int64_t *value);
+        int __stdcall QueryPerformanceFrequency(int64_t *value);
+    ]]
+    local Kernel = ffi.load "kernel32"
+    local frequency, counter = ffi.new "int64_t[1]", ffi.new "int64_t[1]"
+    assert(Kernel.QueryPerformanceFrequency frequency ~= 0, "monotonic clock unavailable")
+    local ticks_per_second = tonumber frequency[0]
+    now = do()
+        assert(Kernel.QueryPerformanceCounter counter ~= 0, "monotonic clock failed")
+        return tonumber counter[0] / ticks_per_second
+    end
+elseif ffi.os == "Linux" then
+    ffi.cdef [[
+        struct mua_ui_timespec { long seconds; long nanoseconds; };
+        int clock_gettime(int clock, struct mua_ui_timespec *value);
+    ]]
+    local time = ffi.new "struct mua_ui_timespec[1]"
+    now = do()
+        assert(ffi.C.clock_gettime(1, time) == 0, "monotonic clock failed")
+        return tonumber time[0].seconds + tonumber time[0].nanoseconds / 1e9
+    end
+else
+    error "BUI activities currently support Linux and Windows clocks"
+end
+
+return define .now end

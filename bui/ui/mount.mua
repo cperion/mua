@@ -1,0 +1,259 @@
+local ffi = require "ffi"
+local Scope = require "bui.ui.scope"
+local Check = require "bui.ui.check"
+local Widgets = require "bui.ui.widgets"
+local Editors = require "bui.ui.editors"
+local Canvas = require "bui.ui.canvas"
+local Media = require "bui.ui.media"
+local Handles = require "bui.ui.handles"
+
+if jit then jit.off(true, true) end
+
+local checked_vocabulary = do(owner, Capabilities)
+    if Capabilities == nil then return {} end
+    Check.table(Capabilities, "installer result")
+    local Public = {}
+    for name, capability in pairs Capabilities do
+        if type capability == "function" then
+            Public[name] = do(..arguments)
+                owner.check(tostring name)
+                return capability(..arguments)
+            end
+        else Public[name] = capability end
+    end
+    if Handles.kind Capabilities then return Handles.alias(Capabilities, Public, owner) end
+    return Public
+end
+
+-- Snapshot delivery belongs to a connection's lifetime, not a reusable native address.
+local notify = do(record, name, payload)
+    local connection = record.connection
+    if connection and connection.handlers[name] then
+        record.application.post(connection.owner, connection.handlers[name], payload)
+    end
+end
+
+local capabilities_for = do(record)
+    local Application, Native = record.application, record.native
+    local owner, pointer, descriptor = record.owner, record.node, record.descriptor
+    local configure = do(properties)
+        owner.mutate("configure " .. descriptor.kind)
+        Widgets.apply(record, Widgets.prepare(descriptor, properties))
+        Application.check_error
+    end
+    local display = caption -> configure { .caption }
+    local caption = do()
+        owner.check "caption"
+        return ffi.string(Native.BK_get_str(pointer, descriptor.caption))
+    end
+    local rectangle = do()
+        owner.check "rectangle"
+        local bounds = ffi.new "int[4]"
+        Native.BK_node_rect(pointer, bounds)
+        return { x = tonumber bounds[0], y = tonumber bounds[1],
+            width = tonumber bounds[2], height = tonumber bounds[3] }
+    end
+    local natural_size = do()
+        owner.check "natural_size"
+        local size = ffi.new "int[2]"
+        Native.BK_node_natural(pointer, size)
+        return { width = tonumber size[0], height = tonumber size[1] }
+    end
+    local focus
+    focus = do()
+        owner.mutate "focus"
+        if Native.BK_node_context pointer ~= record.window.context then
+            -- Detached focus would leave a dangling context pointer if preparation failed.
+            assert(Application.is_assembling(), "focus target is not mounted in this surface")
+            Application.post(owner, focus)
+            return
+        end
+        Native.BK_focus_node(record.window.context, pointer)
+        Application.check_error
+    end
+    local invalidate = do()
+        owner.mutate "invalidate"
+        Native.BK_node_invalidate pointer
+    end
+    local connect = do(Notify)
+        owner.mutate "connect"
+        Check.keys(Notify, Widgets.notifications, "notifications")
+        local handlers = {}
+        for name, handler in pairs Notify do handlers[name] = Check.callable(handler, name) end
+        if record.connection then record.connection.owner.close end
+        local connection_owner = owner.child "connection"
+        record.connection = { owner = connection_owner, .handlers }
+        connection_owner.activate
+        Native.BK_set_num(pointer, "events", 1)
+        if handlers.view_changed then Native.BK_set_num(pointer, "viewevents", 1) end
+        return connection_owner.close
+    end
+    local Control = define
+        .configure
+        .display
+        .caption
+        .rectangle
+        .natural_size
+        .focus
+        .invalidate
+        .connect
+    end
+    if not descriptor.value_type then return Control end
+    local current = do()
+        owner.check "current"
+        return Widgets.current record
+    end
+    local set = value -> configure { .value }
+    local change = do(value)
+        set value
+        notify(record, "changed", Widgets.current record)
+    end
+    return define ..Control
+        .current
+        .set
+        .change
+    end
+end
+
+local node = do(Application, window, parent_owner, parent_node, descriptor, options)
+    parent_owner.mutate("assemble " .. descriptor.kind)
+    local prepared = Widgets.prepare(descriptor, options)
+    return Scope.prepare(parent_owner, do()
+            local owner = parent_owner.child descriptor.kind
+            local Native = Application.native
+            local pointer = Native.BK_node_new descriptor.kind
+            assert(pointer ~= nil, "native widget unavailable: " .. descriptor.kind)
+            owner.defer do() Native.BK_node_free pointer end
+            local record = with
+                application = Application
+                native = Native
+                .owner
+                node = pointer
+                kind = descriptor.kind
+                .descriptor
+                .window
+                ready = false
+            end
+            Application.track_node record
+            Widgets.apply(record, prepared)
+            assert(Native.BK_node_add(parent_node, pointer, -1) == 1, "cannot attach widget")
+            local Control = capabilities_for record
+            record.capabilities = define
+                ..Control
+                ..Editors.for_control(record, Control)
+                ..Canvas.for_control record
+                ..Media.for_control record
+            end
+            record.ready = true
+            owner.activate
+            Application.check_error
+            return record
+        end)
+end
+
+local placement, mount
+
+-- Prepare detached content, then publish once; rejection never exposes a partial subtree.
+mount = do(Application, window, parent_owner, parent_node, installer)
+    Check.callable(installer, "component installer")
+    return Scope.prepare(parent_owner, do()
+            local owner = parent_owner.child "mounted component"
+            return Application.assembling do()
+                local Native = Application.native
+                local root = Native.BK_node_new "column"
+                assert(root ~= nil, "component root allocation failed")
+                owner.defer do() Native.BK_node_free root end
+                Native.BK_set_num(root, "padding", 0)
+                Native.BK_set_num(root, "spacing", 0)
+                Native.BK_set_num(root, "fill", 1)
+                local capabilities = checked_vocabulary(owner,
+                    installer(placement(Application, window, owner, root)))
+                owner.check "publish component"
+                Application.check_error
+                assert(Native.BK_node_add(parent_node, root, -1) == 1, "cannot publish component")
+                owner.activate
+                return { .owner, .root, .capabilities }
+            end
+        end)
+end
+
+placement = do(Application, window, owner, parent_node)
+    local Controls = {}
+    for name, descriptor in pairs Widgets.catalog do
+        if descriptor.container then
+            Controls[name] = do(options)
+                owner.mutate("assemble " .. name)
+                return do(body)
+                    Check.callable(body, name .. " body")
+                    return Scope.prepare(owner, do()
+                            return Application.assembling do()
+                                local container = node(Application, window, owner,
+                                    parent_node, descriptor, options)
+                                body(placement(Application, window, container.owner, container.node))
+                                return container.capabilities
+                            end
+                        end)
+                end
+            end
+        elseif name == "button" then
+            Controls[name] = do(options)
+                owner.mutate "assemble button"
+                return do(activated)
+                    Check.callable(activated, "button activation")
+                    local button = node(Application,
+                        window, owner, parent_node, descriptor, options)
+                    button.capabilities.connect { .activated }
+                    return button.capabilities
+                end
+            end
+        else
+            Controls[name] = options ->
+            node(Application, window, owner, parent_node, descriptor, options).capabilities
+        end
+    end
+    local include = installer -> mount(Application, window, owner, parent_node, installer).capabilities
+    local slot = do(options)
+        local container = node(Application,
+            window, owner, parent_node, Widgets.catalog.column, options)
+        local installed
+        local replace = do(installer)
+            container.owner.mutate "replace slot"
+            local replacement = mount(Application,
+                window, container.owner, container.node, installer)
+            local previous = installed
+            installed = replacement
+            if previous then previous.owner.close end
+            return replacement.capabilities
+        end
+        local clear = do()
+            container.owner.mutate "clear slot"
+            if installed then
+                installed.owner.close
+                installed = nil
+            end
+        end
+        return define .replace, .clear end
+    end
+    local after = do(milliseconds)
+        owner.mutate "schedule timer"
+        return do(body) return Application.after(owner, window, milliseconds, body) end
+    end
+    return define ..Controls
+        .include
+        .slot
+        .after
+        animate = body -> Application.animate(owner, window, body)
+        resources = Media.resources(Application, owner)
+    end
+end
+
+-- Own mounted content until the body finishes, or until its surface closes first.
+local with_content = do(Application, window, parent_node, installer, body)
+    Check.callable(body, "content body")
+    local installed = mount(Application, window, window.owner, parent_node, installer)
+    return Scope.with_owner installed.owner do()
+        return body installed.capabilities
+    end
+end
+
+return define .with_content, .notify end

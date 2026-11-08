@@ -1,0 +1,252 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+if jit then jit.off(true, true) end
+
+local color_values = channels ->
+{ tonumber channels[0], tonumber channels[1], tonumber channels[2], tonumber channels[3] }
+
+local ramp = do(record)
+    local Native, node, owner = record.native, record.node, record.owner
+    local stops = do()
+        owner.check "ramp stops"
+        local values, position, color = {}, ffi.new "float[1]", ffi.new "float[4]"
+        for index = 0, Native.BK_ramp_count node - 1 do
+            Native.BK_ramp_get(node, index, position, color)
+            values[#values + 1] = { position = tonumber position[0], color = color_values color }
+        end
+        return values
+    end
+    local set_stops = do(values)
+        owner.mutate "set ramp stops"
+        Check.array(values, "ramp stops")
+        assert(#values >= 2 and #values <= 32, "a ramp needs 2..32 stops")
+        local positions = ffi.new("float[?]", #values)
+        local colors = ffi.new("float[?][4]", #values)
+        for index, stop in ipairs values do
+            Check.keys(stop, { position = true, color = true }, "ramp stop")
+            positions[index - 1] = Check.number(stop.position, "stop position", 0, 1)
+            local color = Check.color(stop.color, "stop color")
+            for channel = 0, 3 do colors[index - 1][channel] = color[channel] end
+        end
+        owner.mutate "publish ramp stops"
+        Native.BK_ramp_set(node, positions, ffi.cast("const float (*)[4]", colors), #values)
+    end
+    local sample = do(position)
+        owner.check "sample ramp"
+        local color = ffi.new "float[4]"
+        Native.BK_ramp_evaluate(node, Check.number(position, "sample position", 0, 1), color)
+        return color_values color
+    end
+    local active_stop = do()
+        owner.check "active stop"
+        return Native.BK_ramp_active node + 1
+    end
+    local select_stop = do(index)
+        owner.mutate "select stop"
+        Check.integer(index, "stop index", 1, Native.BK_ramp_count node)
+        Native.BK_set_num(node, "active", index - 1)
+    end
+    local set_active_color = do(color)
+        owner.mutate "set active color"
+        local channels = Check.color(color, "color")
+        owner.mutate "publish active color"
+        Native.BK_ramp_set_active_color(node, channels)
+    end
+    record.change_snapshot = stops
+    return define
+        .stops
+        .set_stops
+        .sample
+        .active_stop
+        .select_stop
+        .set_active_color
+    end
+end
+
+local curve = do(record)
+    local Native, node, owner = record.native, record.node, record.owner
+    local points = do(channel)
+        owner.check "curve points"
+        Check.integer(channel, "channel", 0, 3)
+        local values, coordinate = {}, ffi.new "float[2]"
+        for index = 0, Native.BK_curve_count(node, channel) - 1 do
+            Native.BK_curve_get(node, channel, index, coordinate)
+            values[#values + 1] = { tonumber coordinate[0], tonumber coordinate[1] }
+        end
+        return values
+    end
+    local set_points = do(channel, values)
+        owner.mutate "set curve points"
+        Check.integer(channel, "channel", 0, 3)
+        Check.array(values, "curve points")
+        assert(#values >= 2 and #values <= 64, "a curve needs 2..64 points")
+        local coordinates = ffi.new("float[?][2]", #values)
+        for index, point in ipairs values do
+            Check.array(point, "curve point")
+            assert(#point == 2, "a curve point needs x,y")
+            coordinates[index - 1][0] = Check.number(point[1], "curve x", -1e7, 1e7)
+            coordinates[index - 1][1] = Check.number(point[2], "curve y", -1e7, 1e7)
+        end
+        owner.mutate "publish curve points"
+        Native.BK_curve_set(node, channel, ffi.cast("const float (*)[2]", coordinates), #values)
+    end
+    local sample = do(channel, position)
+        owner.check "sample curve"
+        Check.integer(channel, "channel", 0, 3)
+        return tonumber(Native.BK_curve_evaluate(node, channel,
+                Check.number(position, "curve position", -1e7, 1e7)))
+    end
+    record.change_snapshot = do()
+        local channel = tonumber(Native.BK_get_num(node, "channel"))
+        return { .channel, points = points channel }
+    end
+    return define .points, .set_points, .sample end
+end
+
+local textarea = do(record, Control)
+    local Native, node, owner = record.native, record.node, record.owner
+    local offset = do(position)
+        local text = Control.current()
+        Check.integer(position, "UTF-8 byte offset", 0, #text)
+        local byte = text:byte(position + 1)
+        assert(not byte or byte < 128 or byte >= 192, "offset splits a UTF-8 sequence")
+        return position
+    end
+    local range = do(first, last)
+        offset first
+        offset last
+        assert(first <= last, "byte range is reversed")
+    end
+    local insert = do(position, text)
+        owner.mutate "insert text"
+        Native.BK_textarea_insert(node, offset position, Check.string(text, "inserted text"))
+        record.application.check_error
+    end
+    local delete = do(first, last)
+        owner.mutate "delete text"
+        range(first, last)
+        Native.BK_textarea_delete(node, first, last)
+        record.application.check_error
+    end
+    local caret = do()
+        owner.check "caret"
+        return tonumber(Native.BK_textarea_caret node)
+    end
+    local move_caret = do(position)
+        owner.mutate "move caret"
+        Native.BK_textarea_set_caret(node, offset position)
+    end
+    local select = do(first, last)
+        owner.mutate "select text"
+        range(first, last)
+        Native.BK_textarea_set_selection(node, first, last)
+    end
+    local selection = do()
+        owner.check "text selection"
+        local first, last = ffi.new "int[1]", ffi.new "int[1]"
+        local Selection = record.application.protocols.selection
+        if Native.BK_textarea_selection(node, first, last) == 0 then return Selection.empty() end
+        return Selection.selected { start = tonumber first[0], stop = tonumber last[0] }
+    end
+    local index_at = do(horizontal, vertical)
+        owner.check "text index"
+        return tonumber(Native.BK_textarea_index_at(node,
+                Check.integer(horizontal, "x"), Check.integer(vertical, "y")))
+    end
+    local reveal = do(position)
+        owner.mutate "reveal text"
+        Native.BK_textarea_see(node, offset position)
+    end
+    local set_spans = do(spans)
+        owner.mutate "set text spans"
+        Check.array(spans, "text spans")
+        local native_spans = ffi.new("BKTextSpan[?]", math.max(1, #spans))
+        for index, span in ipairs spans do
+            Check.keys(span, { start = true, stop = true, foreground = true, background = true },
+                "text span")
+            range(span.start, span.stop)
+            local destination = native_spans[index - 1]
+            destination.start, destination["end"] = span.start, span.stop
+            if span.foreground then
+                local color = Check.color(span.foreground, "span foreground")
+                destination.has_fg = 1
+                for channel = 0, 3 do destination.fg[channel] = color[channel] end
+            end
+            if span.background then
+                local color = Check.color(span.background, "span background")
+                destination.has_bg = 1
+                for channel = 0, 3 do destination.bg[channel] = color[channel] end
+            end
+        end
+        owner.mutate "publish text spans"
+        Native.BK_textarea_set_spans(node, native_spans, #spans)
+    end
+    return define
+        .insert
+        .delete
+        .caret
+        .move_caret
+        .select
+        .selection
+        .index_at
+        .reveal
+        .set_spans
+    end
+end
+
+local histogram = do(record)
+    local set_bins = do(channels)
+        record.owner.mutate "set histogram bins"
+        Check.array(channels, "histogram channels")
+        assert(#channels >= 1 and #channels <= 3, "histogram needs 1..3 channels")
+        Check.array(channels[1], "histogram channel")
+        local count = #channels[1]
+        assert(count >= 2 and count <= 65536, "histogram needs 2..65536 bins per channel")
+        local bins = ffi.new("float[?]", count * #channels)
+        for channel, values in ipairs channels do
+            Check.array(values, "histogram channel")
+            assert(#values == count, "unequal histogram channels")
+            for index, value in ipairs values do
+                bins[(index - 1) * #channels + channel - 1] = Check.number(value,
+                    "histogram bin", 0, 1)
+            end
+        end
+        record.owner.mutate "publish histogram bins"
+        record.native.BK_histogram_set(record.node, bins, count, #channels)
+    end
+    return define .set_bins end
+end
+
+local gridview = do(record)
+    local set_colors = do(colors)
+        record.owner.mutate "set grid colors"
+        Check.array(colors, "grid colors")
+        local native_colors = ffi.new("float[?][4]", math.max(1, #colors))
+        for index, channels in ipairs colors do
+            local color = Check.color(channels, "grid color")
+            for channel = 0, 3 do native_colors[index - 1][channel] = color[channel] end
+        end
+        record.owner.mutate "publish grid colors"
+        record.native.BK_gridview_set_colors(record.node,
+            ffi.cast("const float (*)[4]", native_colors), #colors)
+    end
+    return define .set_colors end
+end
+
+local Editing = define
+    .ramp
+    .curve
+    .textarea
+    .histogram
+    .gridview
+end
+
+-- Supply only the editing operations supported by this native kind's storage layout.
+local for_control = do(record, Control)
+    local editing = Editing[record.kind]
+    if editing then return editing(record, Control) end
+    return {}
+end
+
+return define .for_control end

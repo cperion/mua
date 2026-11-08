@@ -1,0 +1,52 @@
+local Scope = require "bui.ui.scope"
+
+-- Native identity belongs to a registered resource, never to a copied method table.
+local registrations = meta { mode = "k" } {}
+
+-- Associate a vocabulary with its owned handle without publishing that handle to callers.
+local register = do(Capabilities, owner, kind, pointer)
+    assert(not registrations[Capabilities], "resource registered twice")
+    registrations[Capabilities] = { .owner, .kind, .pointer }
+    return Capabilities
+end
+
+local lookup = do(Capabilities, kind)
+    local resource = registrations[Capabilities]
+    assert(resource and resource.kind == kind, "expected an owned " .. kind .. " capability")
+    resource.owner.check("use " .. kind)
+    return resource
+end
+
+-- An immediate call needs liveness; retained publication also needs an ancestor-owned loan.
+local get = do(Capabilities, kind, borrower)
+    local resource = lookup(Capabilities, kind)
+    if borrower then
+        borrower.check("borrow " .. kind)
+        assert(Scope.same_integration(resource.owner, borrower),
+            "resource belongs to another application")
+        assert(resource.owner.contains borrower,
+            "resource owner must outlive its retained borrower")
+    end
+    if type resource.pointer == "function" then return resource.pointer() end
+    return resource.pointer
+end
+
+-- Return the checked resource owner for a same-integration immediate operation.
+local owner = do(Capabilities, kind)
+    return lookup(Capabilities, kind).owner
+end
+
+-- Recognize registered resources; a structural copy deliberately has no resource identity.
+local kind = do(Capabilities)
+    local resource = registrations[Capabilities]
+    return resource and resource.kind
+end
+
+-- Narrow a component's returned resource loan; copying can never extend its lifetime.
+local alias = do(Original, Capabilities, borrower)
+    local resource_kind = assert(kind Original, "expected a resource capability")
+    get(Original, resource_kind, borrower)
+    return register(Capabilities, borrower, resource_kind, || -> get(Original, resource_kind))
+end
+
+return define .register, .get, .owner, .kind, .alias end

@@ -1,0 +1,101 @@
+local ffi = require "ffi"
+local Scope = require "bui.ui.scope"
+local Check = require "bui.ui.check"
+local Clock = require "bui.ui.clock"
+local Callbacks = require "bui.ui.callbacks"
+local Dispatch = require "bui.ui.dispatch"
+local Surface = require "bui.ui.surface"
+local Media = require "bui.ui.media"
+
+if jit then jit.off(true, true) end
+
+local active = false
+-- BUI has no host shutdown operation: Win32 classes retain DLL procedures after the last
+-- window closes. Retain code identities, not retired UI objects or their Lua callbacks.
+local retained_libraries = {}
+
+local packed = do(..values) = values
+
+local monotonic = do(clock)
+    local previous = -math.huge
+    return do()
+        local current = Check.number(clock(), "monotonic clock")
+        assert(current >= previous, "monotonic clock moved backwards")
+        previous = current
+        return current
+    end
+end
+
+local appearance = do(Native, owner)
+    local theme = do(name)
+        owner.mutate "theme"
+        Check.string(name, "theme")
+        assert(Native.BK_set_theme name == 1, "unknown theme: " .. name)
+    end
+    local scale = do(value)
+        owner.mutate "scale"
+        Native.BK_set_scale(Check.number(value, "scale", 0.25, 8))
+    end
+    local font = do(family)
+        owner.mutate "font"
+        Native.BK_set_font(Check.string(family, "font family"))
+    end
+    local gpu_default = do(enabled)
+        owner.mutate "GPU policy"
+        Native.BUI_gpu_set_default(Check.boolean(enabled, "GPU") and 1 or 0)
+    end
+    return define .theme, .scale, .font, .gpu_default end
+end
+
+-- Own the exclusive native integration; compose capabilities without a component superclass.
+local with_application = do(Native, Protocols, body, clock)
+    assert(not active, "BUI already has an application owner in this Lua VM")
+    Check.callable(body, "application body")
+    assert(Native.mua_bui_binding_version() == 1, "unsupported BUI binding version")
+    assert(Native.BK_version() == 500, "unsupported BUI kit version")
+    local code_identity = tostring(ffi.cast("void *", Native.mua_bui_binding_version))
+    retained_libraries[code_identity] = retained_libraries[code_identity] or Native
+    local now = monotonic(Check.callable(Check.default(clock, Clock.now), "monotonic clock"))
+    active = true
+    local results = packed(pcall do()
+            return Callbacks.with_callbacks Native do(Boundary)
+                return Scope.with_owner(Scope.new(nil, "application", Boundary)) do(owner)
+                    owner.defer do() Native.BK_image_exit end
+                    local Driver = Dispatch.new(Native, owner, Boundary, Protocols, now)
+                    local Application = define ..Driver
+                        native = Native
+                        protocols = Protocols
+                        .owner
+                        callback = Boundary.callback
+                        check_error = Boundary.check_error
+                        register = Boundary.register
+                        resolve = Boundary.resolve
+                    end
+                    owner.activate
+                    local with_window = do(options)
+                        owner.mutate "open window"
+                        return Surface.with_window(Application, options)
+                    end
+                    local with_surface = do(options)
+                        owner.mutate "open surface"
+                        return Surface.with_surface(Application, options)
+                    end
+                    return body define ..appearance(Native, owner)
+                        .with_window
+                        .with_surface
+                        resources = Media.resources(Application, owner)
+                        images = Media.images Application
+                        statistics = Driver.statistics
+                        run = Driver.run
+                        pump = Driver.pump
+                        quit = Driver.quit
+                    end
+                end
+            end
+        end)
+    active = false
+    if not results[1] then error(results[2], 0) end
+    return unpack(results, 2, results.n)
+end
+
+return define .with_application end

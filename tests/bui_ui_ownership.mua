@@ -1,0 +1,148 @@
+local Scope = require "bui.ui.scope"
+local Queue = require "bui.ui.queue"
+local Handles = require "bui.ui.handles"
+local Callbacks = require "bui.ui.callbacks"
+
+if jit then jit.off(true, true) end
+
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "ownership check " .. checks)
+end
+local refuses = do(body, message)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(message, 1, true))
+end
+
+-- Copying verbs shares their captures; another acquisition creates independent state.
+Scope.with_owner(Scope.new(nil, "first owner")) do(first)
+    Scope.with_owner(Scope.new(nil, "second owner")) do(second)
+        expect(getmetatable first == nil)
+        expect(first.children == nil and first.cleanups == nil and first.state == nil)
+        local Shared = define ..first end
+        local child = first.child "child"
+        child.activate
+        expect(first.child_count() == 1)
+        expect(Scope.same_integration(first, child))
+        expect(not Scope.same_integration(first, second))
+        expect(first.contains child and not second.contains child)
+        Shared.close
+        expect(not first.is_alive() and not child.is_alive())
+        expect(second.is_alive())
+        refuses(child.activate, "activity has ended")
+    end
+end
+
+-- Preparation adopts on success, but revokes every tentative sibling before any destructor.
+Scope.with_owner(Scope.new(nil, "preparation")) do(owner)
+    local retired = {}
+    owner.defer do() retired[#retired + 1] = "existing" end
+    local accepted = Scope.prepare(owner, do()
+            local child = owner.child "accepted"
+            child.activate
+            return child
+        end)
+    refuses(do()
+            Scope.prepare(owner, do()
+                    local first = owner.child "tentative first"
+                    local second = owner.child "tentative second"
+                    first.defer do() retired[#retired + 1] = "first" end
+                    second.defer do()
+                        expect(not first.is_alive() and not second.is_alive())
+                        expect(accepted.is_alive() and owner.is_alive())
+                        retired[#retired + 1] = "second"
+                        error("secondary cleanup", 0)
+                    end
+                    owner.defer do() retired[#retired + 1] = "tentative parent cleanup" end
+                    error("preparation refused", 0)
+                end)
+        end, "preparation refused")
+    expect(owner.child_count() == 1 and accepted.is_alive())
+    expect(table.concat(retired, ",") == "second,first,tentative parent cleanup")
+    owner.close
+    expect(retired[#retired] == "existing")
+end
+
+-- Activity completion preserves trailing nils as well as values between nils.
+local packed = do(..values) = values
+local results = packed(Scope.with_owner(Scope.new(nil, "results")) do()
+        return "first", nil, "third", nil
+    end)
+expect(results.n == 4 and results[1] == "first" and results[3] == "third")
+
+-- A narrowed loan retains native identity but never extends its owning lifetime.
+Scope.with_owner(Scope.new(nil, "resource owner")) do(owner)
+    local image = Handles.register({}, owner, "image", 42)
+    local child = owner.child "borrower"
+    local loan = Handles.alias(image, {}, child)
+    expect(Handles.get(loan, "image") == 42)
+    local Unregistered = define ..loan end
+    refuses(|| -> Handles.get(Unregistered, "image"), "expected an owned image")
+    child.close
+    refuses(|| -> Handles.get(loan, "image"), "activity has ended")
+    expect(Handles.get(image, "image") == 42)
+    Scope.with_owner(Scope.new(nil, "other integration")) do(other)
+        refuses(|| -> Handles.get(image, "image", other), "another application")
+    end
+end
+
+-- Delivery captures argument counts, batches appends, and cancels by owner identity.
+Scope.with_owner(Scope.new(nil, "delivery")) do(owner)
+    local Delivery = Queue.new()
+    local observations = {}
+    Delivery.post(owner, do(..arguments)
+            expect(arguments.n == 4 and arguments[1] == "first" and arguments[3] == "third")
+            observations[#observations + 1] = "first batch"
+            Delivery.post(owner, do() observations[#observations + 1] = "next batch" end)
+            refuses(Delivery.drain, "not reentrant")
+        end, "first", nil, "third", nil)
+    Delivery.drain
+    expect(#observations == 1 and Delivery.pending())
+    Delivery.drain
+    expect(#observations == 2 and not Delivery.pending())
+    Delivery.post(owner, do() error "retired delivery ran" end)
+    owner.close
+    Delivery.drain
+    expect(not Delivery.pending())
+end
+
+-- A synchronous native service cannot tear down its owner or unwind through C.
+local quit_requests = 0
+local Native = define
+    BK_window_quit = do() quit_requests += 1 end
+end
+Callbacks.with_callbacks Native do(Boundary)
+    Scope.with_owner(Scope.new(nil, "callback owner", Boundary)) do(owner)
+        local values = packed(Boundary.deliver do() return 1, nil, 3, nil end)
+        expect(values.n == 4 and values[3] == 3)
+        local token = Boundary.register(owner, "registered")
+        expect(Boundary.resolve token == "registered")
+        expect(Boundary.statistics().registrations == 1)
+        local service = Boundary.callback("int (*)(void)", do()
+                owner.close
+                return 1
+            end, 0, "service")
+        expect(service() == 0)
+        expect(owner.is_alive() and Boundary.failed())
+        expect(quit_requests == 1)
+        refuses(Boundary.check_error, "forbidden during service callback")
+        expect(service() == 0 and quit_requests == 1)
+    end
+    expect(Boundary.statistics().registrations == 0)
+end
+
+-- Late native references resolve to absence, never to another registration at a reused address.
+Callbacks.with_callbacks Native do(Boundary)
+    Scope.with_owner(Scope.new(nil, "registration owner", Boundary)) do(owner)
+        local child = owner.child "registration"
+        local token = Boundary.register(child, "previous")
+        child.close
+        local replacement = Boundary.register(owner, "replacement")
+        expect(Boundary.resolve token == nil)
+        expect(Boundary.resolve replacement == "replacement")
+        expect(token ~= replacement)
+    end
+end
+
+print("BUI ownership: " .. checks .. " checks passed")

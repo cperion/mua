@@ -25,18 +25,18 @@ end
 -- Completion revokes the whole subtree before destructors run, and preserves the first error.
 do
     local root, order = Scope.new(nil, 'test'), {}
-    local child = root:child('child')
-    root:defer(function() order[#order + 1] = 'root' end)
-    child:defer(function() check(not root:is_alive()); order[#order + 1] = 'child' end)
-    child:defer(function() error('cleanup problem', 0) end)
-    refuses(function() root:close() end, 'cleanup problem')
+    local child = root.child('child')
+    root.defer(function() order[#order + 1] = 'root' end)
+    child.defer(function() check(not root.is_alive()); order[#order + 1] = 'child' end)
+    child.defer(function() error('cleanup problem', 0) end)
+    refuses(function() root.close() end, 'cleanup problem')
     check(table.concat(order, ',') == 'child,root')
-    root:close()
-    refuses(function() child:check('read') end, 'activity has ended')
+    root.close()
+    refuses(function() child.check('read') end, 'activity has ended')
     local scope = Scope.new(nil, 'body')
-    scope:defer(function() error('secondary cleanup', 0) end)
-    refuses(function() Scope.with(scope, function() error('original body', 0) end) end, 'original body')
-    local first, absent, third = Scope.with(Scope.new(nil, 'results'), function() return 1, nil, 3 end)
+    scope.defer(function() error('secondary cleanup', 0) end)
+    refuses(function() Scope.with_owner(scope)(function() error('original body', 0) end) end, 'original body')
+    local first, absent, third = Scope.with_owner(Scope.new(nil, 'results'))(function() return 1, nil, 3 end)
     check(first == 1 and absent == nil and third == 3)
 end
 
@@ -53,7 +53,7 @@ do
     check(#log == 2 and queue.pending())
     queue.drain(); check(table.concat(log, ',') == '1,2,3')
     queue.post(owner, function() error('stale delivery') end)
-    owner:close(); queue.drain(); check(not queue.pending())
+    owner.close(); queue.drain(); check(not queue.pending())
 end
 
 local now = 10

@@ -1,0 +1,194 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+if jit then jit.off(true, true) end
+
+-- Descriptors are data shared by construction and later updates. The native spelling
+-- stays here; a caption and a value have the same public meaning on every control.
+local catalog = {}
+local kinds = do(names, descriptor)
+    for name in names:gmatch "%S+" do
+        local public_name, native_name = name:match "([^=]+)=([^=]+)"
+        catalog[public_name or name] = { ..descriptor, kind = native_name or name }
+    end
+end
+local Control = { caption = "text" }
+local Container = { ..Control, container = true }
+local NumberValue = { ..Control, value_type = "number" }
+kinds("column row split grid box panel scroll frame node_editor=nodeeditor graph_node=graphnode area_header=areaheader",
+    Container)
+kinds("tabs side_tabs=sidetabs sidebar", { ..Container, value_type = "number" })
+kinds("label separator button decorator popover menu_button=menubutton menu_bar=menubar", Control)
+kinds("toggle checkbox radio", { ..Control, value_type = "boolean", caption = "label" })
+kinds("number slider", { ..NumberValue, caption = "label" })
+kinds("dropdown enum list tree grid_view=gridview scrollbar", NumberValue)
+kinds("text search hotkey textarea", { ..Control, value_type = "string" })
+kinds("swatch", { ..Control, value_type = "color" })
+kinds("progress meter", { ..Control, value_type = "fraction" })
+kinds("ramp curve normal histogram canvas image custom video file_browser=filebrowser", Control)
+
+local common_properties = {}
+local properties_of = do(names, value_type)
+    for name in names:gmatch "%S+" do common_properties[name] = { key = name, type = value_type } end
+end
+properties_of("visible enabled align emboss vertical icon_only collapsed integer live alpha square directory line bold events nopropagate viewevents noscrollbar opaque html bare active_default fill",
+    "boolean")
+properties_of("weight factor tile split scroll scroll_x font_scale", "number")
+properties_of("precision spacing padding columns rows current cursor", "integer")
+properties_of("text label description placeholder mask suffix category icon icon_on text_align",
+    "string")
+properties_of("items headers groups icons", "strings")
+properties_of("color bg text_color", "color")
+local properties = with ..common_properties
+    minimum = { key = "min", type = "number", order = 1 }
+    maximum = { key = "max", type = "number", order = 1 }
+    step = { key = "step", type = "number", order = 1 }
+    default = { key = "default", type = "number", order = 2 }
+    height_units = { key = "height", type = "number" }
+    width = { key = "reqwidth", type = "integer", geometry = true }
+    height = { key = "reqheight", type = "integer", geometry = true }
+end
+
+local specification = do(descriptor, name)
+    if name == "caption" then return { key = descriptor.caption, type = "string" } end
+    if name == "value" and descriptor.value_type then
+        return with
+            key = descriptor.value_type == "fraction" and "factor" or "value"
+            type = descriptor.value_type
+            order = 3
+        end
+    end
+    return properties[name]
+end
+
+local ValueChecking = {
+    boolean = |value, name| -> Check.boolean(value, name) and 1 or 0,
+    number = |value, name| -> Check.number(value, name),
+    integer = |value, name, property| -> Check.integer(value, name, property.geometry and 0 or nil),
+    fraction = |value, name| -> Check.number(value, name, 0, 1),
+    string = do(value, name, property)
+        Check.string(value, name)
+        if property.key == "text_align" and value ~= "left" and value ~= "right"
+        and value ~= "center" then error(name .. ": expected left, center, or right", 3) end
+        return value
+    end,
+    color = Check.color,
+    strings = Check.strings
+}
+
+-- Check a complete update before changing C; limits precede initial values deterministically.
+local prepare = do(descriptor, options)
+    if type options == "string" then options = { caption = options } end
+    options = Check.default(options, {})
+    Check.table(options, descriptor.kind .. " options")
+    local prepared = {}
+    if options.minimum and options.maximum then
+        Check.number(options.minimum, "minimum")
+        Check.number(options.maximum, "maximum")
+        assert(options.minimum <= options.maximum, "minimum exceeds maximum")
+    end
+    for name, value in pairs options do
+        local property = specification(descriptor, name)
+        if not property then error(descriptor.kind .. ": unknown property " .. tostring name, 3) end
+        local normalized, retained = ValueChecking[property.type](value,
+            descriptor.kind .. "." .. name, property)
+        prepared[#prepared + 1] = with
+            .name
+            specification = property
+            value = normalized
+            .retained
+            count = property.type == "strings" and #value or nil
+        end
+    end
+    table.sort(prepared, do(left, right)
+            local left_order,
+            right_order = left.specification.order or 0, right.specification.order or 0
+            if left_order ~= right_order then return left_order < right_order end
+            return left.name < right.name
+        end)
+    return prepared
+end
+
+-- Publish a checked update, rechecking liveness after any input accessors have run.
+local apply = do(record, prepared)
+    record.owner.mutate("apply " .. record.kind .. " properties")
+    local Native, node = record.native, record.node
+    local limits = record.limits or {}
+    local minimum, maximum = limits.minimum, limits.maximum
+    for _, entry in ipairs prepared do
+        if entry.name == "minimum" then minimum = entry.value end
+        if entry.name == "maximum" then maximum = entry.value end
+    end
+    assert(not minimum or not maximum or minimum <= maximum, "minimum exceeds maximum")
+    for _, entry in ipairs prepared do
+        local property, accepted = entry.specification
+        if property.geometry then
+            Native.BK_geom_set(node, property.key, entry.value)
+            accepted = 1
+        elseif property.type == "string" then
+            accepted = Native.BK_set_str(node, property.key, entry.value)
+        elseif property.type == "color" then
+            accepted = Native.BK_set_color(node, property.key, entry.value)
+        elseif property.type == "strings" then
+            accepted = Native.BK_set_strs(node, property.key, entry.value, entry.count)
+        else accepted = Native.BK_set_num(node, property.key, entry.value) end
+        assert(accepted == 1, record.kind .. ": native property refused " .. entry.name)
+    end
+    record.limits = { .minimum, .maximum }
+end
+
+-- Read the committed value, independently of any queued change snapshots.
+local current = do(record)
+    record.owner.check "read current value"
+    local Native, node, kind = record.native, record.node, record.descriptor.value_type
+    if kind == "string" then return ffi.string(Native.BK_get_str(node, "value")) end
+    if kind == "color" then
+        local channels = ffi.new "float[4]"
+        assert(Native.BK_get_color(node, "value", channels) == 1)
+        return { tonumber channels[0],
+            tonumber channels[1], tonumber channels[2], tonumber channels[3] }
+    end
+    local value = tonumber(Native.BK_get_num(node, kind == "fraction" and "factor" or "value"))
+    if kind == "boolean" then return value ~= 0 end
+    return value
+end
+
+local event_names = {
+    [1] = "changed",[2] = "activated",[4] = "renamed",[5] = "activated",[6] = "toggled",
+    [7] = "browse_requested",[8] = "pressed",[9] = "released",[10] = "double_clicked",
+    [11] = "moved",[12] = "entered",[13] = "left",[14] = "key_pressed",[15] = "wheel",
+    [16] = "submitted",[17] = "view_changed",[18] = "scrolled",[19] = "configured",
+    [20] = "key_released",
+}
+local notifications = {}
+for _, name in pairs event_names do notifications[name] = true end
+
+-- Copy transient native payloads before C returns; notification delivery never borrows them.
+local snapshot = do(record, kind, reference, first, second)
+    local name = event_names[kind]
+    if not name then return end
+    if name == "changed" then
+        if record.change_snapshot then return name, record.change_snapshot() end
+        if record.descriptor.value_type then return name, current record end
+    end
+    if name == "configured" then
+        local bounds = ffi.new "int[4]"
+        record.native.BK_node_rect(record.node, bounds)
+        return name, { x = tonumber bounds[0], y = tonumber bounds[1],
+            width = tonumber bounds[2], height = tonumber bounds[3] }
+    end
+    local payload = { .first, .second }
+    if (kind >= 8 and kind <= 15) or kind == 20 then
+        payload.detail = reference ~= nil and ffi.string(ffi.cast("const char *", reference)) or ""
+    end
+    return name, payload
+end
+
+return define
+    .catalog
+    .prepare
+    .apply
+    .current
+    .snapshot
+    .notifications
+end

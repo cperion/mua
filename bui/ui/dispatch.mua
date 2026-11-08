@@ -1,0 +1,296 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+local Queue = require "bui.ui.queue"
+local Widgets = require "bui.ui.widgets"
+local Mount = require "bui.ui.mount"
+
+if jit then jit.off(true, true) end
+
+local count = do(entries)
+    local total = 0
+    for _ in pairs entries do total += 1 end
+    return total
+end
+
+-- One driver owns delivery, deadlines and native wakeups for both kinds of surface.
+-- Native callbacks only snapshot or schedule; ordinary notifications run in deliver.
+local new = do(Native, owner, Boundary, Protocols, now)
+    local Delivery = Queue.new()
+    local windows, nodes, timers = {}, {}, {}
+    local next_timer, assembly_depth = 0, 0
+    local running, quitting, woken = false, false, false
+
+    local has_due = do()
+        local current_time = now()
+        for timer in pairs timers do
+            if timer.deadline <= current_time then return true end
+        end
+        return false
+    end
+    local poll_timers = do()
+        local current_time, due = now(), {}
+        for timer in pairs timers do
+            if timer.deadline <= current_time then
+                due[#due + 1] = timer
+            elseif timer.window.pointer and not timer.native_id then
+                timer.native_id = Native.BK_window_timer(timer.window.pointer,
+                    math.max(1, math.ceil((timer.deadline - current_time) * 1000)))
+                assert(timer.native_id > 0, "native timer allocation failed")
+                windows[timer.window].wakes[timer.native_id] = timer
+            end
+        end
+        table.sort(due, do(left, right)
+                if left.deadline == right.deadline then return left.sequence < right.sequence end
+                return left.deadline < right.deadline
+            end)
+        for _, timer in ipairs due do
+            timers[timer] = nil
+            Delivery.post(timer.owner, do()
+                    timer.owner.close
+                    if timer.parent.is_alive() then timer.body end
+                end)
+        end
+    end
+    local after = do(parent, window, milliseconds, body)
+        Check.integer(milliseconds, "timer milliseconds", 0, 2147483647)
+        Check.callable(body, "timer body")
+        local timer_owner = parent.child "one-shot timer"
+        next_timer += 1
+        local timer = with
+            owner = timer_owner
+            .parent
+            .window
+            .body
+            deadline = now() + milliseconds / 1000
+            sequence = next_timer
+        end
+        timers[timer] = true
+        timer_owner.defer do()
+            timers[timer] = nil
+            if timer.native_id then
+                windows[window].wakes[timer.native_id] = nil
+                if window.pointer then
+                    Native.BK_window_cancel_timer(window.pointer, timer.native_id)
+                end
+            end
+        end
+        timer_owner.activate
+        poll_timers
+        return timer_owner.close
+    end
+    local animate = do(parent, window, body)
+        Check.callable(body, "animation body")
+        assert(window.pointer, "animation requires a native window")
+        local animation_owner = parent.child "animation"
+        local animation = { owner = animation_owner, .body, pending = false }
+        local animations = windows[window].animations
+        animations[animation] = true
+        animation_owner.defer do() animations[animation] = nil end
+        animation_owner.activate
+        Native.BK_window_request_frame(window.pointer, 1)
+        return animation_owner.close
+    end
+
+    local emitted = Boundary.callback("void (*)(void *, BKNode *, int, void *, double, double)",
+        do(_, pointer, kind, reference, first, second)
+            local record = nodes[tostring pointer]
+            if record and record.ready and record.owner.is_alive() then
+                local name, payload = Widgets.snapshot(record, kind, reference, first, second)
+                if name then Mount.notify(record, name, payload) end
+            end
+        end)
+    local timer_woke = Boundary.callback("void (*)(void *, BKWindow *, int)",
+        do(token, _, identifier)
+            local surface = Boundary.resolve token
+            if surface then
+                local timer = surface.wakes[identifier]
+                if timer then
+                    timer.native_id = nil
+                    surface.wakes[identifier] = nil
+                end
+            end
+            woken = true
+        end)
+    local close_requested = Boundary.callback("int (*)(void *, BKWindow *)", do(token)
+            local surface = Boundary.resolve token
+            if surface then
+                local window = surface.window
+                Delivery.post(window.owner, do()
+                        if window.close_requested then window.close_requested
+                        else window.owner.close end
+                    end)
+            end
+            -- Veto now; teardown is only legal after the native input stack returns.
+            return 0
+        end, 0)
+    local frame_requested = Boundary.callback("void (*)(void *, BKWindow *)", do(token)
+            local surface = Boundary.resolve token
+            if not surface then return end
+            for animation in pairs surface.animations do
+                if not animation.pending then
+                    animation.pending = true
+                    Delivery.post(animation.owner, do()
+                            animation.pending = false
+                            local again = Protocols.continue_frame(animation.body())
+                            if animation.owner.is_alive() then
+                                if again then Native.BK_window_request_frame(surface.window.pointer,
+                                        1)
+                                else animation.owner.close end
+                            end
+                        end)
+                end
+            end
+        end)
+    local clipboard_get = Boundary.callback("char *(*)(void *)", do(token)
+            local surface = Boundary.resolve token
+            if not surface or not surface.clipboard_text then return nil end
+            local text = surface.clipboard_text
+            local pointer = Native.mua_bui_malloc(#text + 1)
+            if pointer == nil then return nil end
+            ffi.copy(pointer, text, #text + 1)
+            return ffi.cast("char *", pointer)
+        end, nil, "service")
+    local clipboard_set = Boundary.callback("void (*)(void *, const char *)", do(token, text)
+            local surface = Boundary.resolve token
+            if surface then surface.clipboard_text = ffi.string text end
+        end, nil, "service")
+    local schedule = Boundary.callback("void (*)(void *, int, int)",
+        do(token, milliseconds, identifier)
+            local surface = Boundary.resolve token
+            if not surface then return end
+            local window = surface.window
+            local request = { deadline = now() + milliseconds / 1000 }
+            surface.toolkit_timers[identifier] = request
+            Delivery.post(window.owner, do()
+                    if surface.toolkit_timers[identifier] ~= request then return end
+                    after(window.owner, window,
+                        math.max(0, math.ceil((request.deadline - now()) * 1000)), do()
+                            if surface.toolkit_timers[identifier] == request then
+                                surface.toolkit_timers[identifier] = nil
+                                Native.BK_timer(window.context, identifier)
+                                Boundary.check_error
+                            end
+                        end)
+                end)
+        end)
+
+    local attach_surface = do(window)
+        local surface = { .window, wakes = {}, animations = {}, toolkit_timers = {} }
+        windows[window] = surface
+        window.owner.defer do() windows[window] = nil end
+        local token = Boundary.register(window.owner, surface)
+        local host = ffi.new "BKHost[1]"
+        host[0].data = token
+        host[0].emit = emitted
+        host[0].clipboard_get = clipboard_get
+        host[0].clipboard_set = clipboard_set
+        host[0].schedule = schedule
+        local callbacks = ffi.new "BKWindowCallbacks[1]"
+        callbacks[0].data = token
+        callbacks[0].on_timer = timer_woke
+        callbacks[0].on_close = close_requested
+        callbacks[0].on_frame = frame_requested
+        return host, callbacks
+    end
+    local track_node = do(record)
+        local address = tostring record.node
+        assert(not nodes[address], "native node registered twice")
+        nodes[address] = record
+        record.owner.defer do() nodes[address] = nil end
+    end
+    local each_node = do(body)
+        for _, record in pairs nodes do body record end
+    end
+    local assembling = do(body)
+        assembly_depth += 1
+        local succeeded, result = pcall body
+        assembly_depth -= 1
+        if not succeeded then error(result, 0) end
+        return result
+    end
+    local turn = do()
+        Boundary.check_error
+        woken = false
+        Native.BK_image_poll
+        Boundary.check_error
+        poll_timers
+        -- Host destruction may bypass the managed close-request notification.
+        local closed = {}
+        for window in pairs windows do
+            if window.pointer and Native.BK_window_is_open window.pointer == 0 then
+                closed[#closed + 1] = window
+            end
+        end
+        for _, window in ipairs closed do window.owner.close end
+        Boundary.deliver do() Delivery.drain 256 end
+    end
+    local has_windows = do()
+        for window in pairs windows do
+            if window.pointer then return true end
+        end
+        return false
+    end
+    local with_dispatch = do(body)
+        owner.mutate "dispatch"
+        assert(not running, "application dispatch is not reentrant")
+        assert(assembly_depth == 0, "cannot dispatch during component assembly")
+        running = true
+        local succeeded, problem = pcall body
+        running = false
+        if not succeeded then error(problem, 0) end
+    end
+    local pump = do()
+        with_dispatch do()
+            Boundary.check_error
+            Native.BK_window_pump
+            turn
+        end
+    end
+    local run = do()
+        with_dispatch do()
+            while true do
+                turn
+                if quitting or not has_windows() then break end
+                if Delivery.pending() or has_due() then Native.BK_window_pump
+                else Native.BK_window_run end
+            end
+        end
+    end
+    local quit = do()
+        owner.mutate "quit"
+        quitting = true
+    end
+    local statistics = do()
+        owner.check "statistics"
+        return with ..Boundary.statistics()
+            surfaces = count windows
+            registered_nodes = count nodes
+            timers = count timers
+        end
+    end
+
+    local stop = Boundary.callback("int (*)(void)", do()
+            return (Boundary.failed() or quitting or woken or Delivery.pending() or has_due()) and 1 or 0
+        end, 1)
+    Native.BK_window_set_stop_check stop
+    owner.defer do()
+        Native.BK_window_set_stop_check(nil)
+        Delivery.clear
+    end
+    return define
+        .after
+        .animate
+        .attach_surface
+        .track_node
+        .each_node
+        .assembling
+        .run
+        .pump
+        .quit
+        .statistics
+        post = Delivery.post
+        is_assembling = || -> assembly_depth > 0
+    end
+end
+
+return define .new end

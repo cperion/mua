@@ -1,0 +1,505 @@
+local ffi = require "ffi"
+local Scope = require "bui.ui.scope"
+local Check = require "bui.ui.check"
+local Handles = require "bui.ui.handles"
+
+if jit then jit.off(true, true) end
+
+local fits = { fill = 0, contain = 1, cover = 2, none = 3, scale_down = 4 }
+
+-- Translate a checked presentation choice, without acquiring or touching native resources.
+local fit_code = do(name)
+    name = Check.default(name, "contain")
+    assert(fits[name] ~= nil, "unknown image fit: " .. tostring name)
+    return fits[name]
+end
+
+local playback_names = {[0] = "loading", "playing", "paused", "ended", "failed" }
+local playback = do(Application, code)
+    local name = assert(playback_names[tonumber code], "unknown native playback state")
+    return Application.protocols.playback[name]()
+end
+
+-- Each integration owns one loading policy and one listener trampoline, not one per player.
+local integrations = meta { mode = "k" } {}
+local integration = do(Application)
+    if integrations[Application] then return integrations[Application] end
+    local loading_started, video_listener = false, nil
+    local mark_loading = do() loading_started = true end
+    local assert_configurable = do()
+        assert(not loading_started, "configure loader threads before installing sources or players")
+    end
+    local listener = do()
+        if not video_listener then
+            video_listener = Application.callback("void (*)(BKVideo *, int, void *)",
+                do(_, code, token)
+                    local player = Application.resolve token
+                    if player and player.connection then
+                        Application.post(player.connection.owner, player.connection.body,
+                            playback(Application, code))
+                    end
+                end)
+        end
+        return video_listener
+    end
+    local Loading = define
+        .mark_loading
+        .assert_configurable
+        .listener
+    end
+    integrations[Application] = Loading
+    Application.owner.defer do() integrations[Application] = nil end
+    return Loading
+end
+
+-- Seal loader-thread policy when a source begins loading, even if it later fails to decode.
+local mark_loading = do(Application)
+    integration(Application).mark_loading()
+end
+
+local refresh_video = do(Application, pointer)
+    -- The native poster setter does not damage or relayout its retained borrowers.
+    Application.each_node do(record)
+        if record.owner.is_alive() and record.media_changed then record.media_changed pointer end
+    end
+    Application.check_error
+end
+
+local format_name = do(Native, code)
+    if code == 0 then return "raw" end
+    local name = Native.BK_image_format_name code
+    assert(name ~= nil, "unknown native image format")
+    return ffi.string name
+end
+
+local image_capabilities = do(Application, owner, pointer)
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    owner.defer do() Native.BK_imbuf_free pointer end
+    local width, height = ffi.new "int[1]", ffi.new "int[1]"
+    local frames = tonumber(Native.BK_imbuf_size(pointer, width, height))
+    local image_width, image_height = tonumber width[0], tonumber height[0]
+    local frame_index = index -> Check.integer(Check.default(index, 1), "image frame", 1, frames) - 1
+    local info = do()
+        owner.check "image info"
+        return with
+            width = image_width
+            height = image_height
+            .frames
+            format = format_name(Native, Native.BK_imbuf_format pointer)
+            loops = tonumber(Native.BK_imbuf_loops pointer)
+        end
+    end
+    local rgba = do(index)
+        owner.check "copy RGBA pixels"
+        local frame = frame_index index
+        local pixels = ffi.new("unsigned char[?]", image_width * image_height * 4)
+        assert(Native.BK_imbuf_rgba(pointer, frame, pixels) ~= 0, "image conversion failed")
+        return ffi.string(pixels, image_width * image_height * 4)
+    end
+    local argb = do(index)
+        owner.check "copy ARGB pixels"
+        local pixels = Native.BK_imbuf_pixels(pointer, frame_index index)
+        if pixels == nil then return Acquisition.unavailable "image has no ARGB view" end
+        return Acquisition.ready(ffi.string(pixels, image_width * image_height * 4))
+    end
+    local delay = do(index)
+        owner.check "image frame delay"
+        return tonumber(Native.BK_imbuf_delay(pointer, frame_index index))
+    end
+    local Image = define .info, .rgba, .argb, .delay end
+    return Handles.register(Image, owner, "image", pointer)
+end
+
+local source_options = do(options)
+    -- Copy own fields first: inherited properties and accessors are not source descriptions.
+    Check.table(options, "image source")
+    local source = {}
+    for key, value in pairs options do source[key] = value end
+    Check.keys(source, { path = true, bytes = true, rgba = true, argb = true, width = true,
+            height = true, stride = true, max_width = true, max_height = true, frame = true },
+        "image source")
+    local selected, count = nil, 0
+    for _, key in ipairs { "path", "bytes", "rgba", "argb" } do
+        if source[key] ~= nil then selected, count = key, count + 1 end
+    end
+    assert(count == 1, "image source needs exactly one of path, bytes, rgba, or argb")
+    if selected == "path" then Check.string(source.path, "image path")
+    else assert(type source[selected] == "string", "image bytes expects an owned byte string") end
+    local maximum_width = Check.integer(Check.default(source.max_width, 0),
+        "maximum width", 0, 16384)
+    local maximum_height = Check.integer(Check.default(source.max_height, 0),
+        "maximum height", 0, 16384)
+    if source.frame ~= nil then Check.integer(source.frame, "decoded frame", 1) end
+    if selected == "rgba" or selected == "argb" then
+        assert(source.frame == nil and source.max_width == nil and source.max_height == nil,
+            "raw pixel sources do not take decode options")
+        local width = Check.integer(source.width, "pixel width", 1, 16384)
+        local height = Check.integer(source.height, "pixel height", 1, 16384)
+        local stride = Check.integer(Check.default(source.stride, width * 4),
+            "pixel stride", width * 4)
+        if selected == "argb" then assert(stride == width * 4, "ARGB pixels must be tightly packed") end
+        assert(#source[selected] >= (height - 1) * stride + width * 4, "pixel buffer is too small")
+        return source, selected, width, height, stride
+    end
+    assert(source.width == nil and source.height == nil and source.stride == nil,
+        "encoded images do not take pixel dimensions")
+    return source, selected, maximum_width, maximum_height
+end
+
+local read_bytes = do(source, Acquisition)
+    if source.bytes then return Acquisition.ready source.bytes end
+    local file, problem = io.open(source.path, "rb")
+    if not file then return Acquisition.unavailable(tostring problem) end
+    local succeeded, data, read_problem = pcall(file.read, file, "*a")
+    local closed, close_problem = file:close()
+    if not succeeded then return Acquisition.unavailable(tostring data) end
+    if not data then return Acquisition.unavailable(tostring read_problem) end
+    if not closed then return Acquisition.unavailable(tostring close_problem) end
+    return Acquisition.ready data
+end
+
+local acquire_image = do(Application, owner, options)
+    owner.mutate "acquire image"
+    local source, kind, width, height, stride = source_options options
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    local acquired = do(pointer)
+        if pointer == nil then return Acquisition.unavailable "image could not be decoded or allocated" end
+        return Acquisition.ready(image_capabilities(Application, owner, pointer))
+    end
+    if kind == "rgba" then
+        return acquired(Native.BK_imbuf_from_rgba(
+                ffi.cast("const unsigned char *", source.rgba), width, height, stride))
+    end
+    if kind == "argb" then
+        local pixels = ffi.new("uint32_t[?]", width * height)
+        ffi.copy(pixels, source.argb, width * height * 4)
+        return acquired(Native.BK_imbuf_from_argb(pixels, width, height))
+    end
+    if source.frame then
+        return read_bytes(source, Acquisition) with
+            unavailable = Acquisition.unavailable
+            ready = data -> acquired(Native.BK_imbuf_decode_frame(data, #data,
+                    source.frame - 1, width, height))
+        end
+    end
+    if kind == "path" then return acquired(Native.BK_imbuf_load(source.path, width, height)) end
+    return acquired(Native.BK_imbuf_decode(source.bytes, #source.bytes, width, height))
+end
+
+local acquire_animation = do(Application, owner, options)
+    owner.mutate "acquire animation"
+    local source, kind, maximum_width, maximum_height = source_options options
+    assert(kind == "bytes" or kind == "path", "animation needs an encoded source")
+    assert(not source.frame, "an animation stream does not take a frame index")
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    return read_bytes(source, Acquisition) with
+        unavailable = Acquisition.unavailable
+        ready = do(data)
+            local pointer = Native.BK_anim_open(data, #data, maximum_width, maximum_height)
+            if pointer == nil then return Acquisition.unavailable "source is not a supported animation" end
+            -- The decoder copies the encoded bytes; decoded frames have independent owners.
+            owner.defer do() Native.BK_anim_free pointer end
+            local info = do()
+                owner.check "animation info"
+                local width, height, loops = ffi.new "int[1]", ffi.new "int[1]", ffi.new "int[1]"
+                local frames = Native.BK_anim_info(pointer, width, height, loops)
+                return { width = tonumber width[0], height = tonumber height[0],
+                    loops = tonumber loops[0], frames = tonumber frames }
+            end
+            return Acquisition.ready(Handles.register(define .info end,
+                    owner, "animation", pointer))
+        end
+    end
+end
+
+local acquire_video = do(Application, owner, source)
+    owner.mutate "acquire video"
+    Check.string(source, "video source")
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    if ffi.string(Native.BK_video_backends()) == "" then
+        return Acquisition.unavailable "this BUI build has no video backend"
+    end
+    local pointer = Native.BK_video_new source
+    if pointer == nil then return Acquisition.unavailable "video player creation failed" end
+    owner.defer do() Native.BK_video_free pointer end
+    mark_loading Application
+    local player = {}
+    local token = Application.register(owner, player)
+    owner.defer do() Native.BK_video_set_listener(pointer, nil, nil) end
+    Native.BK_video_set_listener(pointer, integration(Application).listener(), token)
+    local play = do()
+        owner.mutate "play"
+        Native.BK_video_play pointer
+        Application.check_error
+    end
+    local pause = do()
+        owner.mutate "pause"
+        Native.BK_video_pause pointer
+        Application.check_error
+    end
+    local seek = do(seconds)
+        owner.mutate "seek"
+        -- The GStreamer backend converts to signed nanoseconds, even before duration is known.
+        Native.BK_video_seek(pointer, Check.number(seconds, "seek time", 0, 9223372036))
+        Application.check_error
+    end
+    local rate = do(value)
+        owner.mutate "playback rate"
+        Native.BK_video_set_rate(pointer, Check.number(value, "rate", 1 / 16, 16))
+        Application.check_error
+    end
+    local loop = do(enabled)
+        owner.mutate "playback loop"
+        Native.BK_video_set_loop(pointer, Check.boolean(enabled, "loop") and 1 or 0)
+        Application.check_error
+    end
+    local poster = do(path)
+        owner.mutate "poster"
+        if path ~= nil then Check.string(path, "poster path") end
+        Native.BK_video_set_poster(pointer, path)
+        refresh_video(Application, pointer)
+    end
+    local controls = do(enabled)
+        owner.mutate "video controls"
+        Native.BK_video_set_controls(pointer, Check.boolean(enabled, "controls") and 1 or 0)
+        Application.check_error
+    end
+    local state = do()
+        owner.check "playback state"
+        return playback(Application, Native.BK_video_state pointer)
+    end
+    local time = do()
+        owner.check "playback time"
+        return tonumber(Native.BK_video_time pointer)
+    end
+    local duration = do()
+        owner.check "video duration"
+        return tonumber(Native.BK_video_duration pointer)
+    end
+    local size = do()
+        owner.check "video size"
+        local width, height = ffi.new "int[1]", ffi.new "int[1]"
+        if Native.BK_video_size(pointer, width, height) == 0 then
+            return Acquisition.unavailable "video size is not known yet"
+        end
+        return Acquisition.ready { width = tonumber width[0], height = tonumber height[0] }
+    end
+    local on_state_changed = do(body)
+        owner.mutate "connect playback"
+        Check.callable(body, "playback notification")
+        if player.connection then player.connection.owner.close end
+        local connection_owner = owner.child "playback connection"
+        local connection = { owner = connection_owner, .body }
+        player.connection = connection
+        connection_owner.activate
+        return do()
+            connection_owner.close
+            if player.connection == connection then player.connection = nil end
+        end
+    end
+    local Video = define
+        .play
+        .pause
+        .seek
+        .rate
+        .loop
+        .poster
+        .controls
+        .state
+        .time
+        .duration
+        .size
+        .on_state_changed
+    end
+    return Acquisition.ready(Handles.register(Video, owner, "video", pointer))
+end
+
+local Acquiring = define
+    image = acquire_image
+    animation = acquire_animation
+    video = acquire_video
+end
+
+-- Persistent acquisitions belong to this owner; each with_* activity owns a bounded child.
+local resources = do(Application, owner)
+    local Acquisitions = {}
+    for name, acquire in pairs Acquiring do
+        Acquisitions["acquire_" .. name] = do(source)
+            return Scope.prepare(owner, || -> acquire(Application, owner, source))
+        end
+        Acquisitions["with_" .. name] = do(source)
+            owner.mutate("open " .. name)
+            return do(body)
+                Check.callable(body, name .. " body")
+                return Scope.with_owner(owner.child name) do(temporary_owner)
+                    return acquire(Application, temporary_owner, source) with
+                        ready = do(resource)
+                            temporary_owner.activate
+                            return Application.protocols.acquisition.ready(body resource)
+                        end
+                        unavailable = Application.protocols.acquisition.unavailable
+                    end
+                end
+            end
+        end
+    end
+    local next_frame = do(animation)
+        return Scope.prepare(owner, do()
+                local pointer = Handles.get(animation, "animation")
+                assert(Scope.same_integration(Handles.owner(animation, "animation"), owner),
+                    "animation belongs to another application")
+                local delay = ffi.new "int[1]"
+                local frame = Application.native.BK_anim_next(pointer, delay)
+                if frame == nil then
+                    return Application.protocols.acquisition.unavailable "animation frame decode failed"
+                end
+                return Application.protocols.acquisition.ready with
+                    image = image_capabilities(Application, owner, frame)
+                    milliseconds = tonumber delay[0]
+                end
+            end)
+    end
+    return define ..Acquisitions
+        .next_frame
+    end
+end
+
+-- Shared loader policy belongs to the integration, never to an individual image or widget.
+local images = do(Application)
+    local Native, owner, Acquisition = Application.native, Application.owner, Application.protocols.acquisition
+    local inspect = do(options)
+        owner.mutate "inspect image"
+        Check.keys(options, { path = true, bytes = true }, "image header source")
+        local source, kind = source_options options
+        assert(kind == "path" or kind == "bytes", "inspection needs an encoded source")
+        local info = ffi.new "BKImageInfo[1]"
+        local accepted
+        if kind == "path" then accepted = Native.BK_image_probe_file(source.path, info)
+        else accepted = Native.BK_image_probe(source.bytes, #source.bytes, info) end
+        if accepted == 0 then return Acquisition.unavailable "image header is unavailable" end
+        return Acquisition.ready with
+            width = tonumber info[0].width
+            height = tonumber info[0].height
+            frames = tonumber info[0].frames
+            format = format_name(Native, info[0].format)
+        end
+    end
+    local budget = do(count)
+        owner.mutate "image cache budget"
+        Native.BK_image_set_budget(Check.integer(count, "cache bytes", 0,
+                ffi.sizeof "size_t" == 8 and 2 ^ 53 - 1 or 2 ^ 32 - 1))
+    end
+    local threads = do(count)
+        owner.mutate "image loader threads"
+        integration(Application).assert_configurable()
+        Native.BK_image_set_threads(Check.integer(count, "loader threads", 0, 64))
+    end
+    local prefetch = do(path, width, height, fit)
+        owner.mutate "prefetch image"
+        Check.string(path, "image path")
+        Check.integer(width, "width", 1, 16384)
+        Check.integer(height, "height", 1, 16384)
+        local mode = fit_code fit
+        mark_loading Application
+        Native.BK_image_prefetch(path, width, height, mode)
+    end
+    local clear = do()
+        owner.mutate "clear image cache"
+        Native.BK_image_clear_cache
+        Application.check_error
+    end
+    local statistics = do()
+        owner.check "image cache statistics"
+        local values = ffi.new "BKImageStats[1]"
+        Native.BK_image_stats values
+        local result = {}
+        for _, name in ipairs { "bytes", "budget", "entries", "pending", "decoded", "failed",
+            "cancelled", "evicted", "decode_ms" } do result[name] = tonumber values[0][name] end
+        return result
+    end
+    local video_backends = do()
+        owner.check "video backends"
+        local backends = {}
+        for name in ffi.string(Native.BK_video_backends()):gmatch "[^,]+" do
+            backends[#backends + 1] = name
+        end
+        return backends
+    end
+    return define
+        .inspect
+        .budget
+        .threads
+        .prefetch
+        .clear
+        .statistics
+        .video_backends
+    end
+end
+
+-- Lend presentation resources only to descendants, retaining no shorter-lived owner.
+local for_control = do(record)
+    if record.kind ~= "image" and record.kind ~= "video" and record.kind ~= "label"
+    and record.kind ~= "button" then return {} end
+    local Native, node, owner = record.native, record.node, record.owner
+    local shown_video, shown_fit
+    record.media_changed = do(pointer)
+        if shown_video == pointer then
+            owner.mutate "refresh video presentation"
+            Native.BK_node_set_video(node, shown_video, shown_fit)
+        end
+    end
+    local show_image = do(image, fit)
+        owner.mutate "show image"
+        local pointer, mode = Handles.get(image, "image", owner), fit_code fit
+        -- There is no independent native image-fit setter: clear/set fit before lending.
+        Native.BK_node_set_video(node, nil, mode)
+        Native.BK_node_set_imbuf(node, pointer)
+        shown_video = nil
+    end
+    local show_source = do(path, fit)
+        owner.mutate "show source"
+        Check.string(path, "image source")
+        local mode = fit_code fit
+        mark_loading record.application
+        Native.BK_node_set_image_source(node, path, mode)
+        shown_video = nil
+    end
+    local show_frame = do(index)
+        owner.mutate "show image frame"
+        Native.BK_node_set_image_frame(node, Check.integer(index, "image frame", 1))
+    end
+    local play_image = do()
+        owner.mutate "play image"
+        Native.BK_node_set_image_frame(node, 0)
+    end
+    local clear_image = do()
+        owner.mutate "clear image"
+        Native.BK_node_set_imbuf(node, nil)
+        shown_video = nil
+    end
+    local Presentation = define
+        .show_image
+        .show_source
+        .show_frame
+        .play_image
+        .clear_image
+    end
+    if record.kind ~= "image" and record.kind ~= "video" then return Presentation end
+    local show_video = do(video, fit)
+        owner.mutate "show video"
+        local pointer, mode = Handles.get(video, "video", owner), fit_code fit
+        Native.BK_node_set_video(node, pointer, mode)
+        shown_video, shown_fit = pointer, mode
+    end
+    return define ..Presentation
+        .show_video
+    end
+end
+
+return define
+    .resources
+    .images
+    .for_control
+    .fit_code
+    .mark_loading
+end

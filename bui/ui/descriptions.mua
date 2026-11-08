@@ -3,10 +3,10 @@ local Canvas = require "bui.ui.canvas"
 
 -- Collect checked shape descriptions; returning from the body acquires no native resources.
 local drawing = do(body: Function): Table
-    local descriptions, vocabulary, identifiers = {}, {}, {}
+    local descriptions, Drawing, identifiers = {}, {}, {}
     local active = true
     for kind in pairs Canvas.kinds do
-        vocabulary[kind] = do(options)
+        Drawing[kind] = do(options)
             assert(active, "drawing description activity has ended")
             local description = Canvas.describe(kind, options, #descriptions + 1)
             assert(not identifiers[description.id], "duplicate drawing item id")
@@ -15,9 +15,9 @@ local drawing = do(body: Function): Table
             return description.id
         end
     end
-    local ok, problem = pcall(body, vocabulary)
+    local succeeded, problem = pcall(body, Drawing)
     active = false
-    if not ok then error(problem, 0) end
+    if not succeeded then error(problem, 0) end
     return descriptions
 end
 

@@ -1,5 +1,5 @@
--- Activity-based BUI entry point. Native mechanics live at the Lua/FFI edge;
--- these closed protocols belong to the Mua library, not to the C declarations.
+-- Activity-based BUI, implemented in Mua. The raw C declarations remain in bui.ffi;
+-- ownership, mounting, delivery and these closed protocols belong to this library.
 local Application = require "bui.ui.application"
 local Descriptions = require "bui.ui.descriptions"
 
@@ -15,7 +15,7 @@ local continue_frame = do(decision: Frame): Boolean
         finished() = false,
     }
 end
-local protocols = define
+local Protocols = define
     opening = Opening
     acquisition = Acquisition
     selection = Selection
@@ -28,7 +28,7 @@ local activities = do(clock)
     return define
         with_application = do(Native)
             return do(body: Function): Any
-                return Application.with_application(Native, protocols, body, clock)
+                return Application.with_application(Native, Protocols, body, clock)
             end
         end
     end

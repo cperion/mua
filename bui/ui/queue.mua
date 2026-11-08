@@ -1,0 +1,43 @@
+-- A delivery activity owns its cursor and batch limit. Work appended by a notification
+-- belongs to a later batch; a retired owner can never receive its queued notifications.
+local new = do()
+    local entries, first, last = {}, 1, 0
+    local delivering = false
+    local clear = do()
+        entries, first, last = {}, 1, 0
+    end
+    local post = do(owner, body, ..arguments)
+        if not owner.is_alive() then return end
+        last += 1
+        entries[last] = with
+            .owner
+            .body
+            .arguments
+        end
+    end
+    local drain = do(budget)
+        assert(not delivering, "notification delivery is not reentrant")
+        delivering = true
+        local stop = math.min(last, first + (budget or 256) - 1)
+        local succeeded, problem = pcall do()
+            while first <= stop do
+                local entry = entries[first]
+                entries[first], first = nil, first + 1
+                if entry.owner.is_alive() then
+                    entry.body(unpack(entry.arguments, 1, entry.arguments.n))
+                end
+            end
+        end
+        delivering = false
+        if first > last then clear end
+        if not succeeded then error(problem, 0) end
+    end
+    return define
+        .post
+        .drain
+        .clear
+        pending = || -> first <= last
+    end
+end
+
+return define .new end

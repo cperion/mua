@@ -66,6 +66,13 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
   find_program(LUAJIT_EXECUTABLE NAMES luajit REQUIRED)
+  set(MUA_LUAJIT_EXECUTABLE "${LUAJIT_EXECUTABLE}" CACHE FILEPATH
+    "LuaJIT with Mua's syntax backport, for managed activity tests")
+  execute_process(COMMAND "${MUA_LUAJIT_EXECUTABLE}" -e "local value = 0; value += 1"
+    RESULT_VARIABLE mua_syntax_status OUTPUT_QUIET ERROR_QUIET TIMEOUT 5)
+  if(NOT mua_syntax_status STREQUAL "0")
+    message(FATAL_ERROR "Set MUA_LUAJIT_EXECUTABLE to a LuaJIT with the LuaJIT 3.0 syntax backport required by Mua")
+  endif()
   add_executable(bui_abi_probe abi_probe.c)
   target_include_directories(bui_abi_probe PRIVATE "${BUI_SOURCE_DIR}/kit/include"
     "${BUI_SOURCE_DIR}/gpu/include" "${BUI_SOURCE_DIR}/api")
@@ -77,25 +84,27 @@ if(BUILD_TESTING)
     "$<TARGET_FILE:mua_bui>" "${abi_report}")
   set_tests_properties(bui_ffi PROPERTIES FIXTURES_REQUIRED bui_abi
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 60)
-  add_test(NAME bui_ui COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
+  add_test(NAME bui_ui_ownership COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+    "${MUA_SOURCE_DIR}/tests/bui_ui_ownership.mua")
+  add_test(NAME bui_ui COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
     "$<TARGET_FILE:mua_bui>")
-  add_test(NAME bui_ui_media COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
+  add_test(NAME bui_ui_media COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
     "$<TARGET_FILE:mua_bui>" "${BUI_SOURCE_DIR}/tests/videos/clip.mp4")
   option(BUI_FFI_TEST_VIDEO "Require working native video decoding, not just the failure outcome" OFF)
   if(BUI_FFI_TEST_VIDEO)
-    add_test(NAME bui_ui_video COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
+    add_test(NAME bui_ui_video COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
       "$<TARGET_FILE:mua_bui>" "${BUI_SOURCE_DIR}/tests/videos/clip.mp4" --require-video)
     set_tests_properties(bui_ui_video PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   endif()
-  add_test(NAME bui_ui_headless_example COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+  add_test(NAME bui_ui_headless_example COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
     "${MUA_SOURCE_DIR}/examples/bui/activities.mua" "$<TARGET_FILE:mua_bui>" --headless)
-  set_tests_properties(bui_ui bui_ui_media bui_ui_headless_example PROPERTIES
+  set_tests_properties(bui_ui_ownership bui_ui bui_ui_media bui_ui_headless_example PROPERTIES
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   option(BUI_FFI_TEST_WINDOW "Also test a real native window (requires a desktop)" OFF)
   if(BUI_FFI_TEST_WINDOW)
-    add_test(NAME bui_ui_window COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
+    add_test(NAME bui_ui_window COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
       "$<TARGET_FILE:mua_bui>" --window)
-    add_test(NAME bui_ui_example COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+    add_test(NAME bui_ui_example COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
       "${MUA_SOURCE_DIR}/examples/bui/activities.mua" "$<TARGET_FILE:mua_bui>" --smoke)
     set_tests_properties(bui_ui_window bui_ui_example PROPERTIES
       WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 10)
@@ -103,11 +112,8 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:mua_bui>" "${abi_report}" --window)
     set_tests_properties(bui_window PROPERTIES FIXTURES_REQUIRED bui_abi
       WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 30)
-    set(MUA_LUAJIT_EXECUTABLE "" CACHE FILEPATH "Mua-capable LuaJIT for the optional studio regression test")
-    if(MUA_LUAJIT_EXECUTABLE)
-      add_test(NAME bui_studio COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
-        "${MUA_SOURCE_DIR}/examples/bui/studio.mua" "$<TARGET_FILE:mua_bui>" --smoke)
-      set_tests_properties(bui_studio PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 10)
-    endif()
+    add_test(NAME bui_studio COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+      "${MUA_SOURCE_DIR}/examples/bui/studio.mua" "$<TARGET_FILE:mua_bui>" --smoke)
+    set_tests_properties(bui_studio PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 10)
   endif()
 endif()

@@ -1,0 +1,272 @@
+local ffi = require "ffi"
+local Scope = require "bui.ui.scope"
+local Check = require "bui.ui.check"
+local Mount = require "bui.ui.mount"
+
+if jit then jit.off(true, true) end
+
+local packed = do(..values) = values
+
+local input_for = do(Native, owner, context, check_error)
+    local pointer_input = with
+        press = { call = Native.BK_press, arity = 3 }
+        release = { call = Native.BK_release, arity = 3 }
+        motion = { call = Native.BK_motion, arity = 3 }
+        wheel = { call = Native.BK_wheel, arity = 4 }
+        button = { call = Native.BK_button, arity = 5 }
+        context_menu = { call = Native.BK_context_menu, arity = 3 }
+    end
+    local PointerInput = {}
+    for name, operation in pairs pointer_input do
+        PointerInput[name] = do(..arguments)
+            owner.mutate name
+            assert(arguments.n == operation.arity, name .. ": wrong number of arguments")
+            for index = 1, arguments.n do Check.integer(arguments[index], name) end
+            local consumed = operation.call(context, ..arguments)
+            check_error
+            return consumed ~= 0
+        end
+    end
+    local key = do(text, keysym, modifiers)
+        owner.mutate "key"
+        local consumed = Native.BK_key(context, Check.string(text, "key text"),
+            Check.string(keysym, "keysym"),
+            Check.integer(Check.default(modifiers, 0), "modifiers", 0))
+        check_error
+        return consumed ~= 0
+    end
+    local key_release = do(keysym, modifiers)
+        owner.mutate "key_release"
+        local consumed = Native.BK_key_release(context, Check.string(keysym, "keysym"),
+            Check.integer(Check.default(modifiers, 0), "modifiers", 0))
+        check_error
+        return consumed ~= 0
+    end
+    local scroll = do(horizontal_position, vertical_position, horizontal, vertical, modifiers)
+        owner.mutate "scroll"
+        local consumed = Native.BK_scroll(context,
+            Check.integer(horizontal_position, "x"), Check.integer(vertical_position, "y"),
+            Check.number(horizontal, "horizontal scroll"),
+            Check.number(vertical, "vertical scroll"),
+            Check.integer(Check.default(modifiers, 0), "modifiers", 0))
+        check_error
+        return consumed ~= 0
+    end
+    return define ..PointerInput
+        .key
+        .key_release
+        .scroll
+    end
+end
+
+local clipboard_for = do(Native, owner, context, Acquisition, check_error)
+    local read = do()
+        owner.mutate "read clipboard"
+        local pointer = Native.BK_clipboard_get context
+        if pointer == nil then return Acquisition.unavailable "clipboard is empty" end
+        local succeeded, text = pcall(ffi.string, pointer)
+        Native.mua_bui_free pointer
+        if not succeeded then error(text, 0) end
+        return Acquisition.ready text
+    end
+    local write = do(text)
+        owner.mutate "write clipboard"
+        Native.BK_clipboard_set(context, Check.string(text, "clipboard"))
+        check_error
+    end
+    return define .read, .write end
+end
+
+local capabilities_for = do(Application, window)
+    local Native, owner, context = Application.native, window.owner, window.context
+    local mounted = {}
+    local content = do(region, root)
+        return do(installer)
+            owner.mutate("mount " .. region)
+            Check.callable(installer, "component installer")
+            return do(body)
+                owner.mutate("mount " .. region)
+                assert(not mounted[region],
+                    region .. " is already mounted; use a slot for replacement")
+                mounted[region] = true
+                local results = packed(pcall(Mount.with_content,
+                        Application, window, root, installer, body))
+                mounted[region] = nil
+                if not results[1] then error(results[2], 0) end
+                return unpack(results, 2, results.n)
+            end
+        end
+    end
+    local after = do(milliseconds)
+        owner.mutate "schedule timer"
+        return do(body) return Application.after(owner, window, milliseconds, body) end
+    end
+    local on_close_requested = do(body)
+        owner.mutate "connect close request"
+        window.close_requested = Check.callable(body, "close_requested")
+    end
+    local render = do()
+        owner.mutate "render"
+        local rendered
+        if window.pointer then
+            Native.BK_window_render_now window.pointer
+            rendered = true
+        else
+            rendered = Native.BK_render(context, window.raster, window.width, window.height, 0) ~= 0
+        end
+        Application.check_error
+        return rendered
+    end
+    local resize = do(width, height)
+        owner.mutate "resize"
+        Check.integer(width, "width", 1, 32768)
+        Check.integer(height, "height", 1, 32768)
+        if window.pointer then Native.BK_window_set_size(window.pointer, width, height)
+        else
+            window.width, window.height = width, height
+            Native.BK_node_relayout window.root
+        end
+    end
+    local size = do()
+        owner.check "size"
+        if not window.pointer then return { width = window.width, height = window.height } end
+        local width, height = ffi.new "int[1]", ffi.new "int[1]"
+        Native.BK_window_get_size(window.pointer, width, height)
+        return { width = tonumber width[0], height = tonumber height[0] }
+    end
+    local show = do()
+        owner.mutate "show"
+        assert(window.pointer, "headless surfaces cannot be shown")
+        Native.BK_window_show window.pointer
+        Application.check_error
+    end
+    local title = do(text)
+        owner.mutate "set title"
+        assert(window.pointer, "headless surfaces have no window title")
+        Native.BK_window_set_title(window.pointer, Check.string(text, "title"))
+    end
+    local frames = do()
+        owner.check "frames"
+        assert(window.pointer, "frame statistics require a native window")
+        return tonumber(Native.BK_window_frames window.pointer)
+    end
+    local undo = do()
+        owner.mutate "undo"
+        local changed = Native.BK_undo context ~= 0
+        Application.check_error
+        return changed
+    end
+    local redo = do()
+        owner.mutate "redo"
+        local changed = Native.BK_redo context ~= 0
+        Application.check_error
+        return changed
+    end
+    local undo_depth = do()
+        owner.check "undo_depth"
+        local redo_count = ffi.new "int[1]"
+        local undo_count = Native.BK_undo_depth(context, redo_count)
+        return { undo = tonumber undo_count, redo = tonumber redo_count[0] }
+    end
+    local close_popups = do()
+        owner.mutate "close popups"
+        Native.BK_close_popups context
+    end
+    return define
+        with_content = content("content", window.root)
+        with_header = content("header", window.header)
+        .after
+        animate = body -> Application.animate(owner, window, body)
+        close = owner.close
+        .on_close_requested
+        .render
+        .resize
+        .size
+        .show
+        .title
+        .frames
+        .undo
+        .redo
+        .undo_depth
+        .close_popups
+        input = input_for(Native, owner, context, Application.check_error)
+        clipboard = clipboard_for(Native, owner, context,
+            Application.protocols.acquisition, Application.check_error)
+    end
+end
+
+local acquire_window = do(Application, window, title)
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    if Native.BK_window_supported() == 0 then
+        return Acquisition.unavailable "native windows are not supported by this backend"
+    end
+    local pointer = Native.BK_window_new(window.context, title, window.width, window.height)
+    if pointer == nil then return Acquisition.unavailable "native window creation failed" end
+    window.pointer = pointer
+    window.owner.defer do()
+        Native.BK_window_free pointer
+        window.pointer = nil
+    end
+    return Acquisition.ready(nil)
+end
+
+local acquire_raster = do(Application, window)
+    local Native, Acquisition = Application.native, Application.protocols.acquisition
+    local raster = Native.BUI_raster_create(window.width, window.height)
+    if raster == nil then return Acquisition.unavailable "headless raster allocation failed" end
+    window.raster = raster
+    window.owner.defer do() Native.BUI_raster_free raster end
+    return Acquisition.ready(nil)
+end
+
+local with_acquired_surface = do(Application, options, acquire)
+    return do(body)
+        Application.owner.mutate "open surface"
+        Check.keys(options, { title = true, width = true, height = true }, "surface options")
+        Check.callable(body, "surface body")
+        local width = Check.integer(Check.default(options.width, 640), "width", 1, 32768)
+        local height = Check.integer(Check.default(options.height, 480), "height", 1, 32768)
+        local title = Check.string(Check.default(options.title, "Mua"), "title")
+        local Native, Opening = Application.native, Application.protocols.opening
+        return Scope.with_owner(Application.owner.child "surface") do(owner)
+            local root = Native.BK_node_new "column"
+            assert(root ~= nil, "surface root allocation failed")
+            owner.defer do() Native.BK_node_free root end
+            local header = Native.BK_node_new "column"
+            assert(header ~= nil, "header root allocation failed")
+            owner.defer do() Native.BK_node_free header end
+            Native.BK_set_num(root, "padding", 0)
+            Native.BK_set_num(root, "spacing", 0)
+            Native.BK_set_num(header, "padding", 0)
+            Native.BK_set_num(header, "spacing", 0)
+            local context = Native.BK_context_new root
+            assert(context ~= nil, "context allocation failed")
+            owner.defer do() Native.BK_context_free context end
+            Native.BK_context_set_header(context, header)
+            local window = { .owner, .context, .root, .header, .width, .height }
+            local host, callbacks = Application.attach_surface window
+            Native.BK_context_set_host(context, host)
+            return acquire(Application, window, title) with
+                unavailable = Opening.unavailable
+                ready = do()
+                    if window.pointer then Native.BK_window_set_callbacks(window.pointer, callbacks) end
+                    owner.activate
+                    Application.check_error
+                    return Opening.opened(body(capabilities_for(Application, window)))
+                end
+            end
+        end
+    end
+end
+
+-- Own a native window, its context and mounted children for the body lifetime.
+local with_window = do(Application, options)
+    return with_acquired_surface(Application, options, acquire_window)
+end
+
+-- Own an offscreen raster with exactly the same mounting and input semantics.
+local with_surface = do(Application, options)
+    return with_acquired_surface(Application, options, acquire_raster)
+end
+
+return define .with_window, .with_surface end
