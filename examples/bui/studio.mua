@@ -1,0 +1,294 @@
+-- A small native BUI studio. This is a demo, not a component framework.
+--   luajit mua.lua examples/bui/studio.mua path/to/mua_bui.dll [--smoke]
+local ffi = require "ffi"
+local Bui = require "bui.ffi"
+local filename = ffi.os == "Windows" and "mua_bui.dll" or "libmua_bui.so"
+local Native = Bui.load(arg[1] or "./build/bui/" .. filename)
+-- The event loop and property setters can synchronously call back into Lua.
+jit.off
+
+local root, context, window
+local callbacks, handlers = {}, {}
+local callback_error
+local smoke = arg[2] == "--smoke"
+
+-- Allocate, attach, and validate properties together: the tree owns every child.
+local add = do(parent, kind, properties, changed)
+    local node = Native.BK_node_new kind
+    assert(node ~= nil, "cannot create " .. kind)
+    if parent ~= nil then
+        if Native.BK_node_add(parent, node, -1) == 0 then
+            Native.BK_node_free node
+            error("cannot attach " .. kind)
+        end
+    end
+    local assign = do(key, value)
+        local setter = type value == "string" and Native.BK_set_str or Native.BK_set_num
+        assert(setter(node, key, value) == 1, kind .. ": unknown property " .. key)
+    end
+    for key, value in pairs(properties or {}) do
+        if key ~= "value" then assign(key, value) end
+    end
+    -- Limits must exist before the initial value: table iteration has no property order.
+    if properties and properties.value ~= nil then assign("value", properties.value) end
+    if changed then handlers[#handlers + 1] = { .node, .changed } end
+    return node
+end
+
+local guarded = do(signature, body)
+    local callback = ffi.cast(signature, do(data, node, kind, reference, first, second)
+            local ok, problem = pcall(body, data, node, kind, reference, first, second)
+            if not ok then
+                callback_error = problem
+                Native.BK_window_quit
+            end
+        end)
+    callbacks[#callbacks + 1] = callback
+    return callback
+end
+
+local run = do()
+    Native.BUI_gpu_set_default 0
+    Native.BK_set_theme "dark"
+    Native.BK_set_scale 1.1
+    root = add(nil, "column")
+    Native.BK_set_num(root, "padding", 22)
+    Native.BK_set_num(root, "spacing", 14)
+
+    local heading = add(root, "row", { spacing = 24 })
+    local title = add(heading, "column", { spacing = 3, weight = 3 })
+    add(title, "label", { text = "Mua / Studio", font_scale = 1.8, bold = 1 })
+    add(title,
+        "label",
+        { text = "A little creative space. Native widgets, straight from Mua.", enabled = 0 })
+    local switches = add(heading, "column", { spacing = 5, weight = 0 })
+    add(switches, "label", { text = "BUI 0.5  /  " .. ffi.os, text_align = "right", enabled = 0 })
+    local theme_switch = add(switches, "toggle", { label = "Light theme", value = 0 }, do(node)
+            Native.BK_set_theme(Native.BK_get_num(node, "value") == 0 and "dark" or "light")
+        end)
+
+    local body = add(root, "row", { spacing = 18, fill = 1 })
+    local controls = add(body, "box", { padding = 18, spacing = 10, weight = 1 })
+    local preview = add(body, "box", { padding = 18, spacing = 10, weight = 1.7 })
+    local status = add(root,
+        "label",
+        { text = "Ready. Try the controls, edit the color ramp, or start a render.", enabled = 0 })
+    add(controls, "label", { text = "SCENE", bold = 1 })
+    add(controls, "text", { text = "Aurora / mountain study", live = 1 }, do(node)
+            Native.BK_set_str(status,
+                "text", "Editing: " .. ffi.string(Native.BK_get_str(node, "text")))
+        end)
+    add(controls, "label", { text = "Render engine", enabled = 0 })
+    local engine = add(controls, "dropdown")
+    local engines = { "BUI software raster", "Path tracer (demo)", "Workbench (demo)" }
+    Native.BK_set_strs(engine, "items", ffi.new("const char *[3]", engines), #engines)
+    add(controls, "separator", { line = 1, factor = 0.6 })
+    add(controls, "label", { text = "LIGHT & DETAIL", bold = 1 })
+
+    add(preview, "label", { text = "AURORA     /     LIVE PREVIEW", bold = 1 })
+    local canvas = add(preview, "canvas", { events = 1 })
+    Native.BK_geom_set(canvas, "reqheight", 208)
+    local exposure = 0.65
+    local artwork = do()
+        local rectangle = ffi.new "int[4]"
+        Native.BK_node_rect(canvas, rectangle)
+        local width, height = math.max(1, rectangle[2]), math.max(1, rectangle[3])
+        local next_id = 0
+        local shape = do(kind, points, color)
+            local coordinates = ffi.new("float[?]", #points)
+            for index, value in ipairs points do
+                coordinates[index - 1] = value * (index % 2 == 1 and width or height)
+            end
+            local item = ffi.new "BKCanvasItem[1]"
+            next_id = next_id + 1
+            item[0].id, item[0].type = next_id, kind
+            item[0].coords, item[0].ncoords = coordinates, #points
+            for index = 1, 3 do item[0].fill[index - 1] = color[index] * (0.55 + exposure * 0.7) end
+            item[0].fill[3] = 1
+            Native.BK_canvas_set_item(canvas, item)
+        end
+        for index = 0, 47 do
+            local t = index / 47
+            shape(Native.BK_ITEM_RECT, { 0, index / 48, 1, (index + 1) / 48 + 1 / height },
+                { 0.07 + t * 0.10, 0.10 + t * 0.30, 0.23 + t * 0.24 })
+        end
+        for index = 1, 18 do
+            local x, y = (index * 0.173) % 1, ((index * 0.137) % 0.40) + 0.05
+            shape(Native.BK_ITEM_OVAL, { x, y, x + 0.004, y + 0.009 }, { 0.67, 0.84, 0.91 })
+        end
+        shape(Native.BK_ITEM_OVAL, { 0.68, 0.14, 0.84, 0.52 }, { 1.0, 0.71, 0.43 })
+        shape(Native.BK_ITEM_POLYGON,
+            { 0, 0.82, 0.22, 0.25, 0.50, 0.80, 0.74, 0.44, 1, 0.84, 1, 1, 0, 1 },
+            { 0.25, 0.40, 0.52 })
+        shape(Native.BK_ITEM_POLYGON,
+            { 0.13, 0.49, 0.22, 0.25, 0.32, 0.48, 0.25, 0.43, 0.21, 0.47, 0.18, 0.43 },
+            { 0.74, 0.86, 0.89 })
+        shape(Native.BK_ITEM_POLYGON,
+            { 0, 0.94, 0.24, 0.70, 0.44, 0.91, 0.68, 0.62, 1, 0.94, 1, 1, 0, 1 },
+            { 0.12, 0.26, 0.32 })
+        shape(Native.BK_ITEM_POLYGON,
+            { 0, 0.92, 0.18, 0.84, 0.49, 0.97, 0.82, 0.82, 1, 0.92, 1, 1, 0, 1 },
+            { 0.07, 0.15, 0.21 })
+    end
+    local light = add(controls,
+        "slider",
+        { label = "Exposure", min = 0, max = 1, value = exposure, precision = 2 }, do(node)
+            exposure = Native.BK_get_num(node, "value")
+            artwork
+            Native.BK_set_str(status,
+                "text",
+                string.format("Exposure %.2f  /  the preview is drawn with BUI canvas primitives.",
+                    exposure))
+        end)
+    add(controls, "slider", { label = "Atmosphere", min = 0, max = 100, value = 42, precision = 0 })
+    add(controls, "number", { label = "Samples", min = 1, max = 4096, value = 128, integer = 1 })
+    add(controls, "checkbox", { label = "Denoising", value = 1 })
+    add(controls, "checkbox", { label = "Transparent background", value = 0 })
+    add(controls, "separator", { line = 1, factor = 0.6 })
+    add(controls, "label", { text = "PALETTE", bold = 1 })
+    local swatches = add(controls, "row", { spacing = 6 })
+    for _, color in ipairs { { 0.12, 0.26, 0.42, 1 },
+        { 0.23, 0.61, 0.68, 1 }, { 1.0, 0.71, 0.43, 1 }, { 0.75, 0.85, 0.90, 1 } } do
+        local swatch = add(swatches, "swatch")
+        Native.BK_set_color(swatch, "color", ffi.new("float[4]", color))
+    end
+    add(controls,
+        "label",
+        { text = "Click a swatch to open Blender's color picker.", enabled = 0, font_scale = 0.85 })
+    add(controls, "separator", { fill = 1, factor = 0.1 })
+
+    add(preview, "label", { text = "COLOR RAMP   /   drag the stops", enabled = 0 })
+    local ramp = add(preview, "ramp")
+    local positions = ffi.new("float[4]", { 0, 0.35, 0.72, 1 })
+    local colors = ffi.new("float[4][4]",
+        { { 0.07, 0.12, 0.28, 1 },
+            { 0.17, 0.56, 0.65, 1 }, { 0.88, 0.54, 0.37, 1 }, { 1, 0.87, 0.60, 1 } })
+    Native.BK_ramp_set(ramp, positions, ffi.cast("const float (*)[4]", colors), 4)
+    add(preview, "label", { text = "RESPONSE CURVE   /   edit the points", enabled = 0 })
+    local curve = add(preview, "curve", { height = 4.2 })
+    local points = ffi.new("float[4][2]", { { 0, 0 }, { 0.28, 0.12 }, { 0.72, 0.88 }, { 1, 1 } })
+    Native.BK_curve_set(curve, 0, ffi.cast("const float (*)[2]", points), 4)
+    add(preview, "label", { text = "Retained widgets. Editable curves. No webview.", enabled = 0 })
+
+    local progress = add(controls, "progress", { text = "Ready to render", factor = 0 })
+    local rendering, completion, timer = false, 0, 0
+    local render_button
+    render_button = add(controls,
+        "button", { text = "Render preview", icon = Native.BK_icon_id "RENDER_STILL" }, do()
+            if rendering then return end
+            rendering, completion = true, 0
+            Native.BK_set_str(render_button, "text", "Rendering...")
+            Native.BK_set_str(status,
+                "text", "Rendering a simulated job. The window stays responsive.")
+            timer = Native.BK_window_timer(window, 35)
+        end)
+    add(controls, "button", { text = "Reset exposure", icon = Native.BK_icon_id "LOOP_BACK" }, do()
+            Native.BK_set_num(light, "set_value", 0.65)
+        end)
+
+    context = Native.BK_context_new root
+    assert(context ~= nil, "context allocation failed")
+    local host = ffi.new "BKHost[1]"
+    host[0].emit = guarded("void (*)(void *, BKNode *, int, void *, double, double)",
+        do(_, node, kind)
+            if node == canvas and kind == Native.BK_EV_CONFIGURE then artwork; return end
+            if kind ~= Native.BK_EV_CLICK and kind ~= Native.BK_EV_CHANGE then return end
+            for _, handler in ipairs handlers do
+                if handler.node == node then handler.changed node; return end
+            end
+        end)
+    Native.BK_context_set_host(context, host)
+    window = Native.BK_window_new(context, "Mua Studio  |  BUI on " .. ffi.os, 1000, 760)
+    assert(window ~= nil, "a native desktop is required")
+    Native.BK_window_wm(window, "minsize", 880, 720)
+    local smoke_timer, smoke_stage, stable_frames, smoke_waits = 0, 1, 0, 0
+    local smoke_done = false
+    local original_width = ffi.new "int[4]"
+    local native_callbacks = ffi.new "BKWindowCallbacks[1]"
+    native_callbacks[0].on_timer = guarded("void (*)(void *, BKWindow *, int)", do(_, _, id)
+            if smoke and id == smoke_timer then
+                if smoke_stage == 1 then
+                    stable_frames = Native.BK_window_frames window
+                    assert(stable_frames > 0, "first frame was not presented")
+                    assert(Native.BK_canvas_count canvas == 71, "incomplete artwork")
+                    smoke_stage = 2
+                elseif smoke_stage == 2 then
+                    local frames = Native.BK_window_frames window
+                    if frames ~= stable_frames then
+                        -- Window-manager exposure/hover paints can arrive after the first frame.
+                        stable_frames = frames
+                        smoke_waits += 1
+                        assert(smoke_waits < 20, "idle window did not settle")
+                        smoke_timer = Native.BK_window_timer(window, 100)
+                        return
+                    end
+                    smoke_waits = 0
+                    Native.BK_node_rect(canvas, original_width)
+                    Native.BK_window_set_size(window, 1040, 800)
+                    smoke_stage = 3
+                elseif smoke_stage == 3 then
+                    local rectangle = ffi.new "int[4]"
+                    Native.BK_node_rect(canvas, rectangle)
+                    assert(rectangle[2] > original_width[2], "resize did not reach the canvas")
+                    Native.BK_set_num(theme_switch, "set_value", 1)
+                    Native.BK_set_num(theme_switch, "set_value", 0)
+                    Native.BK_set_num(light, "set_value", 0.4)
+                    assert(exposure == 0.4, "exposure callback did not run")
+                    Native.BK_window_render_now window
+                    Native.BK_node_rect(render_button, rectangle)
+                    local x = rectangle[0] + math.floor(rectangle[2] / 2)
+                    local y = rectangle[1] + math.floor(rectangle[3] / 2)
+                    Native.BK_press(context, x, y, 0)
+                    Native.BK_release(context, x, y, 0)
+                    assert(rendering, "render button did not start the job")
+                    smoke_stage = 4
+                elseif not rendering then
+                    assert(completion == 1, "render job did not complete")
+                    smoke_done = true
+                    Native.BK_window_close window
+                    return
+                else
+                    smoke_waits += 1
+                    assert(smoke_waits < 60, "render timer stopped making progress")
+                end
+                smoke_timer = Native.BK_window_timer(window, 100)
+                return
+            end
+            if not rendering or id ~= timer then return end
+            completion = math.min(1, completion + 0.025)
+            Native.BK_set_num(progress, "factor", completion)
+            Native.BK_set_str(progress,
+                "text", string.format("Preview  /  %d%%", math.floor(completion * 100 + 0.5)))
+            if completion < 1 then
+                timer = Native.BK_window_timer(window, 35)
+            else
+                rendering = false
+                Native.BK_set_str(render_button, "text", "Render again")
+                Native.BK_set_str(status,
+                    "text", "Preview complete. Your next idea is one click away.")
+            end
+        end)
+    Native.BK_window_set_callbacks(window, native_callbacks)
+    Native.BK_window_show window
+    artwork
+    -- Canvas damage already schedules a render. request_frame requires an on_frame callback;
+    -- without one, this BUI revision's Win32 host keeps reposting the request and starves timers.
+    if smoke then smoke_timer = Native.BK_window_timer(window, 100) end
+    print("Mua Studio is open on " .. ffi.os .. ". Close the window to finish.")
+    io.stdout:flush
+    Native.BK_window_run
+    if callback_error then error callback_error end
+    if smoke then
+        assert(smoke_done, "studio closed before its smoke checks finished")
+        print "Studio smoke: idle, resize, theme, exposure, render timer, and close passed."
+    end
+end
+
+local ok, problem = xpcall(run, debug.traceback)
+-- The window borrows the context; the context borrows the root. Callbacks outlive all three.
+if window ~= nil then Native.BK_window_free window end
+if context ~= nil then Native.BK_context_free context end
+if root ~= nil then Native.BK_node_free root end
+for _, callback in ipairs callbacks do callback:free end
+Native.BK_image_exit
+assert(ok, problem)

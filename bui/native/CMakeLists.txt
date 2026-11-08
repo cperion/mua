@@ -83,5 +83,11 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:mua_bui>" "${abi_report}" --window)
     set_tests_properties(bui_window PROPERTIES FIXTURES_REQUIRED bui_abi
       WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 30)
+    set(MUA_LUAJIT_EXECUTABLE "" CACHE FILEPATH "Mua-capable LuaJIT for the optional studio regression test")
+    if(MUA_LUAJIT_EXECUTABLE)
+      add_test(NAME bui_studio COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
+        "${MUA_SOURCE_DIR}/examples/bui/studio.mua" "$<TARGET_FILE:mua_bui>" --smoke)
+      set_tests_properties(bui_studio PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 10)
+    endif()
   endif()
 endif()
