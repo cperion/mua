@@ -11,6 +11,8 @@ nominal type when the program demands one (§3).
 
 If a spelling here looks strange, [Reading Mua](reading-mua.md) undoes it step by step. [Writing compilers in Mua](writing-compilers.md)
 applies this method to one kind of program, from text to running code.
+[Component patterns](component-patterns.md) develops stateful vocabularies, inward capabilities,
+outward continuations, parent wiring and activity-owned lifetimes, with runnable headless examples.
 
 A host adds its own concerns in an addendum (Nua's covers binding times, native layouts,
 ownership, concurrency and reading generated C). This guide does not know any host.
