@@ -6,7 +6,7 @@ ffi.cdef(require 'bui.cdef')
 -- Load our pinned native bundle by explicit path; return the C namespace itself.
 local function load(path)
     if type(path) ~= 'string' or path == '' then
-        error('bui.ffi.load: provide the path to libmua_bui', 2)
+        error('bui.ffi.load: provide the path to the native BUI library', 2)
     end
     local library = ffi.load(path)
     if library.mua_bui_binding_version() ~= 1 then

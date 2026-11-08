@@ -1,11 +1,11 @@
 -- Native BUI FFI contract tests. Run through bui/native's CTest target.
 -- The interpreter may be stock LuaJIT: this boundary contains no Mua-only syntax.
-local root = arg[0]:match('^(.*)/tests/[^/]*$') or '.'
+local root = arg[0]:gsub('\\', '/'):match('^(.*)/tests/[^/]*$') or '.'
 package.path = root .. '/?.lua;' .. root .. '/?/init.lua;' .. package.path
 local ffi = require 'ffi'
 local binding = require 'bui.ffi'
-local library_path = assert(arg[1], 'provide libmua_bui.so and bui_abi_probe paths')
-local probe_path = assert(arg[2], 'provide bui_abi_probe path')
+local library_path = assert(arg[1], 'provide the native library and ABI report paths')
+local report_path = assert(arg[2], 'provide the ABI report written by bui_abi_probe')
 local library = binding.load(library_path)
 -- Lua -> C -> Lua cannot enter a Lua callback from a compiled FFI call.
 -- The raw binding does not silently change the application's JIT policy.
@@ -60,8 +60,7 @@ end
 check(public_symbols == 296, 'complete public function inventory')
 
 -- Compare every public record and field with the compiler's actual ABI measurements.
-local quoted_probe = "'" .. probe_path:gsub("'", "'\\''") .. "'"
-local probe = assert(io.popen('exec ' .. quoted_probe, 'r'))
+local probe = assert(io.open(report_path, 'r'))
 local records, fields, constants, strings = 0, 0, 0, 0
 for line in probe:lines() do
     local columns = {}
@@ -90,12 +89,13 @@ for line in probe:lines() do
         error('unexpected ABI probe output: ' .. line)
     end
 end
-check(probe:close(), 'ABI probe completed')
+check(probe:close(), 'ABI report read')
 check(records == 17 and fields == 136 and constants == 141 and strings == 1, 'ABI probe coverage')
 
 -- Keep explicit owners, with callbacks alive until the native host is disconnected.
-local tree, context, raster, emit, clipboard_get, ramp
+local tree, context, raster, emit, clipboard_get, ramp, window, on_frame, on_timer
 local function cleanup()
+    if window ~= nil then library.BK_window_free(window) end
     if context ~= nil then
         library.BK_context_set_host(context, ffi.new('BKHost[1]'))
         library.BK_context_free(context)
@@ -105,6 +105,8 @@ local function cleanup()
     if raster ~= nil then library.BUI_raster_free(raster) end
     if emit then emit:free() end
     if clipboard_get then clipboard_get:free() end
+    if on_frame then on_frame:free() end
+    if on_timer then on_timer:free() end
     library.BK_image_exit()
 end
 local function exercise()
@@ -204,6 +206,39 @@ local function exercise()
     library.bui_set_render_sink(library.BUI_raster_sink(raster))
     check(library.bui_get_render_sink() ~= nil, 'sink seam')
     library.bui_set_render_sink(nil)
+
+    if arg[3] == '--window' then
+        check(library.BK_window_supported() == 1, 'native window backend available')
+        window = library.BK_window_new(context, 'Mua BUI native window test', 320, 120)
+        check(window ~= nil, 'create native window (requires a desktop)')
+        check(library.BK_window_handle(window) ~= nil, 'native window handle')
+        check(library.BK_window_raster(window) ~= nil, 'window-owned raster')
+        local frames, fired, callback_data, callback_window = 0
+        on_frame = ffi.cast('void (*)(void *, BKWindow *)', function()
+            frames = frames + 1
+        end)
+        on_timer = ffi.cast('void (*)(void *, BKWindow *, int)', function(data, owner, id)
+            fired, callback_data, callback_window = id, data, owner
+        end)
+        local callbacks = ffi.new('BKWindowCallbacks[1]')
+        callbacks[0].data = token
+        callbacks[0].on_frame = on_frame
+        callbacks[0].on_timer = on_timer
+        library.BK_window_set_callbacks(window, callbacks)
+        library.BK_window_show(window)
+        local timer = library.BK_window_timer(window, 30)
+        check(timer > 0, 'create native timer')
+        library.BK_window_request_frame(window, 0)
+        local deadline = os.time() + 5
+        repeat
+            library.BK_window_pump()
+        until (frames > 0 and fired ~= nil) or os.time() >= deadline
+        check(frames > 0 and library.BK_window_frames(window) > 0, 'native frame callback and presentation')
+        check(fired == timer and callback_window == window, 'native timer callback')
+        check(callback_data == ffi.cast('void *', token), 'native window callback data')
+        library.BK_window_close(window)
+        check(library.BK_window_is_open(window) == 0, 'native window closed')
+    end
 end
 local ok, problem = xpcall(exercise, debug.traceback)
 -- Clear the global sink before its borrowed raster can disappear, including on failure.

@@ -3,7 +3,8 @@
 --   luajit mua.lua examples/bui/headless.mua ./build/bui/libmua_bui.so
 local ffi = require "ffi"
 local Bui = require "bui.ffi"
-local Native = Bui.load(arg[1] or "./build/bui/libmua_bui.so")
+local filename = ffi.os == "Windows" and "mua_bui.dll" or "libmua_bui.so"
+local Native = Bui.load(arg[1] or "./build/bui/" .. filename)
 
 local root, context, raster
 local render = do()

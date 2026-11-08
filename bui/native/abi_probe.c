@@ -11,8 +11,16 @@
     offsetof(record, member), sizeof(((record *)0)->member))
 #define CONSTANT(name) printf("constant\t%s\t%lld\n", #name, (long long)(name))
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc > 2) {
+        fprintf(stderr, "usage: bui_abi_probe [report-file]\n");
+        return 1;
+    }
+    if (argc == 2 && !freopen(argv[1], "w", stdout)) {
+        perror(argv[1]);
+        return 1;
+    }
     TYPE(BuiGpuSink);
     FIELD(BuiGpuSink, user); FIELD(BuiGpuSink, begin_frame); FIELD(BuiGpuSink, scissor);
     FIELD(BuiGpuSink, triangles); FIELD(BuiGpuSink, lines); FIELD(BuiGpuSink, points);
@@ -127,5 +135,9 @@ int main(void)
     CONSTANT(BUI_KIT_VERSION_MAJOR); CONSTANT(BUI_KIT_VERSION_MINOR); CONSTANT(BUI_KIT_VERSION_PATCH);
     CONSTANT(BUI_KIT_VERSION); CONSTANT(BUI_IMAGE_ATLAS_MAX);
     printf("string\tBUI_KIT_VERSION_STRING\t%s\n", BUI_KIT_VERSION_STRING);
+    if (fflush(stdout) != 0 || ferror(stdout)) {
+        perror("writing ABI report");
+        return 1;
+    }
     return 0;
 }

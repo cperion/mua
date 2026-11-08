@@ -21,11 +21,16 @@ checks the kit version, not the facade version.
 
 ## Build and test
 
-The native packaging supports **Linux, native builds**, tested on x86-64. It rejects other
-platforms and cross-compilation rather than pretending their exports and ABI have been verified.
-It needs CMake 3.24+, C/C++ compilers, and LuaJIT for the tests. Use the patched LuaJIT described
+The native packaging supports **Linux and Windows**, tested on x86-64. Windows builds use
+**MinGW-w64 GCC** (tested with portable w64devkit); MSVC and cross-compilation are not supported
+by this packaging. Both the DLL and LuaJIT must be native Windows binaries of the same bitness.
+No changes to the hand-written C declarations are needed for Windows.
+
+It needs CMake 3.24+, C/C++ compilers, and LuaJIT for the tests. Use the LuaJIT version described
 in the main README when running a `.mua` program; the raw `.lua` binding also works on stock
 LuaJIT 2.1.
+
+### Linux
 
 From this repository, with BUI checked out beside it at `../bui`:
 
@@ -37,6 +42,35 @@ ctest --test-dir build/bui --output-on-failure
 /path/to/patched/luajit mua.lua examples/bui/headless.mua ./build/bui/libmua_bui.so
 ```
 
+### Windows / PowerShell
+
+Put CMake, MinGW-w64 and Windows LuaJIT on the current shell's PATH. From the Mua checkout,
+with BUI beside it:
+
+```powershell
+cmake -S bui/native -B build/bui -G "MinGW Makefiles" `
+  -DCMAKE_MAKE_PROGRAM=make.exe -DCMAKE_BUILD_TYPE=Release `
+  -DLUAJIT_EXECUTABLE=C:/path/to/luajit.exe
+cmake --build build/bui -j4
+ctest --test-dir build/bui --output-on-failure
+
+C:/path/to/luajit.exe mua.lua examples/bui/headless.mua ./build/bui/mua_bui.dll
+```
+
+`make.exe` is w64devkit's GNU Make. With another MinGW distribution, use its make executable
+(often `mingw32-make.exe`), or use `-G Ninja` with Ninja installed instead. To build current
+upstream LuaJIT with w64devkit, run
+`make -j4 HOST_SYS=Windows TARGET_SYS=Windows HOST_MSYS=1` in its source directory; the explicit
+host settings select the Windows ABI and the POSIX shell supplied by w64devkit. Keep its
+`lua51.dll` beside `luajit.exe`.
+
+From WSL, use `powershell.exe -NoProfile` to run these **Windows** tools. Keep the Windows
+build directory separate from the Linux one; a checkout/build under `C:\\...` also avoids
+`cmd.exe`'s UNC working-directory limitation. This was tested by invoking PowerShell from WSL,
+not with Wine or a Linux LuaJIT loading a PE DLL.
+
+### Build contract
+
 Set `-DBUI_SOURCE_DIR=/absolute/path/to/BUI` for a different checkout and
 `-DLUAJIT_EXECUTABLE=/path/to/luajit` to choose the test interpreter.
 BUI's optional native features keep their upstream defaults and CMake options. Its Python,
@@ -44,9 +78,19 @@ Lua 5.4, ImGui and Qt bindings, examples and reference UI build are disabled. No
 runtime is linked into this bundle.
 
 BUI supplies static libraries. The small CMake project packages their public objects into
-`libmua_bui.so`, keeping even symbols that no C caller references, since FFI finds them by name.
+`libmua_bui.so` on Linux or `mua_bui.dll` on Windows, keeping even symbols that no C caller
+references, since FFI finds them by name. The MinGW linker exports the retained symbols and
+links the GCC/C++ runtimes statically; the tested w64devkit DLL imports only Windows system
+libraries. The Lua library namespace, ownership and callbacks are identical on both platforms.
+
 It leaves the upstream checkout untouched. `headers.lock` checks the four public header hashes
-at configure time, and changes trigger reconfiguration before a rebuild.
+at configure time after normalizing CRLF to LF, so Windows Git line-ending conversion is safe.
+Other changes still fail the check and trigger reconfiguration before a rebuild.
+
+The default tests are headless. On a desktop, configure with `-DBUI_FFI_TEST_WINDOW=ON` to also
+briefly open a real native window and test presentation, frame/timer callbacks and closing it.
+CTest runs the C ABI probe as a fixture and checks its exit status before Lua reads its report;
+there are no shell-pipe or shell-quoting requirements.
 
 These tests are separate from `make test`: the language itself does not require a BUI checkout
 or a native build.
@@ -56,7 +100,8 @@ or a native build.
 ```lua
 local ffi = require 'ffi'
 local Bui = require 'bui.ffi'
-local Native = Bui.load('./build/bui/libmua_bui.so')
+local filename = ffi.os == 'Windows' and 'mua_bui.dll' or 'libmua_bui.so'
+local Native = Bui.load('./build/bui/' .. filename)
 
 local button = Native.BK_node_new('button')
 assert(button ~= nil, 'could not create button')
@@ -173,14 +218,15 @@ copy or transfer ownership.
 
 `bui/native/abi_probe.c` is a test executable compiled against the **real headers**. It reports
 sizes, alignments, offsets and constants. It is not a header translator or binding generator.
-`tests/bui.lua` checks:
+`tests/bui.lua` runs against the platform's own compiled report and checks:
 
 - resolution of all 296 declared public function symbols;
 - all 17 public record sizes and alignments, all 136 field offsets, and cdata field sizes;
 - all 136 enum values, five numeric macros and the string macro;
 - loader refusals, scalar/output-pointer calls, pointer-to-array inputs and outputs;
 - callbacks carrying pointers and doubles, clipboard allocation, rendering, damage tracking,
-  input dispatch, node detachment and cleanup.
+  input dispatch, node detachment and cleanup;
+- with the desktop test enabled, native window creation, presentation, callbacks and closing.
 
 These checks do not prove every function's behavioral semantics or every signature merely by
 resolving its symbol. Review the declarations against the headers; the ABI and smoke tests
