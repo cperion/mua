@@ -42,7 +42,7 @@ local counter_panel = do(inputs)
 end
 
 -- A pure drawing description. Rebuilding it changes no native object until canvas.replace.
-local landscape = do(width, height)
+local landscape = do(width, height, badge)
     return Ui.drawing do(draw)
         draw.rectangle with
             coordinates = { 0, 0, width, height }
@@ -59,6 +59,10 @@ local landscape = do(width, height)
         draw.polygon with
             coordinates = { width * 0.3, height, width * 0.7, 55, width, height }
             fill = { 0.1, 0.3, 0.4, 1 }
+        end
+        draw.image with
+            coordinates = { width - 40, height - 40, width - 16, height - 16 }
+            image = badge
         end
     end
 end
@@ -80,9 +84,20 @@ local studio = do(place)
             first.increment
             second.increment
         end
+        -- The column owns this copied image; its canvas may retain it for the entire mount.
+        local badge = children.resources.acquire_image with
+            width = 2
+            height = 2
+            rgba = string.char(255, 186, 102, 255, 56, 115, 140, 255,
+                26, 77, 102, 255, 232, 238, 245, 255)
+        end {
+            ready(image) = image,
+            unavailable(reason) = error reason,
+        }
         local canvas = children.canvas { height = 140, fill = true }
         canvas.connect define
-            configured = rectangle -> canvas.replace(landscape(rectangle.width, rectangle.height))
+            configured = rectangle -> canvas.replace(landscape(rectangle.width,
+                    rectangle.height, badge))
         end
         local slot = children.slot {}
         children.button "Replace the note" do()

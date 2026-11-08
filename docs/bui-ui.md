@@ -144,6 +144,7 @@ unless the component explicitly chooses another protocol.
   before a request. Ordinary property/canvas changes use damage, never this animation protocol.
 - `Ui.using_clock now` supplies an activity vocabulary with an injected monotonic seconds
   function, useful for deterministic headless tests. Backwards/nonfinite time is rejected.
+  It controls managed scheduling, not the native media decoder's playback clock.
 
 Callbacks catch errors and return safe native results. The first callback error is fatal to
 that application and is raised after C returns; subsequent capability calls cannot resume it.
@@ -177,10 +178,14 @@ corresponding global policy; `statistics()` reports live managed registration co
 `id` (default: declaration order), `fill`, `outline`, `width`, `radius`, `size`, `text`, `family`,
 `text_flags`, `anchor`, `hidden`, `clip`, `start` and `extent` where applicable.
 
-Rectangles/ovals/arcs/images use `x0,y0,x1,y1`, text uses `x,y`, and lines/polygons use successive
-point pairs. Clip arrays use `x,y,width,height`. Image descriptions require exactly one `source`
-path or tightly packed `rgba` byte string with `image_width`/`image_height`; `fit` is `fill`,
-`contain`, `cover`, `none`, or `scale_down`.
+Rectangles/ovals/arcs use `x0,y0,x1,y1`, text uses `x,y`, and lines/polygons use successive
+point pairs. Clip arrays use `x,y,width,height`. Image descriptions take a box or an intrinsic-size
+`x,y` point and exactly one of: `source` path, tightly packed `rgba` bytes with
+`image_width`/`image_height`, owned `image` capability, or owned `video` capability. Videos require
+a box because their intrinsic size may not be known yet. `fit` is `fill`, `contain` (default),
+`cover`, `none`, or `scale_down`; `frame` is zero for automatic source playback or a one-based
+frame number. A pure description retains resource identities, not ownership: publication must
+still prove that each borrowed resource outlives the canvas.
 
 Canvas capabilities are `replace descriptions`, `set_item description`, `append description`,
 `put(index,description)`, `delete id`, `truncate count`, `raise id`, `lower id`, and `count()`.
@@ -188,6 +193,109 @@ Descriptions are validated/copied before publication; duplicate identities and u
 buffers are refused. Installed records retain borrowed font strings. Replacing/truncating the
 native items happens before dropping that retention. A drawing builder cannot be used after
 its body completes.
+
+## Images, animation and video
+
+`application.resources` owns acquisitions until the application completes. `place.resources`
+owns them until that mount/container completes, **not** merely until its assembly body returns.
+Use a replaceable child mount to bound the lifetime of changing assets; do not continually
+acquire transient frames into a long-lived application owner.
+
+Both vocabularies provide:
+
+| Capability | Result and lifetime |
+|---|---|
+| `acquire_image source` | `Ui.Acquisition` containing an owned image |
+| `acquire_animation source` | `Ui.Acquisition` containing a GIF/WebP frame decoder |
+| `next_frame animation` | `Ui.Acquisition` containing `{image,milliseconds}`, owned by the receiving resource vocabulary |
+| `acquire_video path` | `Ui.Acquisition` containing a player; this does **not** mean its media has finished loading |
+| `with_image source body`, `with_animation source body`, `with_video path body` | bounded child activities returning `Ui.Acquisition.ready(body_result)` or `unavailable(reason)` |
+
+Programming/body errors propagate; environmental acquisition failures do not enter the body.
+Partial setup errors release newly acquired native resources immediately. Resource functions
+reject use after their owner completes; no destructor depends on garbage collection.
+
+Image source records are copied from their own fields; inherited/accessor properties are not
+an implicit configuration mechanism. An image source is exactly one of:
+
+- `{path=...}` or `{bytes=...}`: encoded data. Optional `max_width`/`max_height` are fit-within
+  limits, never upscaled; zero/default means no requested limit. Optional `frame` decodes just
+  that one-based frame. Byte strings may contain NUL; paths may not.
+- `{rgba=...,width=...,height=...,stride=...}`: straight RGBA bytes, copied. Dimensions are
+  1–16384; stride defaults to `width*4`. The buffer must contain every addressed pixel.
+- `{argb=...,width=...,height=...}`: tightly packed, native-endian, already-premultiplied
+  `0xAARRGGBB` words, copied. The caller supplies premultiplied channel values.
+
+An image exposes `info()` (`width`, `height`, `frames`, `format`, `loops`), `rgba(frame)`
+(copied straight RGBA bytes), `argb(frame)` (an acquisition outcome for a copied premultiplied
+view), and `delay(frame)` in milliseconds. Frame indexes default to one and are checked.
+`format` is the native format name, or `raw` for pixel buffers without an encoded format.
+Loop count zero means forever when the image is animated. These byte/metadata snapshots can
+outlive the activity; the image capability cannot.
+
+An animation accepts encoded `path`/`bytes` and optional decode dimensions, but no frame index.
+Its `info()` returns intrinsic dimensions, frame count and loop count. `next_frame` advances
+and copies ownership of a frame into the receiving owner; the resulting image can outlive the
+decoder. Advancing the decoder is not rolled back if a later installer fails.
+
+Image, video, label and button nodes expose `show_image(image,fit)`, `show_source(path,fit)`,
+`show_frame(index)`, `play_image()` and `clear_image()`. Image/video nodes additionally expose
+`show_video(player,fit)`. Labels/buttons retain BUI's intrinsic-size image presentation.
+
+**Retained loans require an ancestor owner.** An application-owned image can be shown by its
+windows; a mount-owned image can be shown by that mount's descendants. A shorter-lived or sibling
+resource is refused before changing the installed image. Lexical overlap alone does not authorize
+retention. Bounded `with_image`/`with_animation` activities are useful for inspection/conversion;
+use placement-owned acquisitions for retained UI. Copying/spreading a resource's method table
+does not copy its identity. Returning a resource directly from an installer produces a checked
+alias whose loan is narrowed to that component's lifetime.
+
+For example, inside an installer:
+
+```mua
+local result = place.resources.acquire_image {
+    rgba = string.char(255, 180, 80, 255), width = 1, height = 1,
+}
+result {
+    ready = do(image)
+        local picture = place.image { width = 64, height = 64 }
+        picture.show_image(image, "contain")
+    end,
+    unavailable(reason) = place.label(reason),
+}
+```
+
+A player exposes `play`, `pause`, `seek(seconds)`, `rate(number)`, `loop(boolean)`,
+`poster(path_or_nil)`, `controls(boolean)`, `state`, `time`, `duration`, `size`, and
+`on_state_changed body`. Rate is 1/16–16; seek time is nonnegative and bounded to fit native
+signed 64-bit nanoseconds. `size()` is an acquisition outcome for currently known presentation
+size (possibly the poster before video loads); duration zero means unknown. Poster changes
+explicitly damage/relayout retained borrowers, including canvases. Replaced/cleared borrowers
+are not rebound by later poster changes.
+
+`state()` and state notifications use the closed `Ui.Playback` protocol: `loading`, `playing`,
+`paused`, `ended`, `failed` (all unit alternatives). Notifications snapshot the native state,
+run FIFO after C returns, and are revoked by disconnect/replacement/disposal. One UI-thread
+listener trampoline is shared across players. There is **no Lua image-worker callback**;
+managed dispatch polls native image completion on the UI thread.
+
+Missing compiled video backends return acquisition `unavailable`. A compiled backend can still
+lack a runtime codec; lazy loading then reports `Playback.failed`, without poisoning the
+application. At the pinned BUI revision, player loading uses OS movie decoders, despite the
+header's broader GIF/WebP wording. Use image sources or the animation decoder for GIF/WebP;
+the library does not claim that the video player supports them. Playback is muted, as in BUI.
+
+`application.images` controls the shared loader/cache:
+
+- `inspect {path=...}` or `{bytes=...}` returns an acquisition outcome containing header
+  `width`, `height`, `frames`, and `format`. Recognition does not certify full decoding.
+- `budget(bytes)` sets the decoded shared-cache budget, not a limit on all owned images.
+- `threads(count)` accepts 0–64 (zero: native automatic policy). Choose it before installing
+  asynchronous sources/players or prefetching; clearing the cache does not reopen configuration.
+- `prefetch(path,width,height,fit)`, `clear()`, and `statistics()` manage settled cache entries.
+  Statistics copy `bytes`, `budget`, `entries`, `pending`, `decoded`, `failed`, `cancelled`,
+  `evicted`, and `decode_ms`; prefetch success is not promised synchronously.
+- `video_backends()` returns compiled backend names, not a runtime codec guarantee.
 
 ## Specialized editors
 
@@ -212,12 +320,24 @@ assembly. `scope.lua` and `queue.lua` are native-independent ownership/delivery 
 `application.lua` owns native dispatch; `mount.lua` is the single mounting engine;
 `widgets.lua` supplies checked property descriptions; specialized modules extend that engine.
 
+Native publication rechecks owner liveness after input normalization; an input accessor that
+retires a mount cannot cause a subsequent write through its freed node. Dense arrays require
+actual entries, not metatable-synthesized values for holes.
+
 `tests/bui_ui.lua` covers completion, partial failure, discarded delivery, slot replacement,
 independent mounts, focus during failed assembly, copied values, callbacks, timers, editors,
-canvas retention and native animation. CTest runs headless UI tests and the composed example;
-`BUI_FFI_TEST_WINDOW=ON` adds bounded real-window tests. The raw ABI suite remains separate.
+canvas retention and native animation. `tests/bui_ui_media.lua` covers copied pixels, strided
+buffers, selected frames, independent animation frames, checked retained loans, acquisition
+rollback, worker cancellation, poster refresh, deferred playback snapshots and callback errors.
+Its real-video path uses the pinned BUI `tests/videos/clip.mp4` fixture. Linux without a runtime
+codec verifies the failure outcome; Windows Media Foundation playback is tested with an external
+deadline. `--require-video` makes missing decoding a test failure.
 
-Remaining design families include managed media assets/playback, tree forests, complete menus
-and key maps, dialogs, custom drawing/services, raster/texture activities, IME and advanced
+CTest runs headless UI/media tests and the composed example; `BUI_FFI_TEST_WINDOW=ON` adds
+bounded real-window tests, and `BUI_FFI_TEST_VIDEO=ON` additionally requires working video
+playback. The raw ABI suite remains separate.
+
+Remaining design families include tree forests, complete menus and key maps, dialogs,
+custom drawing/services, raster/texture activities (including media texture transfer), IME and advanced
 host/GPU integration. They are not certified by constructor presence or raw FFI access. New
 features must use these owners and delivery rules, rather than introduce a second runtime.

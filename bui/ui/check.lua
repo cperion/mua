@@ -2,6 +2,12 @@
 local ffi = require 'ffi'
 local Check = {}
 
+-- Defaults apply only to absence; false must still fail a numeric/string contract.
+function Check.default(value, fallback)
+    if value == nil then return fallback end
+    return value
+end
+
 function Check.number(value, name, minimum, maximum)
     if type(value) ~= 'number' or value ~= value or value == math.huge or value == -math.huge
         or (minimum and value < minimum) or (maximum and value > maximum) then
@@ -48,7 +54,7 @@ function Check.array(value, name)
         end
     end
     for index = 1, count do
-        if value[index] == nil then error(name .. ': array contains a hole', 3) end
+        if rawget(value, index) == nil then error(name .. ': array contains a hole', 3) end
     end
     return value
 end

@@ -6,6 +6,8 @@ local Check = require 'bui.ui.check'
 local Widgets = require 'bui.ui.widgets'
 local Editors = require 'bui.ui.editors'
 local Canvas = require 'bui.ui.canvas'
+local Media = require 'bui.ui.media'
+local Handles = require 'bui.ui.handles'
 if jit then jit.off(true, true) end
 
 local placement, mount
@@ -22,6 +24,7 @@ local function checked_vocabulary(owner, capabilities)
             end
         else public[name] = capability end
     end
+    if Handles.kind(capabilities) then return Handles.alias(capabilities, public, owner) end
     return public
 end
 
@@ -114,6 +117,7 @@ local function node(application, window, parent_owner, parent_node, descriptor, 
         record.capabilities = capabilities
         Editors.extend(record)
         Canvas.extend(record)
+        Media.extend(record)
         record.ready = true
         owner:activate()
         application:check_error()
@@ -158,7 +162,7 @@ mount = function(application, window, parent_owner, parent_node, installer)
 end
 
 placement = function(application, window, owner, parent_node)
-    local words = {}
+    local words = { resources = Media.resources(application, owner) }
     for name, descriptor in pairs(Widgets.catalog) do
         if descriptor.container then
             words[name] = function(options)

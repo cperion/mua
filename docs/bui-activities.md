@@ -2,7 +2,7 @@
 
 **Design contract; implementation coverage is tracked separately.** The
 [implemented activity API](bui-ui.md) now has native/headless ownership, mounting, delivery,
-controls and editing/drawing vocabularies. The [raw FFI boundary](bui-ffi.md) remains separate.
+controls, editing/drawing vocabularies, and owned images/animation/video resources. The [raw FFI boundary](bui-ffi.md) remains separate.
 The original studio is a test of that boundary, not the architecture to generalize. In particular, `add(parent, kind, properties, callback)`
 is not the proposed UI language.
 

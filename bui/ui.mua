@@ -7,6 +7,7 @@ local Opening = oneof { opened: Any, unavailable: String }
 local Acquisition = oneof { ready: Any, unavailable: String }
 local Frame = oneof { next_frame: Unit, finished: Unit }
 local Selection = oneof { selected: Table, empty: Unit }
+local Playback = oneof { loading: Unit, playing: Unit, paused: Unit, ended: Unit, failed: Unit }
 
 local continue_frame = do(decision: Frame): Boolean
     return decision {
@@ -18,6 +19,7 @@ local protocols = define
     opening = Opening
     acquisition = Acquisition
     selection = Selection
+    playback = Playback
     .continue_frame
 end
 
@@ -45,5 +47,6 @@ return define
     .Acquisition
     .Frame
     .Selection
+    .Playback
     .using_clock
 end

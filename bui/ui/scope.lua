@@ -102,4 +102,25 @@ local function with(owner, body)
     return unpack(results, 2, results.n)
 end
 
-return { new = new, with = with }
+-- Adopt successful acquisitions into an existing owner; roll back only new ledger entries
+-- on preparation errors. This does not roll back arbitrary Lua state or external I/O.
+local function prepare(owner, body)
+    owner:mutate('prepare owned resources')
+    local child_count, cleanup_count = #owner.children, #owner.cleanups
+    local results = pack(pcall(body))
+    if not results[1] then
+        while #owner.children > child_count do
+            local child = owner.children[#owner.children]
+            pcall(child.close, child)
+        end
+        for index = #owner.cleanups, cleanup_count + 1, -1 do
+            local cleanup = owner.cleanups[index].cleanup
+            owner.cleanups[index] = nil
+            if cleanup then pcall(cleanup) end
+        end
+        error(results[2], 0)
+    end
+    return unpack(results, 2, results.n)
+end
+
+return { new = new, with = with, prepare = prepare }

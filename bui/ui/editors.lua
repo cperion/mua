@@ -28,6 +28,7 @@ local function ramp(record)
             local color = Check.color(stop.color, 'stop color')
             for channel = 0, 3 do colors[index - 1][channel] = color[channel] end
         end
+        owner:mutate('publish ramp stops')
         native.BK_ramp_set(node, positions, ffi.cast('const float (*)[4]', colors), #stops)
     end
     capabilities.sample = function(position)
@@ -42,7 +43,9 @@ local function ramp(record)
         native.BK_set_num(node, 'active', index - 1)
     end
     capabilities.set_active_color = function(color)
-        owner:mutate('set active color'); native.BK_ramp_set_active_color(node, Check.color(color, 'color'))
+        owner:mutate('set active color')
+        local channels = Check.color(color, 'color')
+        owner:mutate('publish active color'); native.BK_ramp_set_active_color(node, channels)
     end
     record.change_snapshot = capabilities.stops
 end
@@ -68,6 +71,7 @@ local function curve(record)
             coordinates[index - 1][0] = Check.number(point[1], 'curve x', -1e7, 1e7)
             coordinates[index - 1][1] = Check.number(point[2], 'curve y', -1e7, 1e7)
         end
+        owner:mutate('publish curve points')
         native.BK_curve_set(node, channel, ffi.cast('const float (*)[2]', coordinates), #points)
     end
     capabilities.sample = function(channel, position)
@@ -143,6 +147,7 @@ local function textarea(record)
                 for channel = 0, 3 do destination.bg[channel] = color[channel] end
             end
         end
+        owner:mutate('publish text spans')
         native.BK_textarea_set_spans(node, native_spans, #spans)
     end
 end
@@ -161,6 +166,7 @@ local function histogram(record)
                 bins[(index - 1) * #channels + channel - 1] = Check.number(value, 'histogram bin', 0, 1)
             end
         end
+        record.owner:mutate('publish histogram bins')
         record.native.BK_histogram_set(record.node, bins, count, #channels)
     end
 end
@@ -173,6 +179,7 @@ local function gridview(record)
             local color = Check.color(channels, 'grid color')
             for channel = 0, 3 do native_colors[index - 1][channel] = color[channel] end
         end
+        record.owner:mutate('publish grid colors')
         record.native.BK_gridview_set_colors(record.node, ffi.cast('const float (*)[4]', native_colors), #colors)
     end
 end

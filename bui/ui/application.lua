@@ -7,6 +7,7 @@ local Queue = require 'bui.ui.queue'
 local Clock = require 'bui.ui.clock'
 local Widgets = require 'bui.ui.widgets'
 local Mount = require 'bui.ui.mount'
+local Media = require 'bui.ui.media'
 if jit then jit.off(true, true) end
 
 local active = false
@@ -129,6 +130,8 @@ end
 function Application:turn()
     self:check_error()
     self.woken = false
+    self.native.BK_image_poll()
+    self:check_error()
     self:poll_timers()
     -- Native destruction can happen without an accepted close-request notification.
     local closed = {}
@@ -343,20 +346,20 @@ local function surface_capabilities(application, window)
     input.key = function(text, keysym, modifiers)
         owner:mutate('key')
         local consumed = native.BK_key(context, Check.string(text, 'key text'),
-            Check.string(keysym, 'keysym'), Check.integer(modifiers or 0, 'modifiers', 0))
+            Check.string(keysym, 'keysym'), Check.integer(Check.default(modifiers, 0), 'modifiers', 0))
         application:check_error(); return consumed ~= 0
     end
     input.key_release = function(keysym, modifiers)
         owner:mutate('key_release')
         local consumed = native.BK_key_release(context, Check.string(keysym, 'keysym'),
-            Check.integer(modifiers or 0, 'modifiers', 0))
+            Check.integer(Check.default(modifiers, 0), 'modifiers', 0))
         application:check_error(); return consumed ~= 0
     end
     input.scroll = function(x, y, horizontal, vertical, modifiers)
         owner:mutate('scroll')
         local consumed = native.BK_scroll(context, Check.integer(x, 'x'), Check.integer(y, 'y'),
             Check.number(horizontal, 'horizontal scroll'), Check.number(vertical, 'vertical scroll'),
-            Check.integer(modifiers or 0, 'modifiers', 0))
+            Check.integer(Check.default(modifiers, 0), 'modifiers', 0))
         application:check_error(); return consumed ~= 0
     end
     capabilities.input = input
@@ -396,9 +399,9 @@ local function with_surface(application, options, native_window, body)
     application.owner:mutate('open surface')
     Check.keys(options, { title = true, width = true, height = true }, 'surface options')
     Check.callable(body, 'surface body')
-    local width = Check.integer(options.width or 640, 'width', 1, 32768)
-    local height = Check.integer(options.height or 480, 'height', 1, 32768)
-    local title = Check.string(options.title or 'Mua', 'title')
+    local width = Check.integer(Check.default(options.width, 640), 'width', 1, 32768)
+    local height = Check.integer(Check.default(options.height, 480), 'height', 1, 32768)
+    local title = Check.string(Check.default(options.title, 'Mua'), 'title')
     local native, opening = application.native, application.protocols.opening
     if native_window and native.BK_window_supported() == 0 then
         return opening.unavailable('native windows are not supported by this backend')
@@ -460,9 +463,10 @@ local function with_application(native, protocols, body, clock)
     assert(native.BK_version() == 500, 'unsupported BUI kit version')
     local code_identity = tostring(ffi.cast('void *', native.mua_bui_binding_version))
     retained_libraries[code_identity] = retained_libraries[code_identity] or native
+    local clock_now = Check.callable(Check.default(clock, Clock.now), 'monotonic clock')
     active = true
     local owner = Scope.new(nil, 'application')
-    local clock_now, previous_time = clock or Clock.now, -math.huge
+    local previous_time = -math.huge
     local function now()
         local current_time = Check.number(clock_now(), 'monotonic clock')
         assert(current_time >= previous_time, 'monotonic clock moved backwards')
@@ -484,7 +488,7 @@ local function with_application(native, protocols, body, clock)
     return Scope.with(owner, function()
         setup_callbacks(application)
         owner:activate()
-        local capabilities = {}
+        local capabilities = { resources = Media.resources(application, owner), images = Media.images(application) }
         capabilities.with_window = function(options)
             owner:mutate('open window')
             return function(window_body) return with_surface(application, options, true, window_body) end

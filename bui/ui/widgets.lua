@@ -72,7 +72,7 @@ end
 -- Validate all fields before changing any node; property order never depends on pairs().
 local function prepare(descriptor, options)
     if type(options) == 'string' then options = { caption = options } end
-    options = options or {}
+    options = Check.default(options, {})
     Check.table(options, descriptor.kind .. ' options')
     local prepared = {}
     if options.minimum and options.maximum then
@@ -95,6 +95,8 @@ local function prepare(descriptor, options)
 end
 
 local function apply(record, prepared)
+    -- Input accessors may have completed the activity while its data was being normalized.
+    record.owner:mutate('apply ' .. record.kind .. ' properties')
     local native, node = record.native, record.node
     local limits = record.limits or {}
     local minimum, maximum = limits.minimum, limits.maximum
@@ -123,6 +125,7 @@ local function apply(record, prepared)
 end
 
 local function current(record)
+    record.owner:check('read current value')
     local native, node, kind = record.native, record.node, record.descriptor.value_type
     if kind == 'string' then return ffi.string(native.BK_get_str(node, 'value')) end
     if kind == 'color' then

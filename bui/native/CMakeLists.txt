@@ -79,9 +79,17 @@ if(BUILD_TESTING)
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 60)
   add_test(NAME bui_ui COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui.lua"
     "$<TARGET_FILE:mua_bui>")
+  add_test(NAME bui_ui_media COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
+    "$<TARGET_FILE:mua_bui>" "${BUI_SOURCE_DIR}/tests/videos/clip.mp4")
+  option(BUI_FFI_TEST_VIDEO "Require working native video decoding, not just the failure outcome" OFF)
+  if(BUI_FFI_TEST_VIDEO)
+    add_test(NAME bui_ui_video COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/tests/bui_ui_media.lua"
+      "$<TARGET_FILE:mua_bui>" "${BUI_SOURCE_DIR}/tests/videos/clip.mp4" --require-video)
+    set_tests_properties(bui_ui_video PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
+  endif()
   add_test(NAME bui_ui_headless_example COMMAND "${LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
     "${MUA_SOURCE_DIR}/examples/bui/activities.mua" "$<TARGET_FILE:mua_bui>" --headless)
-  set_tests_properties(bui_ui bui_ui_headless_example PROPERTIES
+  set_tests_properties(bui_ui bui_ui_media bui_ui_headless_example PROPERTIES
     WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)
   option(BUI_FFI_TEST_WINDOW "Also test a real native window (requires a desktop)" OFF)
   if(BUI_FFI_TEST_WINDOW)
