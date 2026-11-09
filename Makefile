@@ -1,17 +1,26 @@
 # Mua needs LuaJIT 2.1 carrying the LuaJIT 3.0 syntax backport (see README); LUA selects it.
 LUA ?= luajit
 .PHONY: test
-test:
+test: lint-docs
 	$(LUA) tests/mua.lua
 	$(LUA) tests/iter.lua
 	$(LUA) tests/specialization.lua
 	$(LUA) tests/lisp_pull.lua
+	$(LUA) tests/lint.lua
 	$(LUA) tests/guide.lua
 	$(LUA) tests/cli.lua
 	$(LUA) tests/fmt.lua
 	$(LUA) tests/fmt_do.lua
 	$(LUA) tests/examples.lua
 	$(LUA) tests/tour.lua
+
+# Teaching sources whose comments must carry the file (docs/formatting.md). The list grows as a
+# file is brought up to the standard; it is deliberately not a whole-tree gate.
+LINT_DOCS := examples/iter.mua
+
+.PHONY: lint-docs
+lint-docs:
+	$(LUA) mua.lua lint $(LINT_DOCS)
 
 # Optional external Lua Fun integration; set LUA_PATH to its checkout first.
 .PHONY: test-luafun

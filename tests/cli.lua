@@ -18,6 +18,21 @@ end
 local lua = q(arg[-1] or 'luajit')
 local cli = 'timeout 20 ' .. lua .. ' ' .. q(root .. '/mua.lua')
 local function fixture(name) return q(root .. '/tests/fixtures/' .. name) end
+-- a Mua source on stdin: printf treats a leading `--` as its own option, so the format is given
+-- and the lines are arguments
+local function piped(...)
+    local parts = { 'printf', "'%s\\n'" }
+    for _, line in ipairs { ... } do parts[#parts + 1] = q(line) end
+    return table.concat(parts, ' ') .. ' | ' .. cli
+end
+check('lint is clean', piped('-- What the value is for.', 'local value = 1') .. ' lint -', 0)
+check('lint reports a bare declaration', piped('local value = 1') .. ' lint -',
+    1, 'no comment says what `value` is for')
+check('lint reports a repeated name', piped('-- `value` is what it is for.', 'local value = 1') .. ' lint -',
+    1, 'opens by naming `value`')
+check('lint asks for formatting first', piped('local value=1') .. ' lint -', 2, 'format the source first')
+check('lint outlines', piped('-- What the value is for.', 'local value = 1') .. ' lint --outline -',
+    0, 'local value = 1')
 check('plain program', cli .. ' ' .. fixture('ok.mua'), 0, 'fixture ok')
 check('dump only', cli .. ' -d ' .. fixture('ok.mua'), 0, 'fixture ok')
 check('standalone expression', cli .. ' -e ' .. q('print(1+1)'), 0, '2')

@@ -6,6 +6,7 @@
 --   mua --no-contracts ...             translate without the contract checks
 --   mua -l module ...                  require a module first
 --   mua fmt [--check | --write] files  format Mua source (see mua/fmt_cli.lua)
+--   mua lint [--outline] files         the file as its declarations and comments (mua/lint_cli.lua)
 --   MUA_CACHE=dir mua ...              keep translated chunks as bytecode in dir (mua.load opts.cache)
 --
 -- Exit status: 0, or 1 for a translation error, a missing file or an uncaught error (reported on
@@ -44,10 +45,12 @@ local function run(chunk, args)
 end
 
 local function main(argv, opts)
-    if argv[1] == 'fmt' then
-        local rest = {}
-        for j = 2, #argv do rest[#rest + 1] = argv[j] end
-        return require('mua.fmt_cli').run(rest)
+    for _, command in ipairs { 'fmt', 'lint' } do
+        if argv[1] == command then
+            local rest = {}
+            for j = 2, #argv do rest[#rest + 1] = argv[j] end
+            return require('mua.' .. command .. '_cli').run(rest)
+        end
     end
     local expression, dump, libraries = nil, false, {}
     local i = 1

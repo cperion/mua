@@ -28,6 +28,44 @@ Write mode parses and formats every input before changing any file, so a bad
 input does not leave an earlier input reformatted. Filesystem write failures
 can still interrupt the subsequent writes; this is not a multi-file transaction.
 
+## Comments: `mua lint`
+
+The formatter writes the layout; `mua lint` reads it, and the layout is what decides which
+declarations a reader must be able to follow. Two rules:
+
+- a declaration at the file's own level — the left margin — says **what it is for**, in a comment
+  above it or beside it;
+- that comment does **not open by naming** what the declaration already names. The name is in front
+  of the reader, so the words are spent on its purpose, not on repeating it.
+
+A declaration inside a block is explained by the block that holds it, so only the file's own
+margin is asked. That is why the lint reads indentation rather than scope: the formatter writes one
+level as `indent_width`, so the column already says whether a declaration is the file's or a
+block's. Run the formatter first — on unformatted source the column is a claim, not a fact, and the
+lint says so instead of judging it.
+
+```sh
+luajit mua.lua lint src/*.mua            # report, exit 1 when there is anything to report
+luajit mua.lua lint --outline src/*.mua  # the file as its declarations and their comments
+```
+
+`--outline` is the rule's own test: print only the declarations and comments, and the result has to
+read as the file. A comment that merely restates the code reads badly there, and a comment that
+aims at the wrong thing reads badly next to its neighbour. When the poem works, the file is
+understood before any of its statements is read; when it does not, that is the comment that needs
+rewriting, not the code.
+
+The outline prints the file's opening words and its banner headings as prose, then each declaration
+in source order: a right-aligned line number, the declaration at the column it is written at, and
+the comment wrapped underneath it. Declarations are never reordered or summarised; a declaration
+with no comment shows as a bare line, which is the gap that rule one is about. A declaration inside
+a block appears only when someone commented it. Long `--[[ … ]]` blocks — expected output, data —
+are counted in the title and not printed.
+
+Adoption is deliberately explicit: `make lint-docs` runs the lint over the files listed in
+`LINT_DOCS`, and that list grows as a file is brought up to the standard. It is not a whole-tree
+gate, because most of the tree predates the rule.
+
 ## Settings
 
 No configuration file is required. These are the defaults:
