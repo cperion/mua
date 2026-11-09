@@ -41,7 +41,7 @@ end
 
 -- Create an acquiring owner; children inherit their parent's integration guard and lifetime.
 local new
-new = label "Acquire a lifetime nested under its parent" do(parent, description, Guard)
+new = label "new" "Acquire a lifetime nested under its parent" do(parent, description, Guard)
     local inherited = parent and ledger_of parent
     if parent then parent.mutate("acquire " .. description) end
     local ledger = with
@@ -109,10 +109,10 @@ new = label "Acquire a lifetime nested under its parent" do(parent, description,
 end
 
 -- Distinguish separate integrations without exposing their mutable application state.
-local same_integration = label "Check whether owners share an integration" (|first, second| -> ledger_of(first).integration == ledger_of(second).integration)
+local same_integration = label "same_integration" "Check whether owners share an integration" (|first, second| -> ledger_of(first).integration == ledger_of(second).integration)
 
 -- Complete the owner on every exit, preserving nil results and the original body failure.
-local with_owner = label "Run an activity and retire its owner on every exit" do(owner) = do(body)
+local with_owner = label "with_owner" "Run an activity and retire its owner on every exit" do(owner) = do(body)
     assert(type body == "function", "activity body expects a function")
     local results = packed(pcall(body, owner))
     local cleaned, problem = pcall owner.close
@@ -123,7 +123,7 @@ end
 
 -- Adopt successful acquisitions; a failed preparation releases only its new ledger entries.
 -- Domain mutations and external I/O are not rolled back by this activity.
-local prepare = label "Adopt acquisitions or release tentative resources on failure" do(owner, body)
+local prepare = label "prepare" "Adopt acquisitions or release tentative resources on failure" do(owner, body)
     owner.mutate "prepare owned resources"
     local ledger = ledger_of owner
     local child_count, cleanup_count = #ledger.children, #ledger.cleanups
@@ -147,7 +147,7 @@ local prepare = label "Adopt acquisitions or release tentative resources on fail
     return unpack(results, 2, results.n)
 end
 
-return label "Activity ownership and deterministic cleanup" define
+return label "scope" "Activity ownership and deterministic cleanup" define
     .new
     .same_integration
     .with_owner

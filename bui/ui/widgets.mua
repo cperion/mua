@@ -5,7 +5,7 @@ if jit then jit.off(true, true) end
 
 -- Descriptors are data shared by construction and later updates. The native spelling
 -- stays here; a caption and a value have the same public meaning on every control.
-local catalog = label "Generated control descriptors" {}
+local catalog = label "catalog" "Generated control descriptors" {}
 local kinds = do(names, descriptor)
     for name in names:gmatch "%S+" do
         local public_name, native_name = name:match "([^=]+)=([^=]+)"
@@ -180,7 +180,7 @@ local Instructions = define
     normal = ColorSetting
     strings = StringsSetting
 end
-local Publishing = label "publish a checked widget setting" define
+local Publishing = label "Publishing" "publish a checked widget setting" define
     NumberSetting = |node, recurse, record| -> record.native.BK_set_num(record.node,
         node.key, node.value)
     StringSetting = |node, recurse, record| -> record.native.BK_set_str(record.node,
@@ -197,7 +197,7 @@ end
 local publish = Setting.pass Publishing
 
 -- Check a complete update before changing C; limits precede initial values deterministically.
-local prepare = label "Validate and order a complete property update" do(descriptor, options)
+local prepare = label "prepare" "Validate and order a complete property update" do(descriptor, options)
     if type options == "string" then options = label options ({}) end
     options = Check.default(options, {})
     Check.table(options, descriptor.kind .. " options")
@@ -236,7 +236,7 @@ local prepare = label "Validate and order a complete property update" do(descrip
 end
 
 -- Publish a checked update, rechecking liveness after any input accessors have run.
-local apply = label "Publish checked properties and synchronize the caption label" do(record,
+local apply = label "apply" "Publish checked properties and synchronize the caption label" do(record,
     prepared)
     record.owner.mutate("apply " .. record.kind .. " properties")
     local Native, node = record.native, record.node
@@ -262,7 +262,7 @@ local apply = label "Publish checked properties and synchronize the caption labe
 end
 
 -- Read the committed value, independently of any queued change snapshots.
-local current = label "Read a control's committed native value" do(record)
+local current = label "current" "Read a control's committed native value" do(record)
     record.owner.check "read current value"
     local Native, node, kind = record.native, record.node, record.descriptor.value_type
     if kind == "string" then return ffi.string(Native.BK_get_str(node, "value")) end
@@ -291,7 +291,7 @@ local notifications = { expanded = true }
 for _, name in pairs event_names do notifications[name] = true end
 
 -- Copy transient native payloads before C returns; notification delivery never borrows them.
-local snapshot = label "Copy transient native event data before returning to C" do(record,
+local snapshot = label "snapshot" "Copy transient native event data before returning to C" do(record,
     kind, reference, first, second)
     if record.event_snapshot then
         local name, payload = record.event_snapshot(kind, reference, first, second)
@@ -317,7 +317,7 @@ local snapshot = label "Copy transient native event data before returning to C" 
     return name, payload
 end
 
-return label "Control descriptions, checked updates and event snapshots" define
+return label "widgets" "Control descriptions, checked updates and event snapshots" define
     .catalog
     .Setting
     .prepare

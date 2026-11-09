@@ -1,13 +1,13 @@
 local ffi = require "ffi"
 
 -- Supply a default only for absence; false is never a missing number or string.
-local default = label "Supply a fallback only for absence" do(value, fallback)
+local default = label "default" "Supply a fallback only for absence" do(value, fallback)
     if value == nil then return fallback end
     return value
 end
 
 -- Reject coercions and non-finite values before numbers cross the native boundary.
-local number = label "Check a finite number within bounds" do(value, name, minimum, maximum)
+local number = label "number" "Check a finite number within bounds" do(value, name, minimum, maximum)
     name = label_of name or name
     if type value ~= "number" or value ~= value or value == math.huge or value == -math.huge
     or (minimum and value < minimum) or (maximum and value > maximum) then
@@ -17,7 +17,7 @@ local number = label "Check a finite number within bounds" do(value, name, minim
 end
 
 -- Native counts and indexes are signed integers unless a caller supplies other bounds.
-local integer = label "Check an integer within native bounds" do(value, name, minimum, maximum)
+local integer = label "integer" "Check an integer within native bounds" do(value, name, minimum, maximum)
     name = label_of name or name
     number(value, name, minimum or -2147483648, maximum or 2147483647)
     if value % 1 ~= 0 then error(name .. ": expected an integer", 3) end
@@ -25,7 +25,7 @@ local integer = label "Check an integer within native bounds" do(value, name, mi
 end
 
 -- Text passed as a C string must not contain an embedded terminator.
-local string = label "Check text safe for a native C string" do(value, name)
+local string = label "string" "Check text safe for a native C string" do(value, name)
     name = label_of name or name
     if type value ~= "string" or value:find("\0", 1, true) then
         error(name .. ": expected a string without NUL bytes", 3)
@@ -34,28 +34,28 @@ local string = label "Check text safe for a native C string" do(value, name)
 end
 
 -- Booleans are values, not Lua truthiness converted to a native flag.
-local boolean = label "Require a boolean, without coercion" do(value, name)
+local boolean = label "boolean" "Require a boolean, without coercion" do(value, name)
     name = label_of name or name
     if type value ~= "boolean" then error(name .. ": expected a boolean", 3) end
     return value
 end
 
 -- A supplied continuation must be an ordinary function.
-local callable = label "Require an ordinary function" do(value, name)
+local callable = label "callable" "Require an ordinary function" do(value, name)
     name = label_of name or name
     if type value ~= "function" then error(name .. ": expected a function", 3) end
     return value
 end
 
 -- Descriptions are tables, never arbitrary indexable native objects.
-local table_value = label "Require a description table" do(value, name)
+local table_value = label "table_value" "Require a description table" do(value, name)
     name = label_of name or name
     if type value ~= "table" then error(name .. ": expected a table", 3) end
     return value
 end
 
 -- Dense arrays have no holes or keyed extras; metatables cannot fabricate missing entries.
-local array = label "Check a dense array without extra keys" do(value, name)
+local array = label "array" "Check a dense array without extra keys" do(value, name)
     name = label_of name or name
     table_value(value, name)
     local count = #value
@@ -71,7 +71,7 @@ local array = label "Check a dense array without extra keys" do(value, name)
 end
 
 -- Reject unknown supplied fields instead of silently passing misspellings into C.
-local keys = label "Reject unknown description fields" do(value, allowed, name)
+local keys = label "keys" "Reject unknown description fields" do(value, allowed, name)
     name = label_of name or name
     table_value(value, name)
     for key in pairs value do
@@ -81,7 +81,7 @@ local keys = label "Reject unknown description fields" do(value, allowed, name)
 end
 
 -- Copy four checked RGBA channels to storage suitable for an immediate native call.
-local color = label "Check and copy four RGBA channels" do(value, name)
+local color = label "color" "Check and copy four RGBA channels" do(value, name)
     name = label_of name or name
     array(value, name)
     if #value ~= 4 then error(name .. ": expected four RGBA channels", 3) end
@@ -91,7 +91,7 @@ local color = label "Check and copy four RGBA channels" do(value, name)
 end
 
 -- Return both the native pointers and their retained string storage.
-local strings = label "Build native string pointers with retained storage" do(value, name)
+local strings = label "strings" "Build native string pointers with retained storage" do(value, name)
     name = label_of name or name
     array(value, name)
     local pointers = ffi.new("const char *[?]", math.max(1, #value))
@@ -103,7 +103,7 @@ local strings = label "Build native string pointers with retained storage" do(va
     return pointers, retained
 end
 
-return label "Validate data before it crosses the native boundary" define
+return label "check" "Validate data before it crosses the native boundary" define
     .default
     .number
     .integer
