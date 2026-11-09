@@ -149,7 +149,12 @@ a definition; a **structural type** is the table it is given. A block that is a 
 wherever a table may appear, an argument included, so a definition passes straight to what reads
 it: `iter start do(state, control) … end`.
 
-**Human labels.** `label "description" value` attaches optional human-facing identity
+**Human labels and descriptions.** A label names a value; a description explains it.
+`what [[ description ]] value` describes, `what_of(value)` reads it, and
+`label "name" [[ description ]] value` names and describes at once (a string after the name can
+only be a description: no string is labeled). `trace` and `inspect` show the label; the outline
+shows the label with the description beneath it.
+`label "description" value` attaches optional human-facing identity
 and returns the same table, function, userdata or FFI cdata value. `label_of(value)` reads it, or returns
 nil when absent. Labels are not fields, dispatch keys or semantic IDs; they may supply
 captions and diagnostics. Labeling a container does not label its contents.

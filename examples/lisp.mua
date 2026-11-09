@@ -8,13 +8,20 @@
 ------------------------------------------------------------------------------------------------
 -- Reading: text to data. A number is a number, a symbol a string, a list a table.
 
-local read = label "Read source text into Lisp forms" do(text)
+local read = label "read" [[
+Read source text into Lisp forms.
+Keep reading separate from language decisions: numbers become numbers,
+symbols remain strings, and parentheses build lists for the parser.
+]] do(text)
     local spaced = text:gsub("%(", " ( "):gsub("%)", " ) ")
     local tokens = {}
     for token in spaced:gmatch "%S+" do tokens[#tokens + 1] = token end
     local position = 1
     local read_datum
-    read_datum = do()
+    read_datum = label "read_datum" [[
+Consume one complete datum, including any nested lists.
+Reject unmatched parentheses here so later stages receive complete forms.
+]] do()
         local token = tokens[position]
         position += 1
         if token == nil then error("read: the text ends inside a list", 0) end
@@ -46,7 +53,10 @@ local Lambda = struct { parameters: Table, body: Expression }
 local Application = struct { callee: Expression, arguments: Table }
 Expression { Literal, Variable, Primitive, Conditional, Let, Lambda, Application }
 
-local operators = {
+local operators = label "operators" [[
+Share primitive meanings between interpretation and constant folding.
+An optimization must compute the same result as running the source directly.
+]] {
     ["+"] = |left, right| -> left + right,
     ["-"] = |left, right| -> left - right,
     ["*"] = |left, right| -> left * right,
@@ -54,9 +64,12 @@ local operators = {
     ["="] = |left, right| -> left == right,
 }
 
--- Parsing: data to the family. A `let` binding sees itself, so a function can recur.
 local parse
-parse = do(datum)
+parse = label "parse" [[
+Give each datum its role in the expression family.
+Special forms describe control and binding; other lists become primitive
+operations or calls. Nested lets preserve the order of source bindings.
+]] do(datum)
     if type datum == "number" then return Literal { value = datum } end
     if type datum == "string" then return Variable { name = datum } end
     local head = datum[1]
@@ -85,8 +98,11 @@ parse = do(datum)
     return Application { callee = parse datum[1], .arguments }
 end
 
--- A program is some (define name value) forms and then the expression they are for.
-local parse_program = label "Build an expression tree from definitions and a final expression" do(forms)
+local parse_program = label "parse_program" [[
+Turn a program into one expression with its definitions in scope.
+Wrap the final expression in lets, from the last definition to the first,
+so later stages need no separate representation for top-level definitions.
+]] do(forms)
     local body = parse forms[#forms]
     for index = #forms - 1, 1, -1 do
         local form = forms[index]
@@ -99,14 +115,21 @@ end
 ------------------------------------------------------------------------------------------------
 -- Checking: a pass that carries the names in scope, and stops at the first problem.
 
-local within = outer -> meta { index = outer } {}
-local scope_with = do(outer, names)
+local within = label "Extend an environment without modifying its parent" outer -> meta { index = outer } {}
+local scope_with = label "scope_with" [[
+Make new names visible in a child scope while retaining outer bindings.
+A binding is introduced before checking its value so a function can recur.
+]] do(outer, names)
     local inner = within outer
     for _, name in ipairs names do inner[name] = true end
     return inner
 end
 
-local Checking = label "check names and arity" define
+local Checking = label "Checking" [[
+Reject unbound names and malformed primitive calls before execution.
+Carry lexical scope through the tree; inspect both branches even when one
+might never run, so source validity does not depend on execution choices.
+]] define
     Literal = do(node, recurse, scope)
         return
     end
@@ -142,8 +165,11 @@ local Checking = label "check names and arity" define
 end
 local check = Expression.pass Checking
 
--- The same family, run directly: the reference the compiled code is compared with.
-local Evaluation = label "evaluate the source directly" define
+local Evaluation = label "Evaluation" [[
+Run the expression tree as a reference for the compiled program.
+Lexical environments make closures and recursion work without lowering,
+providing an independent execution path for checking generated Lua.
+]] define
     Literal = |node, recurse, environment| -> node.value
     Variable = |node, recurse, environment| -> environment[node.name]
     Primitive = do(node, recurse, environment)
@@ -192,8 +218,11 @@ local Return = struct { source: String }
 local Closure = struct { register: String, parameters: Table, code: Table }
 Instruction { Constant, Copy, Operation, Call, Label, Jump, JumpUnless, Return, Closure }
 
--- fresh names say what a register holds: `value_3`, `fact_1` (the register of `fact`), `otherwise_4`
-local fresh_names = do()
+local fresh_names = label "fresh_names" [[
+Create a fresh name supply for one compilation.
+Retain a readable hint while assigning unique suffixes, so registers and
+jump targets cannot collide when source names shadow one another.
+]] do()
     local count = 0
     return do(word)
         count += 1
@@ -201,13 +230,19 @@ local fresh_names = do()
     end
 end
 
-local write_instruction = do(lowering, instruction)
+local write_instruction = label "write_instruction" [[
+Append an instruction to the current function's output.
+The lowering context owns this buffer; nested functions get their own.
+]] do(lowering, instruction)
     lowering.code[#lowering.code + 1] = instruction
 end
 
--- Lowering: a pass from one family to the other. The lowering state holds the code being written,
--- the register each name stands for, and the supply of fresh names.
-local Lowering = label "lower the source to instructions" define
+local Lowering = label "Lowering" [[
+Make expression evaluation explicit as registers, instructions and jumps.
+Each handler returns the register holding its result and emits work into
+the current function. Branches meet in a shared result register; closures
+receive separate instruction buffers while retaining lexical bindings.
+]] define
     Literal = do(node, recurse, lowering)
         local register = lowering.fresh "value"
         write_instruction(lowering, Constant { .register, value = node.value })
@@ -273,8 +308,11 @@ local lower = Expression.pass Lowering
 -- each names only the kinds it changes.
 -- Both strategies use these exact passes. Only the replacement protocol and its
 -- driver vary; the eager example keeps lists, the pull companion returns triples.
-local eager_rewrite = label "Collect instruction replacements in traversal order" do(pass,
-    code, state)
+local eager_rewrite = label "eager_rewrite" [[
+Collect each instruction's replacements into a fresh output sequence.
+Give the pass access to what it has written so reaching can retract a jump
+when its destination turns out to be the very next instruction.
+]] do(pass, code, state)
     local written = {}
     local work = { ..state, .written }
     for _, instruction in ipairs code do
@@ -285,10 +323,17 @@ local eager_rewrite = label "Collect instruction replacements in traversal order
     return written
 end
 
-local make_optimizer = label "Build optimization passes for a replacement protocol" do(single,
-    empty, rewrite)
+local make_optimizer = label "make_optimizer" [[
+Build the optimizer independently of how replacements are delivered.
+The eager and pull compilers share these semantic decisions; single, empty
+and rewrite choose whether replacements travel as lists or iterator results.
+]] do(single, empty, rewrite)
     local itself = single
-    local Unchanged = define
+    local Unchanged = label "Unchanged" [[
+Preserve every instruction unless a derived pass explicitly replaces it.
+Spreading this vocabulary lets small rewrites remain exhaustive over the
+instruction family without repeating all of the unchanged cases.
+]] define
         Constant = itself
         Copy = itself
         Operation = itself
@@ -301,14 +346,19 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
     local nothing = do() end
 
-    -- The driver owns written; nested rewrites receive independent output buffers.
-    local walk = do(pass, code, state)
+    local walk = label "walk" [[
+Gather facts from instructions without constructing replacements.
+The supplied state accumulates observations; handlers choose when to
+visit nested function bodies.
+]] do(pass, code, state)
         for _, instruction in ipairs code do pass(instruction, state) end
     end
 
-    -- Folding: what a register holds is known from its Constant, along straight-line code. A join
-    -- point (a label) forgets it, and a function starts knowing nothing.
-    local Folding = label "fold what is known" define ..Unchanged
+    local Folding = label "Folding" [[
+Replace computations whose operands are known with their results.
+Facts apply only along straight-line code: forget them at labels and start
+fresh inside closures rather than assuming agreement across control flow.
+]] define ..Unchanged
         Constant = do(node, recurse, facts)
             facts.known[node.register] = { node.value }
             return single node
@@ -351,8 +401,11 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
     local fold = Instruction.pass Folding
 
-    -- Which labels are still jumped to.
-    local JumpedTo = label "find the labels still jumped to" define
+    local JumpedTo = label "JumpedTo" [[
+Find destinations that surviving jumps can still reach.
+Recompute this after folding so eliminated branches no longer keep their
+target labels alive. These are program jump targets, not human labels.
+]] define
         Constant = nothing
         Copy = nothing
         Operation = nothing
@@ -371,18 +424,26 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
     local find_labels = Instruction.pass JumpedTo
 
-    -- Reaching: nothing runs between a jump and the next label that is jumped to, and a jump to the
-    -- label right after it is no jump.
-    local unless_dead = do(node, recurse, flow)
+    local unless_dead = label "unless_dead" [[
+Keep an instruction only while the current path can reach it.
+A jump or return ends that path until a retained target starts another.
+]] do(node, recurse, flow)
         if flow.dead then return empty() end
         return single node
     end
-    local ending_the_flow = do(node, recurse, flow)
+    local ending_the_flow = label "ending_the_flow" [[
+Keep a reachable terminator and mark following instructions unreachable.
+Do not let an already dead terminator contribute another instruction.
+]] do(node, recurse, flow)
         if flow.dead then return empty() end
         flow.dead = true
         return single node
     end
-    local Reaching = label "drop what cannot run" define
+    local Reaching = label "Reaching" [[
+Remove unreachable instructions and unnecessary control-flow scaffolding.
+Only referenced targets restore reachability. A jump to the next retained
+target can be removed because falling through reaches the same place.
+]] define
         Constant = unless_dead
         Copy = unless_dead
         Operation = unless_dead
@@ -407,11 +468,17 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
     local reach = Instruction.pass Reaching
 
-    -- Reading: how often each register is read, then the removal of pure instructions nobody reads.
-    local read_once_more = do(register, counts)
+    local read_once_more = label "read_once_more" [[
+Record one use of a register's value.
+The sweep needs evidence that a result is read, not merely that it is written.
+]] do(register, counts)
         counts.reads[register] = (counts.reads[register] or 0) + 1
     end
-    local Reads = label "count the reads of each register" define
+    local Reads = label "Reads" [[
+Collect register uses before deciding which results can be discarded.
+Include nested closures because a captured register may have no readers
+in the function that originally produced it.
+]] define
         Constant = nothing
         Label = nothing
         Jump = nothing
@@ -438,12 +505,19 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
     local count_reads = Instruction.pass Reads
 
-    local never_read = |instruction, counts| -> (counts.reads[instruction.register] or 0) == 0
-    local unless_never_read = do(node, recurse, counts)
+    local never_read = label "Find results with no remaining readers" (|instruction, counts| -> (counts.reads[instruction.register] or 0) == 0)
+    local unless_never_read = label "unless_never_read" [[
+Discard an unused result when this instruction kind is safe to remove.
+Only selected handlers use this rule; an unused call may still have effects.
+]] do(node, recurse, counts)
         if never_read(node, counts) then return empty() end
         return single node
     end
-    local Sweeping = label "sweep what nobody reads" define ..Unchanged
+    local Sweeping = label "Sweeping" [[
+Remove unused constants, copies and closures while preserving other work.
+Keep operations and calls conservatively: an unused result alone does not
+prove that evaluating its producer is harmless.
+]] define ..Unchanged
         Constant = unless_never_read
         Copy = unless_never_read
         Operation = unless_never_read
@@ -455,9 +529,12 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
     local sweep = Instruction.pass Sweeping
 
-    -- the same representation: the same kinds, with the same fields, all the way down
     local same
-    same = label "Compare nested values and their nominal types" do(left, right)
+    same = label "same" [[
+Recognize structural agreement without losing nominal type identity.
+Use the same comparison for optimization convergence and for checking that
+eager and pull compilation produce equivalent trees and instructions.
+]] do(left, right)
         if type left ~= "table" or type right ~= "table" then return left == right end
         if getmetatable left ~= getmetatable right then return false end
         for key, value in pairs left do
@@ -470,7 +547,11 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
     end
 
     local instruction_count
-    instruction_count = label "Count instructions including nested closures" do(code)
+    instruction_count = label "instruction_count" [[
+Measure the whole instruction tree, including nested function bodies.
+This makes before-and-after optimization counts include work inside closures,
+not just the outer program.
+]] do(code)
         local total = 0
         for _, instruction in ipairs code do
             total += 1
@@ -479,8 +560,11 @@ local make_optimizer = label "Build optimization passes for a replacement protoc
         return total
     end
 
-    -- the passes in order until a round changes nothing, bounded so a mistake cannot loop forever
-    local optimize = label "Fold and remove dead instructions until stable" do(code)
+    local optimize = label "optimize" [[
+Repeat folding, reachability and sweeping while they expose more simplifications.
+Stop when the instruction tree is unchanged; cap the number of rounds so an
+accidental nonconverging rewrite cannot keep compilation running forever.
+]] do(code)
         for _ = 1, 8 do
             local before = code
             code = rewrite(fold, code, { known = {} })
@@ -505,7 +589,11 @@ local Unchanged = eager.Unchanged
 ------------------------------------------------------------------------------------------------
 -- Listing and emitting: passes that answer with text.
 
-local Listing = label "list an instruction for reading" define
+local Listing = label "Listing" [[
+Give instructions a readable spelling for inspecting the intermediate program.
+Keep this separate from executable Lua so jumps and register transfers can
+be understood before considering target-language syntax.
+]] define
     Constant = |node, recurse, indent| -> indent .. node.register .. " = " .. tostring node.value
     Copy = |node, recurse, indent| -> indent .. node.register .. " = " .. node.source
     Operation = do(node, recurse, indent)
@@ -530,15 +618,20 @@ local Listing = label "list an instruction for reading" define
     end
 end
 local list_instruction = Instruction.pass Listing
-local listing = label "Render instructions as a readable listing" do(code)
+local listing = label "listing" [[
+Assemble a readable listing of an instruction sequence.
+Use it to explain what lowering produced and what optimization removed.
+]] do(code)
     local lines = {}
     for _, instruction in ipairs code do lines[#lines + 1] = list_instruction(instruction, "  ") end
     return table.concat(lines, "\n")
 end
 
--- Emitting Lua: the registers a function writes are declared first, so a jump never enters the
--- scope of a local. The listing's spelling serves where Lua's is the same.
-local function_body = do(write, code, indent)
+local function_body = label "function_body" [[
+Declare a function's registers before emitting its instructions.
+Hoisting these locals prevents generated jumps from entering a local's scope,
+which Lua forbids. Nested closures receive their own declarations.
+]] do(write, code, indent)
     local registers, declared = {}, {}
     for _, instruction in ipairs code do
         local register = instruction.register
@@ -553,7 +646,11 @@ local function_body = do(write, code, indent)
     return table.concat(lines, "\n")
 end
 local lua_spelling = {["="] = "==" }
-local LuaText = label "write an instruction as Lua" define ..Listing
+local LuaText = label "LuaText" [[
+Turn the readable instruction vocabulary into executable Lua.
+Reuse spellings that already fit; override operators, jumps, labels and
+closures where the target language needs different syntax or structure.
+]] define ..Listing
     Operation = do(node, recurse, indent)
         local operator = lua_spelling[node.operator] or node.operator
         local expression = node.left .. " " .. operator .. " " .. node.right
@@ -577,8 +674,11 @@ local emit_lua = label "Emit executable Lua from instructions" code -> function_
 -- The compiler: the stages in order. `compile` answers the tree, the instructions before and
 -- after optimizing, and the Lua it emits.
 
-local make_compiler = label "Compose a reader and optimizer into a compiler" do(read_source,
-    optimize_code) = do(text)
+local make_compiler = label "make_compiler" [[
+Compose the common compiler pipeline with a chosen reader and optimizer.
+Return intermediate artifacts as well as Lua so callers can inspect stages
+and compare strategies instead of treating compilation as an opaque result.
+]] do(read_source, optimize_code) = do(text)
     local tree = parse_program(read_source text)
     check(tree, {})
     local lowering = { code = {}, registers = {}, fresh = fresh_names() }
@@ -586,13 +686,20 @@ local make_compiler = label "Compose a reader and optimizer into a compiler" do(
     local optimized = optimize_code lowering.code
     return { .tree, instructions = lowering.code, .optimized, lua = emit_lua optimized }
 end
-local compile = label "Compile Lisp through checking, lowering and optimization" (make_compiler(read,
-        optimize))
+local compile = label "compile" [[
+Compile Lisp with the eager reader and list-based optimizer.
+Keep the source tree and both instruction sequences alongside the emitted Lua
+so execution, inspection and differential tests share one compilation.
+]] (make_compiler(read, optimize))
 
 -- The companion and benchmarks load this file as a library, sharing the families,
 -- all language decisions, and every pass. Running it normally still prints the demo.
 if (...) == "library" then
-    return label "Lisp compiler: from source forms to executable Lua" define
+    return label "Lisp compiler" [[
+Lisp compiler: from source forms to executable Lua.
+Expose the stages and their composition points so the pull companion can
+change traversal strategy without duplicating the language's semantics.
+]] define
         .read
         .parse_program
         .check
@@ -609,7 +716,11 @@ if (...) == "library" then
     end
 end
 
-local run = do(text)
+local run = label "run" [[
+Execute generated Lua and interpret the same source tree independently.
+Return both answers with the compilation artifacts so the demo can show
+semantic agreement alongside the effect of optimization.
+]] do(text)
     local compiled = compile text
     local value = load(compiled.lua, "=compiled")()
     return value, evaluate(compiled.tree, {}), compiled

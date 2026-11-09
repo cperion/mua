@@ -214,9 +214,36 @@ function R.label_of(value)
     local mt = getmetatable(value)
     return type(mt) == 'table' and rawget(mt, '__label') or nil
 end
+-- Descriptions: what a value is for, at length. A label names a value ("Reader"); a
+-- description explains it. `what [[ … ]] value` describes, `what_of` reads, and
+-- `label "name" [[ description ]] value` does both. Stored as labels are.
+local descriptions = setmetatable({}, { __mode = 'k' })
+function R.what_of(value)
+    local kind = type(value)
+    if kind ~= 'table' and kind ~= 'function' and kind ~= 'userdata' and kind ~= 'cdata' then return nil end
+    local own = descriptions[value]
+    if own ~= nil then return own end
+    local mt = kind == 'table' and getmetatable(value)
+    return type(mt) == 'table' and rawget(mt, '__what') or nil
+end
+function R.what(text)
+    assert(type(text) == 'string', 'what expects a string: what [[ description ]] value')
+    return function(value)
+        local kind = type(value)
+        assert(kind == 'table' or kind == 'function' or kind == 'userdata' or kind == 'cdata',
+            'what expects a table, function, userdata or cdata')
+        descriptions[value] = text
+        return value
+    end
+end
 function R.label(text)
     assert(type(text) == 'string', 'label expects a string')
     return function(value)
+        -- a string here is a description: no string is ever labeled
+        if type(value) == 'string' then
+            local description = value
+            return function(described) return R.label(text)(R.what(description)(described)) end
+        end
         local kind = type(value)
         assert(kind == 'table' or kind == 'function' or kind == 'userdata' or kind == 'cdata',
             'label expects a table, function, userdata or cdata')
@@ -228,6 +255,7 @@ function R.label(text)
         return value
     end
 end
+
 
 -- `trace value`: print what a value is and what it holds (mua/runtime/inspection.lua), and
 -- answer it unchanged, so it goes anywhere in an expression while debugging. `inspect value`
@@ -685,7 +713,7 @@ R.contracts = R.label "contracts: what a value must be" {
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'testing', 'debugging', 'contracts', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'what', 'label_of', 'what_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'testing', 'debugging', 'contracts', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R

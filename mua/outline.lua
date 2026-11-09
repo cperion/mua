@@ -16,8 +16,9 @@ function M.render(roots, options)
         if kind ~= 'table' and kind ~= 'function' and kind ~= 'userdata' and kind ~= 'cdata' then return end
         if nodes[value] then return nodes[value] end
         local label = runtime.label_of(value)
+        local description = runtime.what_of(value)
         local n = { value = value, kind = kind, label = type(label) == 'string' and text(label) or nil,
-            edges = {}, parents = {} }
+            description = type(description) == 'string' and description or nil, edges = {}, parents = {} }
         nodes[value] = n
         queue[#queue + 1] = n
         return n
@@ -57,7 +58,7 @@ function M.render(roots, options)
     local marked = {}
     local labeled, callable = 0, 0
     for _, n in ipairs(queue) do
-        if n.label ~= nil then
+        if n.label ~= nil or n.description ~= nil then
             n.visible = true
             marked[#marked + 1] = n
             labeled = labeled + 1
@@ -91,6 +92,13 @@ function M.render(roots, options)
             if child.node.visible then children[#children + 1] = child end
         end
         local continuation = root and '' or prefix .. (last and '   ' or '│  ')
+        -- the description, beneath the label, each of its lines
+        if n.description then
+            local beside = continuation .. (#children > 0 and '│  ' or '   ')
+            for line in (n.description:gsub('%s+$', '') .. '\n'):gmatch('([^\n]*)\n') do
+                out[#out + 1] = beside .. text(line)
+            end
+        end
         if depth >= depth_limit and #children > 0 then
             out[#out + 1] = continuation .. '└─ … depth limit'
         else
