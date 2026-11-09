@@ -2,33 +2,8 @@
 local runtime = require 'mua.runtime'
 local M = {}
 
-local function text(s)
-    return (s:gsub('[%c]', function(c)
-        return ({ ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' })[c]
-            or ('\\x%02x'):format(c:byte())
-    end))
-end
-local function key_text(key)
-    local kind = type(key)
-    if kind == 'string' then return text(key) end
-    if kind == 'number' or kind == 'boolean' then return tostring(key) end
-    return '<' .. kind .. ' key>'
-end
-
--- Debug metadata identifies the function definition, not its labeling/call site.
--- Missing/stripped debug data and C functions simply have no source location.
-local function location(value)
-    if not debug or not debug.getinfo then return end
-    local info = debug.getinfo(value, 'S')
-    if not info or info.what == 'C' or not info.linedefined or info.linedefined < 1 then return end
-    local source = info.source or ''
-    if source:sub(1, 1) == '@' or source:sub(1, 1) == '=' then
-        source = source:sub(2)
-    else
-        source = info.short_src or '(chunk)'
-    end
-    return text(source) .. ':' .. info.linedefined
-end
+local inspection = require 'mua.runtime.inspection'
+local text, key_text, location = inspection.text, inspection.key_text, inspection.location
 
 -- roots is a packed return list, so nil returns do not hide later values.
 function M.render(roots, options)

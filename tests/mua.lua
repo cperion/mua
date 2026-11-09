@@ -526,6 +526,14 @@ local plain = { name = "box", inner = origin }
 assert(trace(41) + 1 == 42)
 assert(inspect(origin) == "the origin: a Point { x = 0, y = 0 }", inspect(origin))
 assert(inspect(plain) == 'a table { inner = «the origin», name = "box" }', inspect(plain))
+local nested = { point = { x = 1, y = { deep = true } } }
+assert(inspect(nested) == "a table { point = a table { x = 1, y = a table { deep = true } } }", inspect(nested))
+local cycle = { name = "loop" }
+cycle.self = cycle
+assert(inspect(cycle) == 'a table #1 { name = "loop", self = ↩ #1 }', inspect(cycle))
+local long = {}
+for i = 1, 30 do long[i] = i end
+assert(inspect(long):find("{\n    [1] = 1,\n", 1, true), inspect(long))
 return inspect "text"]], '"text"')
 errors('a test takes a name first', 'test(5)', 'test takes a name first')
 errors('a test takes a block', 'test "named" (5)', "test 'named' takes a block")

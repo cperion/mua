@@ -229,45 +229,12 @@ function R.label(text)
     end
 end
 
--- `trace value`: print what a value is and what it holds, and answer it unchanged, so it goes
--- anywhere in an expression while debugging. `inspect value` is the text. One level of contents is read raw, as
--- the outline reads (no `__index`, `__pairs` or `__tostring`); a nested value appears as its
--- label, or as what it is.
-local function brief(value)
-    local own = R.label_of(value)
-    if own then return ('«%s»'):format(own) end
-    if type(value) == 'string' then
-        local text = #value > 40 and (value:sub(1, 37) .. '...') or value
-        return ('%q'):format(text)
-    end
-    if type(value) == 'number' or type(value) == 'boolean' or value == nil then return tostring(value) end
-    return describe_value(value)
-end
-function R.inspect(value)
-    local own = R.label_of(value)
-    local parts = {}
-    if type(value) == 'table' then
-        local keys = {}
-        for key in next, value do keys[#keys + 1] = key end
-        table.sort(keys, function(a, b)
-            if type(a) == type(b) and (type(a) == 'number' or type(a) == 'string') then return a < b end
-            return type(a) == 'number'
-        end)
-        local entries = {}
-        for position, key in ipairs(keys) do
-            if position > 12 then entries[#entries + 1] = ('… %d more'):format(#keys - 12); break end
-            local name = type(key) == 'string' and key or ('[' .. brief(key) .. ']')
-            entries[#entries + 1] = name .. ' = ' .. brief(rawget(value, key))
-        end
-        parts[#parts + 1] = (describe_value(value)) .. ' { ' .. table.concat(entries, ', ') .. ' }'
-    elseif type(value) == 'function' then
-        local info = debug.getinfo(value, 'S')
-        parts[#parts + 1] = 'a function' .. ((info and info.short_src and info.linedefined and info.linedefined > 0) and (' at ' .. info.short_src .. ':' .. info.linedefined) or '')
-    else
-        parts[#parts + 1] = brief(value)
-    end
-    if own then return own .. ': ' .. parts[1] end
-    return parts[1]
+-- `trace value`: print what a value is and what it holds (mua/runtime/inspection.lua), and
+-- answer it unchanged, so it goes anywhere in an expression while debugging. `inspect value`
+-- is the text.
+local inspection = require 'mua.runtime.inspection'
+function R.inspect(value, options)
+    return inspection.inspect(value, R.label_of, describe_value, options)
 end
 function R.trace(value, ...)
     print(R.inspect(value))
