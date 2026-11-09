@@ -1,6 +1,6 @@
 -- Human labels never change identity, fields, contracts or calling behavior.
 local R = require 'mua.runtime'
-assert(R.what ~= R.label)
+assert(R.describe ~= R.label)
 local plain = {}
 assert(R.label('plain')(plain) == plain)
 assert(R.label_of(plain) == 'plain' and next(plain) == nil)
@@ -22,16 +22,16 @@ assert(not pcall(R.label, 3))
 assert(not pcall(R.label('bad'), 3))
 local mua = require 'mua.init'
 local chunk = assert(mua.load([=[
-local described = what [[
+local described = describe [[
 A vocabulary described at length.
 ]] define answer = 42 end
-assert(what_of(described) == "A vocabulary described at length.\n" and label_of(described) == nil)
+assert(description_of(described) == "A vocabulary described at length.\n" and label_of(described) == nil)
 local both = label "Answer" [[
 What the program answers.
 ]] define answer = 42 end
-assert(label_of(both) == "Answer" and what_of(both) == "What the program answers.\n")
-assert(what "identity preserved" (described) == described)
-assert(what_of(described) == "identity preserved")
+assert(label_of(both) == "Answer" and description_of(both) == "What the program answers.\n")
+assert(describe "identity preserved" (described) == described)
+assert(description_of(described) == "identity preserved")
 local words = label "words" define answer = 42 end
 assert(label_of words == "words")
 local F = family "expressions"

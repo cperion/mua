@@ -8,7 +8,7 @@ local Positive = R.checker('Positive')(function(n) return type(n) == 'number' an
 assert(R.label_of(Positive) == 'Positive')
 assert(R.label_of(R.Optional(Positive)) == 'Optional(Positive)')
 R.label('a positive quantity')(Positive)
-assert(R.describe(Positive) == 'a positive quantity')
+assert(R.contract_text(Positive) == 'a positive quantity')
 assert(R.check(Positive, 1) and not R.check(Positive, -1))
 local Point = R.struct('Point', { { 'x', R.Number } })
 local F = R.family('Geometry')

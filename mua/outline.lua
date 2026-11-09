@@ -16,7 +16,7 @@ function M.render(roots, options)
         if kind ~= 'table' and kind ~= 'function' and kind ~= 'userdata' and kind ~= 'cdata' then return end
         if nodes[value] then return nodes[value] end
         local label = runtime.label_of(value)
-        local description = runtime.what_of(value)
+        local description = runtime.description_of(value)
         local n = { value = value, kind = kind, label = type(label) == 'string' and text(label) or nil,
             description = type(description) == 'string' and description or nil, edges = {}, parents = {} }
         nodes[value] = n

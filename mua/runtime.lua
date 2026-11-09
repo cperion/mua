@@ -44,7 +44,7 @@ local function describe_value(v)
 end
 R.describe_value = describe_value
 
-function R.describe(T)
+function R.contract_text(T)
     local label = R.label_of and R.label_of(T)
     if type(label) == 'string' then return label end
     if checkers[T] then return checkers[T].name end
@@ -215,23 +215,23 @@ function R.label_of(value)
     return type(mt) == 'table' and rawget(mt, '__label') or nil
 end
 -- Descriptions: what a value is for, at length. A label names a value ("Reader"); a
--- description explains it. `what [[ … ]] value` describes, `what_of` reads, and
+-- description explains it. `describe [[ … ]] value` describes, `description_of` reads, and
 -- `label "name" [[ description ]] value` does both. Stored as labels are.
 local descriptions = setmetatable({}, { __mode = 'k' })
-function R.what_of(value)
+function R.description_of(value)
     local kind = type(value)
     if kind ~= 'table' and kind ~= 'function' and kind ~= 'userdata' and kind ~= 'cdata' then return nil end
     local own = descriptions[value]
     if own ~= nil then return own end
     local mt = kind == 'table' and getmetatable(value)
-    return type(mt) == 'table' and rawget(mt, '__what') or nil
+    return type(mt) == 'table' and rawget(mt, '__description') or nil
 end
-function R.what(text)
-    assert(type(text) == 'string', 'what expects a string: what [[ description ]] value')
+function R.describe(text)
+    assert(type(text) == 'string', 'describe expects a string: describe [[ description ]] value')
     return function(value)
         local kind = type(value)
         assert(kind == 'table' or kind == 'function' or kind == 'userdata' or kind == 'cdata',
-            'what expects a table, function, userdata or cdata')
+            'describe expects a table, function, userdata or cdata')
         descriptions[value] = text
         return value
     end
@@ -242,7 +242,7 @@ function R.label(text)
         -- a string here is a description: no string is ever labeled
         if type(value) == 'string' then
             local description = value
-            return function(described) return R.label(text)(R.what(description)(described)) end
+            return function(described) return R.label(text)(R.describe(description)(described)) end
         end
         local kind = type(value)
         assert(kind == 'table' or kind == 'function' or kind == 'userdata' or kind == 'cdata',
@@ -322,7 +322,7 @@ local optionals = setmetatable({}, { __mode = 'k' })
 function R.Optional(T)
     local c = optionals[T]
     if not c then
-        c = checker('Optional(' .. R.describe(T) .. ')')(function(v) return v == nil or (R.check(T, v)) end)
+        c = checker('Optional(' .. R.contract_text(T) .. ')')(function(v) return v == nil or (R.check(T, v)) end)
         optionals[T] = c
     end
     return c
@@ -373,7 +373,7 @@ local function contract(T, v, level, what, a, b)
         return made
     end
     if not ok then
-        error(('contract: %s expects %s, got %s%s'):format(what:format(a, b), R.describe(T), describe_value(v),
+        error(('contract: %s expects %s, got %s%s'):format(what:format(a, b), R.contract_text(T), describe_value(v),
             why and (' (it ' .. why .. ')') or ''), level)
     end
     return v
@@ -449,7 +449,7 @@ function R.family(name)
     function F.is(node, kind)
         need_sealed('asked')
         if not (structs[kind] and members[kind]) then
-            error(("%s is not a kind in the family '%s'"):format(R.describe(kind), name), 2)
+            error(("%s is not a kind in the family '%s'"):format(R.contract_text(kind), name), 2)
         end
         return type(node) == 'table' and instance_of[getmetatable(node)] == kind
     end
@@ -713,7 +713,7 @@ R.contracts = R.label "contracts: what a value must be" {
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'label', 'what', 'label_of', 'what_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'testing', 'debugging', 'contracts', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'describe', 'label_of', 'description_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'testing', 'debugging', 'contracts', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R

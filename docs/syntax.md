@@ -150,7 +150,7 @@ wherever a table may appear, an argument included, so a definition passes straig
 it: `iter start do(state, control) … end`.
 
 **Human labels and descriptions.** A label names a value; a description explains it.
-`what [[ description ]] value` describes, `what_of(value)` reads it, and
+`describe [[ description ]] value` describes, `description_of(value)` reads it, and
 `label "name" [[ description ]] value` names and describes at once (a string after the name can
 only be a description: no string is labeled). `trace` and `inspect` show the label; the outline
 shows the label with the description beneath it.
@@ -183,7 +183,7 @@ functions use `Type.tag`. FFI types and instances use their registered declarati
 An explicit per-value label overrides the default without relabeling siblings. Relabeling
 an FFI ctype object is local to that object, not every equivalent ctype handle.
 Semantic names (struct handler keys, union tags and C type names) remain unchanged.
-`describe` uses the effective label for human-facing contract descriptions.
+`contract_text` (the runtime's text for a contract, as an error names it) uses the effective label.
 
 **Vocabularies of an activity.** `testing` (`test`, `collect`), `debugging` (`trace`, `inspect`,
 `trace_through`, `inspect_through`) and `contracts` (`checker`, `check`, `required`, `optional`,
