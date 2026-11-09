@@ -8,12 +8,11 @@ local packed = do(..values) = values
 local pools = meta { mode = "k" } {}
 local sinks = do(Application)
     if pools[Application] then return pools[Application] end
-    local callback = do(signature, name, snapshot)
-        return Application.callback(signature, do(token, ..arguments)
-                local receiver = Application.resolve token
-                if receiver and receiver[name] then receiver[name](snapshot(..arguments)) end
-            end, nil, "draw")
-    end
+    local callback = |signature, name, snapshot| -> Application.callback(signature,
+        do(token, ..arguments)
+            local receiver = Application.resolve token
+            if receiver and receiver[name] then receiver[name](snapshot(..arguments)) end
+        end, nil, "draw")
     local vertices = do(coordinates, colors, count, size)
         Check.integer(count, "primitive vertex count", 0, 1048576)
         assert(count == 0 or (coordinates ~= nil and colors ~= nil), "missing primitive storage")
@@ -78,12 +77,14 @@ local for_application = do(Application)
                 Native.GPU_backend_sink_set sink
                 active_owner = owner
                 owner.activate
-                local viewport = do(width, height)
+                local set_viewport = do(size)
                     owner.mutate "primitive viewport"
-                    Native.GPU_viewport_size_set(Check.integer(width, "viewport width", 0, 32768),
-                        Check.integer(height, "viewport height", 0, 32768))
+                    Check.keys(size, { width = true, height = true }, "viewport size")
+                    Native.GPU_viewport_size_set(Check.integer(rawget(size, "width"),
+                            "viewport width", 0, 32768),
+                        Check.integer(rawget(size, "height"), "viewport height", 0, 32768))
                 end
-                local results = packed(body define .viewport end)
+                local results = packed(body define .set_viewport end)
                 Application.check_error
                 -- Retain the exact native structure until after the producer returns.
                 assert(sink[0].user == token)
@@ -111,7 +112,7 @@ local for_surface = do(Application, window)
                 handle = window.pointer and Native.BK_window_handle window.pointer or nil }
         end
         local results = packed(pcall(Application.serve,
-                do() return body define .handles end end))
+                || -> body define .handles end))
         active = false
         if not results[1] then error(results[2], 0) end
         Application.check_error

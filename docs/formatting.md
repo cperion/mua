@@ -42,6 +42,7 @@ return {
     table_style = "shorthand",
     spread_style = "top",
     opening_style = "anonymous",
+    lambda_style = "arrow",
     block_style = "colon",
     data_style = "with",
     inline_with = 2,
@@ -63,6 +64,7 @@ file, not arbitrary downloaded Lua code.
 | `table_style` | `"shorthand"`, `"preserve"` | `"shorthand"` writes a table entry `name = name` as `.name` (syntax doc, §4); `"preserve"` keeps the spelling, including any `.name` already written. |
 | `spread_style` | `"top"`, `"preserve"` | `"top"` writes the one `..base` of a table first, beside its `with` (below); `"preserve"` keeps entries where they are written. |
 | `opening_style` | `"anonymous"`, `"preserve"` | Remove an unused name from an opened `do` parameter, or keep named openings. |
+| `lambda_style` | `"arrow"`, `"do"` | Prefer arrows for plain expression functions, including return-only blocks; or retain their do spelling. Genuine statement bodies and typed/opened/rest parameters keep `do`. |
 | `block_style` | `"colon"`, `"do"` | Write an untyped trailing `do(..)` that ends a line in the colon form (syntax doc, §4), or keep the `do` spelling. |
 | `data_style` | `"with"`, `"preserve"` | Write a multi-line table that follows a head (`T {`, `f(x) {`) as a `with` block (syntax doc, §4), or keep the braces. |
 | `inline_with` | integer 0–16 | A table of at most this many plain entries that follows a head is written on one line (`Point { x = 1, y = 2 }`) when it fits `column_width`; `0` keeps the layout as written. Has no effect with `data_style = "preserve"`. |
@@ -88,6 +90,65 @@ could change that lookup. It also avoids conflicting `__home` parameters and
 repeated parameter names that affect which argument is opened.
 The candidate is reparsed and checked against exactly the intended parameter
 change. Set `opening_style = "preserve"` to retain named openings.
+
+## Short functions
+
+With `lambda_style = "arrow"`, a plain function whose body is just one returned expression
+uses the more economical arrow form:
+
+```mua
+local increment = value -> value + 1
+local sum = |left, right| -> left + right
+local missing = || -> nil
+```
+
+These are also the formatter's output for `do(value) return value + 1 end`,
+`do(left, right) return left + right end`, and `do() return nil end`. A return-only `-> do`
+body is shortened too. The body need not already be written on one line: the rule is one
+returned expression, not an arbitrary one-line function.
+
+Setup work, typed contracts, opened/rest parameters and multiple return expressions stay in
+block form. A call statement also stays: `do(value) notify value end` discards the call's
+results, whereas `value -> notify value` would return them. Likewise a bare `return` returns
+no values and is **not** `-> nil`, which returns one. A returned call keeps all its results,
+including trailing nils; parentheses that restrict it to one result are preserved.
+
+Comments are never dropped to shorten a function. Comments attached to the replaced header,
+return boundary or closer keep that block; comments inside the expression remain in place.
+Set `lambda_style = "do"` to retain short return blocks as well as expression-lambda do heads.
+
+## Returned stages
+
+A function whose only statement returns another function needs no `return` staircase:
+
+```mua
+local title_form = do(initial_title) = do(Finish) = do(..)
+    label initial_title
+    button "Accept" Finish.accept
+end
+```
+
+The formatter collapses the corresponding nested `return do` blocks into this chain.
+The functions and their application stages are unchanged. Setup statements, local state,
+multiple return expressions, and comments attached to a stage's header or closer prevent that
+stage from collapsing; they are not moved into a later invocation.
+
+With `lambda_style = "arrow"`, a plain expression-only chain becomes
+`initial -> increment -> initial + increment`, including when its final stage was written
+as `do(increment) return initial + increment end`. A chain ending in actual statements
+stays `do(initial) = do(increment) ... end`; an opened, rest or typed stage also keeps its
+chain in do form. The styles are not mixed by converting just a prefix: **`-> do` opens an
+arrow function's own body**, not a returned `do(...)` lambda. An arrow chain ending in real
+statements, such as `initial -> increment -> do log increment; return initial + increment end`,
+keeps its block.
+
+Expression-bodied stages have no closer. If every block becomes an expression, its old
+`endall` disappears too. When only the final block remains it needs one `end`; an existing
+`endall` becomes `end` if it now closes only one block. If setup work
+requires surrounding blocks to remain, their shared `endall` remains too. Both cleanup
+steps are reparsed and repeated to a fixed point, so formatting twice changes nothing.
+`lambda_style = "do"` retains expression-lambda do heads, but still removes redundant
+returned-stage wrappers.
 
 ## Trailing colon
 
@@ -122,8 +183,11 @@ separators the reader would put back: the comma at the end of a line goes, and a
 trailing comma goes too. Entries that share a line keep their commas, which keeps
 them readable (`Point with x = 1, y = 2 end`). A separator is
 kept where the reader would not recover it, before an entry that starts with a
-bracket or a literal. Each table is converted on its own, and only when expanding
-the result gives the same program as the braces.
+bracket or a literal. A comma after an expression lambda is also retained before a
+shorthand or positional entry: without it, the arrow body could absorb the next entry across
+the newline. Commas inside `|left, right|` belong to the parameter list, not the table.
+Each table is converted on its own, and only when expanding the result gives the same program
+as the braces. A returned headless `with` stays contextual after conversion to an arrow.
 
 ## Definitions
 
@@ -181,8 +245,8 @@ end
   context openings and `endall`; `spine_style` decides how a spine's link bodies
   indent.
 - Existing statement/application line boundaries stay in place, except that safe
-  call rewrites join whitespace just inside removed argument delimiters, and a
-  folded spine's run of closers becomes one `endall` line. Single-line blocks
+  call rewrites join whitespace just inside removed argument delimiters, pure returned
+  stages become expression chains, and a folded spine's run of closers becomes one `endall` line. Single-line blocks
   stay single-line; runs of empty lines become one empty line.
 - Long delimited lists can wrap after commas. Long application chains, comments,
   and literals may exceed `column_width`: wrapping must not change application.
@@ -267,8 +331,8 @@ endall
 opener of the chain, so a flat spine closes at its base and a nested spine closes
 at its innermost level. With `call_style = "minimal"`, a run of `end`s that
 closes a spine inside a typed body folds into one `endall`; a comment between
-the closers blocks the fold, and host Lua keeps its `end`s because `endall` is a
-typed-body form.
+the closers blocks the fold. This automatic call-spine fold is limited to typed bodies;
+explicit `endall` is also valid in untyped Mua blocks, as described in `syntax.md`.
 
 Formatting reparses candidate call rewrites and the final output and compares
 syntax trees in the application normal form the facts prove, ignoring source

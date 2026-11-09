@@ -1,0 +1,113 @@
+-- Descriptions are tested without loading BUI. Native installation is a separate boundary.
+local Behavior = require "bui.ui.behavior"
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "behavior check " .. checks)
+end
+local refuses = do(body, fragment)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(fragment, 1, true))
+end
+local called = 0
+local response = do(pointer)
+    called += 1
+    return do(..)
+        cursor "crosshair"
+        return pointer.x
+    end
+end
+local draw = do(bounds)
+    called += 1
+    return do(..)
+        rectangle { ..bounds, color = { 1, 0, 0, 1 } }
+    end
+end
+local expired, nested
+local original = Behavior.behavior:
+    expired = when_pressed
+    natural_size { width = 120, height = 80 }
+    when_pressed response
+    local outer_paint = paint
+    nested = Behavior.behavior:
+        natural_size { width = 40, height = 50 }
+        outer_paint draw
+    end
+end
+expect(called == 0 and #original == 3 and #nested == 1)
+expect(Behavior.Clause.is(original[1], Behavior.NaturalSize))
+expect(Behavior.Clause.is(original[2], Behavior.Response))
+expect(Behavior.Clause.is(original[3], Behavior.Painting))
+refuses(do() expired response end, "builder has ended")
+
+local replacement = do(pointer) = do(..) return pointer.y end
+local composed = Behavior.behavior:
+    use original
+    when_pressed replacement
+    prepare_frame:
+        return "one frame"
+    end
+end
+local first = Behavior.lower original
+local second = Behavior.lower composed
+local third = Behavior.lower nested
+expect(first.width == 120 and second.width == 120 and third.width == 40)
+expect(first.responses[1] == response and second.responses[1] == replacement)
+expect(first.prepare == nil and second.prepare() == "one frame")
+expect(first.responses ~= second.responses and called == 0)
+-- Copying a vocabulary deliberately shares its user closures; lowering never shares its map.
+local fourth = Behavior.lower composed
+fourth.responses[1] = nil
+expect(second.responses[1] == replacement)
+
+local cursors, rectangles = {}, {}
+local Services = define
+    cursor = name -> table.insert(cursors,
+        name)
+end
+local Paint = define
+    rectangle = shape -> table.insert(rectangles,
+        shape)
+end
+local react = first.responses[1] { x = 7, y = 8 }
+expect(called == 1 and #cursors == 0)
+expect(react Services == 7 and cursors[1] == "crosshair")
+local paint = first.paint { x = 1, y = 2, width = 3, height = 4 }
+expect(called == 2 and #rectangles == 0)
+paint Paint
+expect(rectangles[1].width == 3)
+
+-- Nominal descriptions are not immutable or proof of valid fields at publication.
+original[1].width = -1
+refuses(do() Behavior.lower original end, "natural width")
+expect(second.width == 120)
+original[1].width = 120
+original[2].event = "invented"
+refuses(do() Behavior.lower original end, "unknown custom input")
+refuses(do() Behavior.lower { event = response } end, "dense array")
+refuses(do() Behavior.lower { { event = "pressed", instructions = response } } end,
+    "custom behavior clause")
+refuses(do()
+        Behavior.behavior do(..)
+            natural_size { width = 0, height = 80 }
+        end
+    end, "natural width")
+refuses(do()
+        Behavior.behavior do(..)
+            when_pressed false
+        end
+    end, "function")
+
+local failed_instruction
+refuses(do()
+        Behavior.behavior do(..)
+            failed_instruction = paint
+            error "stop describing"
+        end
+    end, "stop describing")
+refuses(do() failed_instruction draw end, "builder has ended")
+local incomplete = {
+    Response = || -> nil, Preparation = || -> nil, Painting = || -> nil,
+}
+refuses(do() Behavior.Clause.pass "incomplete consumer" incomplete end, "NaturalSize")
+print("BUI behavior language: " .. checks .. " checks passed")

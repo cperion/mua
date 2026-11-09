@@ -1,8 +1,8 @@
 # BUI as a library of Mua activities
 
 **Design contract; implementation coverage is tracked separately.** The
-[implemented activity API](bui-ui.md) now has native/headless ownership, mounting, delivery,
-controls, editing/drawing vocabularies, and owned images/animation/video resources. The [raw FFI boundary](bui-ffi.md) remains separate.
+[implemented activity API](bui-ui.md) and [coverage inventory](bui-coverage.md) track the
+native/headless activities, their ownership and their behavioral evidence. The [raw FFI boundary](bui-ffi.md) remains separate.
 The original studio is a test of that boundary, not the architecture to generalize. In particular, `add(parent, kind, properties, callback)`
 is not the proposed UI language.
 
@@ -38,20 +38,21 @@ implementation tree. Parents wire outward continuations to inward capabilities l
 The intended ownership spine is:
 
 ```mua
-Ui.with_application Backend do(application)
-    return application.with_window with
-        title = "Counter"
-        width = 420
-        height = 240
-    end do(window)
-        window.with_content counter_panel do(counter)
-            counter.increment()
-            window.show()
-            application.run()
+Ui.with_application Backend:
+    return with_window { title = "Counter", width = 420, height = 240 }:
+        with_content counter_panel:
+            increment
+            show
+            run
         end
     end
 end
 ```
+
+`increment` belongs to the mounted component, `show` to the window, and `run` to the
+application. The inner vocabulary need not forward the outer instructions. These are lexical
+openings, not a global current application or builder. Name a context only when the vocabulary
+itself must be passed or deliberately addressed.
 
 `Backend` is explicitly supplied; it retains the loaded library. `with_application` owns native
 integration. `with_window` owns a window, its context, permanent content/header roots and child
@@ -67,25 +68,21 @@ re-raised after cleanup. The sketch above returns the outcome rather than silent
 ### A component, with the directions visible
 
 ```mua
-local make_counter_panel = do(inputs)
-    return do(Notify)
-        return do(place)
-            local value = inputs.initial
-            local readout
-            local increment = do()
-                value += 1
-                readout.display(tostring value)
-                Notify.changed value
-            end
-            place.column with spacing = 8 end do(children)
-                readout = children.label(tostring value)
-                children.button "Increment" increment
-            end
-            return define
-                .increment
-                current = || -> value
-            end
-        end
+local make_counter_panel = do(inputs) = do(Notify) = do(..)
+    local value = inputs.initial
+    local Readout
+    local increment = do()
+        value += 1
+        Readout.display(tostring value)
+        Notify.changed value
+    end
+    column { spacing = 8 }:
+        Readout = label(tostring value)
+        button "Increment" increment
+    end
+    return define
+        .increment
+        current = || -> value
     end
 end
 
@@ -107,8 +104,93 @@ accept a vocabulary of several distinct notifications.
 
 `place.include installer` mounts a child under the same owning component and returns the child's
 capabilities. `place.column options body`, and the other containers, pass a placement vocabulary
-for their own children. No current-parent global is needed. Returning from these assembly calls
-adopts their successful results; it does not destroy them.
+for their own children. Open that vocabulary at the call site: `column options:` followed by its instructions.
+No current-parent global is needed. Returning from these assembly calls adopts their successful
+results; it does not destroy them. Retained event handlers capture their lexical placement;
+another window being open when the handler runs cannot redirect its instructions.
+
+Do not flatten parameter roles into one context, or put data beside an opened parameter.
+`Notify.changed value` names the outward destination. A painting function takes bounds and
+**returns** painting instructions. A dialog form takes `Finish` and **returns** placement
+instructions. Neither is a conventional callback with one parameter opened:
+
+```mua
+local paint_background = do(bounds) = do(..)
+    rectangle { ..bounds, color = { 0.07, 0.12, 0.2, 1 } }
+end
+
+local title_form = do(initial_title) = do(Finish) = do(..)
+    local Title = text { value = initial_title }
+    button "Apply title" do() Finish.accept(Title.current()) end
+    button "Keep current title" Finish.cancel
+end
+```
+
+### Argument roles determine the stages
+
+Currying is not a punctuation policy or an automatic conversion of every C operand into a
+stage. Start with the work, its subject, and the values that can be meaningfully supplied
+separately. Name the function **and its operands** so the sentence explains that relationship.
+The public vocabulary uses these decisions:
+
+| Sentence | What the operands mean | Where work happens |
+|---|---|---|
+| `Text.insert_at byte_position text` | destination in this buffer, then inserted text | supplying text; validate against the buffer **now** |
+| `Text.erase span`, `Text.select span` | one `{start,stop}` UTF-8 byte range, also returned by selection | supplying the range |
+| `Curve.set_points channel points` | destination channel, then its complete points | supplying points |
+| `Tree.rename_item identifier label` | stable item identity, then replacement label | supplying label; resolve identity against the current forest |
+| `Texture.upload_at position pixels` | texture destination, then source pixels | supplying pixels; use the current owned texture |
+| `Texture.copy_frame Image frame` | source image, then source frame | supplying frame |
+| `Picture.show_image Image fit` | retained source, then presentation policy | supplying fit; establish the lifetime-checked loan |
+| `Paint.image Image destination options` | source, destination rectangle, sampling options | supplying options, within the current painting borrow |
+| `typography.register_font family style bytes` | font-family destination, face, then encoded font | supplying bytes; global registration, not a scoped font override |
+| `Frame.configure_track axis index settings` | select a grid track, then publish its weight/minimum together | supplying settings |
+| `open_menu commands placement` | checked command description, then where to show it | supplying placement |
+| `open_dialog options completed form` | child-surface inputs, outward completion, then installation | supplying form; completion occurs later, after teardown |
+| `notify_later Notify.status message` | outward destination, then its payload—not an activity body | supplying the message; actual notification runs after C returns |
+
+A position `{x,y}`, size `{width,height}`, text range `{start,stop}`, or injected input event
+is **one domain value**, not unrelated arguments hidden in a bag. There is no useful independent
+activity in supplying the x-coordinate of a pointer event. Conversely, notifications, placement,
+painting, and terminal completion are different responsibilities; a record must not merge them
+merely to enable an opened block. Input injection takes named event data, not the native C
+argument tuple. Window queries return a point, size, scale number, or state name—not `{first,second}`.
+Font face is named `regular`, `bold`, `italic`, or `bold_italic`; underline is text decoration,
+not another face to register. Painting uses named points and boxes; mesh/widget min/max clips
+are a native lowering choice. `with_clip` names the actual purpose; there is no second public
+`with_view` alias exposing its implementation mechanism.
+
+Partial application has a contract. It performs no native mutation, does not acquire an
+ownership extension, and never saves a replaceable native pointer as a substitute for a live
+identity. Scalar destinations are captured; the execution stage checks current liveness and
+current constraints. Popup preparation copies its command description; native publication is
+still a later operation. These are deliberately different state boundaries, not a universal
+currying adapter.
+
+### A behavior description, not a callback bag
+
+`Ui.behavior:` describes natural size, named input responses, frame preparation, and painting.
+Its closed family is `Response | Preparation | Painting | NaturalSize`. Checking/copying and
+lowering are exhaustive passes, composed from separate response, drawing, and sizing
+vocabularies. Each lowering owns a fresh binding; each builder owns a fresh output list.
+`use description` composes declarations in order; later declarations replace only the purpose
+they name. The builder runs no handler and acquires nothing.
+
+`Preview.behave description` publishes one owned binding. `when_pressed response` supplies
+`pointer -> response instructions`; omitted input responses deliberately ignore that input.
+`prepare_frame:` receives only invalidation and returns a frame outcome. `paint draw` supplies
+`bounds -> painting instructions`. The response, frame and painting vocabularies are not one
+universal service context. Replacement retires callbacks under the old binding, not the new
+binding that happens to occupy the same native control.
+
+### A complete editing workflow
+
+`examples/bui/workbench.mua` keeps the document title in its workspace and creates a separate
+form draft for each review. `Finish.accept title` requests terminal completion; it does not
+mutate the document. Teardown revokes the form, then queued `accepted(title)` reaches the parent,
+which updates its document and refreshes its tree. Cancellation discards the draft and preserves
+the title. An input notification, an opening result, and that terminal result are three distinct
+protocols. The headless and native smoke paths exercise both cancellation and acceptance.
 
 ## 2. Ownership and replacement
 

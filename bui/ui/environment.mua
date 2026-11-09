@@ -58,11 +58,9 @@ local for_application = do(Application)
         end
         return Acquisition.ready value
     end
-    local search_storage = do(operation)
-        return do(path)
-            owner.mutate "search history storage"
-            operation(Check.string(path, "search history path"))
-        end
+    local search_storage = do(operation) = do(path)
+        owner.mutate "search history storage"
+        operation(Check.string(path, "search history path"))
     end
     local recent_searches = define
         enable = do(enabled)

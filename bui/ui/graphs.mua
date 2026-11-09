@@ -12,10 +12,8 @@ local field = do(value, name, size)
         name .. " exceeds the native field or contains |")
     return value
 end
-local appearance = do(source)
-    return { caption = field(source.caption, "socket caption", 63),
-        type = field(Check.default(source.type, "float"), "socket type", 23) }
-end
+local appearance = source -> { caption = field(source.caption, "socket caption", 63),
+    type = field(Check.default(source.type, "float"), "socket type", 23) }
 local input = do(source)
     Check.keys(source, { caption = true, type = true, value = true }, "input socket")
     local copied = { ..source }
@@ -34,26 +32,22 @@ local output = do(source)
     return Output(appearance { ..source })
 end
 local Checking = define
-    Input = do(node, recurse) return input node end
-    Output = do(node, recurse) return output node end
+    Input = |node, recurse| -> input node
+    Output = |node, recurse| -> output node
 end
 local recheck = Socket.pass "recheck a graph socket" with ..Checking end
 local Writing = define
-    Input = do(node, recurse)
-        return "i|" .. node.caption .. "|" .. node.type .. "|" .. (node.value == nil and "" or tostring node.value)
-    end
-    Output = do(node, recurse) return "o|" .. node.caption .. "|" .. node.type end
+    Input = |node, recurse| -> "i|" .. node.caption .. "|" .. node.type .. "|" .. (node.value == nil and "" or tostring node.value)
+    Output = |node, recurse| -> "o|" .. node.caption .. "|" .. node.type
 end
 local write = Socket.pass "lower graph sockets to the native string grammar" with ..Writing end
 local sockets = do(body)
     Check.callable(body, "socket description body")
     local active, result = true, {}
-    local add = do(Constructor)
-        return do(options)
-            assert(active, "socket builder has ended")
-            assert(#result < 1024, "too many graph sockets")
-            result[#result + 1] = Constructor options
-        end
+    local add = do(Constructor) = do(options)
+        assert(active, "socket builder has ended")
+        assert(#result < 1024, "too many graph sockets")
+        result[#result + 1] = Constructor options
     end
     local succeeded, problem = pcall(body,
         define input = add input, output = add output end)

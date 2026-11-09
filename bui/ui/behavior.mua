@@ -1,0 +1,152 @@
+local Check = require "bui.ui.check"
+
+-- A behavior is a description, not a native class or a live connection. Its clauses have
+-- different protocols: input data -> response instructions, frame instructions, and
+-- bounds -> painting instructions. Only installation gives those instructions capabilities.
+local Clause = family "custom behavior clause"
+local Response = struct { event: String, instructions: Function }
+local Preparation = struct { instructions: Function }
+local Painting = struct { instructions: Function }
+local NaturalSize = struct { width: Number, height: Number }
+Clause { Response, Preparation, Painting, NaturalSize }
+
+local event_names = { "pressed", "released", "moved", "left", "wheel", "key_pressed",
+    "key_released", "focused", "blurred" }
+local events = {}
+for code, name in ipairs event_names do events[name] = code end
+local event_name = do(code)
+    local name = assert(event_names[code], "unknown custom input event")
+    return name
+end
+
+local Checking = define
+    Response = do(node, recurse)
+        Check.keys(node, { event = true, instructions = true }, "input response")
+        local event = rawget(node, "event")
+        assert(events[event], "unknown custom input event")
+        return Response with
+            .event
+            instructions = Check.callable(rawget(node, "instructions"), "input instructions")
+        end
+    end
+    Preparation = do(node, recurse)
+        Check.keys(node, { instructions = true }, "frame preparation")
+        return Preparation with
+            instructions = Check.callable(rawget(node, "instructions"), "frame instructions")
+        end
+    end
+    Painting = do(node, recurse)
+        Check.keys(node, { instructions = true }, "custom painting")
+        return Painting with
+            instructions = Check.callable(rawget(node, "instructions"), "painting instructions")
+        end
+    end
+    NaturalSize = do(node, recurse)
+        Check.keys(node, { width = true, height = true }, "natural size")
+        return NaturalSize with
+            width = Check.integer(rawget(node, "width"), "natural width", 1, 32768)
+            height = Check.integer(rawget(node, "height"), "natural height", 1, 32768)
+        end
+    end
+end
+local checked_clause = Clause.pass "check and copy a custom behavior clause" with ..Checking end
+
+-- Rechecking is required even for nominal values: callers may have edited their fields.
+local checked = do(description)
+    Check.array(description, "behavior description")
+    local count = #description
+    assert(count <= 1024, "behavior description is too large")
+    local clauses = {}
+    for index = 1, count do clauses[index] = checked_clause(rawget(description, index)) end
+    return clauses
+end
+
+local Responses = define
+    Response = do(node, recurse, binding)
+        binding.responses[events[node.event]] = node.instructions
+    end
+end
+local Drawing = define
+    Preparation = do(node, recurse, binding)
+        binding.prepare = node.instructions
+    end
+    Painting = do(node, recurse, binding)
+        binding.paint = node.instructions
+    end
+end
+local Sizing = define
+    NaturalSize = do(node, recurse, binding)
+        binding.width, binding.height = node.width, node.height
+    end
+end
+local lower_clause = Clause.pass "lower custom behavior to an owned binding" with
+    ..Responses
+    ..Drawing
+    ..Sizing
+end
+
+-- Produced state is fresh per installation; ordered declarations replace only what they name.
+-- The resulting functions capture user state intentionally, not this pass's output buffer.
+local lower = do(description)
+    local clauses = checked description
+    local binding = { responses = {}, width = 160, height = 160 }
+    for _, clause in ipairs clauses do lower_clause(clause, binding) end
+    return binding
+end
+
+-- Describe responses and drawing without acquiring native state or invoking any handler.
+local behavior = do(body: Function): Table
+    local clauses, active = {}, true
+    local append = do(clause)
+        assert(active, "behavior builder has ended")
+        local copied = checked_clause clause
+        assert(active, "behavior builder has ended")
+        assert(#clauses < 1024, "behavior description is too large")
+        clauses[#clauses + 1] = copied
+    end
+    local Responding = {}
+    for event in pairs events do
+        Responding["when_" .. event] = do(instructions)
+            append Response { .event, instructions = Check.callable(instructions, event .. " instructions") }
+        end
+    end
+    local Drawing = define
+        prepare_frame = do(instructions)
+            append Preparation { instructions = Check.callable(instructions, "frame instructions") }
+        end
+        paint = do(instructions)
+            append Painting { instructions = Check.callable(instructions, "painting instructions") }
+        end
+    end
+    local Sizing = define
+        natural_size = do(size)
+            Check.keys(size, { width = true, height = true }, "natural size")
+            append NaturalSize { width = rawget(size, "width"), height = rawget(size, "height") }
+        end
+    end
+    local use = do(description)
+        assert(active, "behavior builder has ended")
+        for _, clause in ipairs(checked description) do append clause end
+    end
+    local succeeded, problem = pcall(body, define
+        ..Responding
+        ..Drawing
+        ..Sizing
+        .use
+    end)
+    active = false
+    if not succeeded then error(problem, 0) end
+    return clauses
+end
+
+return define
+    .Clause
+    .Response
+    .Preparation
+    .Painting
+    .NaturalSize
+    .checked
+    .lower
+    .event_name
+    .behavior
+end

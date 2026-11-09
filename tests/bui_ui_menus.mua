@@ -23,17 +23,16 @@ end
 
 -- A pure reference projection and an independent observation of the actual C publication.
 local Reference = define
-    Command = do(node, recurse)
-        return { text = node.caption, shortcut = node.shortcut, enabled = node.enabled,
-            checked = node.checked, action = true, children = {} }
-    end
+    Command = |node, recurse| -> { text = node.caption,
+        shortcut = node.shortcut, enabled = node.enabled,
+        checked = node.checked, action = true, children = {} }
     Submenu = do(node, recurse)
         local children = {}
         for index, child in ipairs node.children do children[index] = recurse child end
         return { text = node.caption, shortcut = node.shortcut, enabled = node.enabled,
             checked = node.checked, action = false, .children }
     end
-    Separator = do(node, recurse) return { text = "-" } end
+    Separator = |node, recurse| -> { text = "-" }
 end
 local interpret = Descriptions.Entry.pass "interpret menu presentation" with ..Reference end
 local native_entries
@@ -57,7 +56,7 @@ native_entries = do(specifications, count, actions)
     return result
 end
 local observed, actions
-local Watched = meta { index = do(_, key) return Native[key] end } with
+local Watched = meta { index = |_, key| -> Native[key] } with
     BK_menubutton_set_items = do(node, specifications, count)
         actions = {}
         observed = native_entries(specifications, count, actions)
@@ -68,9 +67,7 @@ Ui.with_application Watched do(Application)
     Application.gpu_default false
     Application.with_surface { width = 200, height = 100 } do(surface)
         local delivered = {}
-        local report = do(word)
-            return do() delivered[#delivered + 1] = word end
-        end
+        local report = do(word) = do() delivered[#delivered + 1] = word end
         local source = Descriptions.menu do(Menu)
             Menu.item { caption = "Root", action = report "root", checked = false }
             Menu.submenu { caption = "Left" } do(Inner)

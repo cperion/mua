@@ -1,0 +1,181 @@
+-- Exercise the public language, not a count of colon tokens: lexical subjects,
+-- parent wiring, late notifications, replacement, completion, and borrowed drawing.
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Menus = require "bui.ui.menu_descriptions"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "UI language check " .. checks)
+end
+local refuses = do(body, fragment)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(fragment, 1, true))
+end
+local opened = outcome -> outcome { opened = value -> value, unavailable = reason -> error reason }
+
+local expired_item
+local commands = Ui.menu:
+    expired_item = item
+    item { caption = "First", action = || -> nil }
+    local outer_item = item
+    submenu { caption = "Nested" }:
+        item { caption = "Inner", action = || -> nil }
+        outer_item { caption = "Outer", action = || -> nil }
+    end
+end
+local described = Menus.write commands
+expect(#described == 3 and described[2].caption == "Outer")
+expect(described[3].children[1].caption == "Inner")
+refuses(do() expired_item { caption = "Late", action = || -> nil } end, "builder has ended")
+
+local issued_images = {}
+local counter = do(initial) = do(Notify) = do(..)
+    local value, Readout, Field, Frame, append_note = initial
+    local changed = do(next_value)
+        value = next_value
+        Readout.display(tostring value)
+        Notify.changed value
+    end
+    Frame = box { padding = 4 }:
+        local Badge = resources.acquire_image with
+            rgba = string.char(255, 0, 0, 255)
+            width = 1
+            height = 1
+        end { ready = value -> value, unavailable = reason -> error reason }
+        issued_images[#issued_images + 1] = Badge
+        Readout = label(tostring value)
+        Field = number { .value, minimum = 0, maximum = 20 }
+        Field.connect define .changed end
+        -- Called after assembly, possibly while another surface is open.
+        -- label must still mean this box's instruction, not a current builder.
+        append_note = text -> label text
+    end
+    local Region = slot {}
+    return define
+        current = || -> value
+        enter = Field.change
+        .append_note
+        child_count = || -> #Frame.children()
+        replace_note = Region.replace
+    end
+end
+
+-- A second workspace is a separate activity, not another enormous lexical spine.
+-- Application is named here because this reusable scenario receives that vocabulary.
+local exercise_second = do(First) = do(reports) = do(..)
+    local Second
+    local second_window = with_surface { width = 300, height = 200 }:
+        with_content:
+            local install = counter 10
+            Second = include(install define
+                changed = do(value) reports[#reports + 1] = value end
+            end)
+            return Second
+        end do(..)
+            -- current is the second component's; pump falls through both
+            -- the component and its surface to the enclosing application.
+            expect(current() == 10 and child_count() == 2)
+            pump
+            expect(First.current() == 2 and current() == 10 and reports[1] == 2)
+            expect(First.child_count() == 3 and child_count() == 2)
+            local Note = append_note "Second note"
+            expect(child_count() == 3 and Note.caption() == "Second note")
+            local Old = replace_note:
+                return label "Committed note"
+            end
+            refuses(do()
+                    replace_note do(..)
+                        column {} do(..)
+                            label "Tentative note"
+                            error "reject replacement"
+                        end
+                    end
+                end, "reject replacement")
+            expect(Old.caption() == "Committed note")
+            replace_note:
+                label "Replacement"
+            end
+            refuses(Old.caption, "activity has ended")
+            enter 12
+            expect(current() == 10)
+            pump
+            expect(current() == 12 and First.current() == 2 and reports[2] == 12)
+            -- Completion is a result callback, not another assembly vocabulary.
+            local completed
+            local receive = do(outcome) completed = outcome end
+            local open = open_dialog { title = "Choose" }
+            local result = open receive do(Finish) = do(..)
+                label "Accept a value"
+                button "Accept" do() Finish.accept "chosen" end
+                return define accept_choice = || -> Finish.accept "chosen" end
+            end
+            local dialog = opened result
+            dialog.content.accept_choice
+            expect(completed == nil)
+            pump
+            expect(completed { accepted = value -> value == "chosen", cancelled() = false })
+            refuses(dialog.content.accept_choice, "activity has ended")
+            render
+        end
+    end
+    opened second_window
+    return Second
+end
+
+local First, saved_instruction
+local reports = {}
+Ui.with_application Native do(Application..)
+    gpu_default false
+    local first_window = with_surface { width = 300, height = 200 }:
+        with_content:
+            local install = counter 1
+            First = include(install define
+                changed = do(value)
+                    reports[#reports + 1] = value
+                    First.append_note "First changed"
+                end
+            end)
+            return First
+        end do(..)
+            expect(current() == 1 and child_count() == 2)
+            saved_instruction = append_note
+            enter 2
+            expect(current() == 1 and #reports == 0)
+            local Second = exercise_second First reports Application
+            refuses(Second.current, "activity has ended")
+            refuses(issued_images[2].info, "activity has ended")
+            expect(issued_images[1].info().width == 1)
+            expect(current() == 2)
+            enter 3
+            pump
+            expect(current() == 3 and child_count() == 4)
+            render
+        end
+    end
+    opened first_window
+    refuses(First.current, "activity has ended")
+    refuses(issued_images[1].info, "activity has ended")
+    refuses(do() saved_instruction "Too late" end, "activity has ended")
+
+    local expired_paint
+    local painted = resources.with_raster { width = 8, height = 8 }:
+        with_frame {}:
+            rectangle { width = 8, height = 8, color = { 1, 1, 1, 1 } }
+            with_clip { x = 2, y = 2, width = 2, height = 2 }:
+                expired_paint = rectangle
+                rectangle { width = 8, height = 8, color = { 1, 0, 0, 1 } }
+            end
+        end
+        refuses(do() expired_paint { width = 1, height = 1, color = { 0, 0, 0, 1 } } end,
+            "activity has ended")
+        local image = pixels() { ready = value -> value, unavailable = reason -> error reason }
+        local values = ffi.new "uint32_t[64]"
+        ffi.copy(values, image.bytes, #image.bytes)
+        expect(values[0] == 0xffffff and values[2 * 8 + 2] == 0xff0000)
+        expect(values[4 * 8 + 4] == 0xffffff)
+    end
+    painted { ready() = nil, unavailable = reason -> error reason }
+end
+print("BUI language: " .. checks .. " checks passed")

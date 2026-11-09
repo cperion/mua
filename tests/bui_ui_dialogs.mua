@@ -36,20 +36,18 @@ Ui.with_application Native do(Application)
             Application.pump
             expect(#outcomes == 2 and outcomes[2] == "cancelled")
             refuses(do()
-                    local install = surface.open_dialog {} do(place, Finish)
-                        place.label "tentative"
+                    local open = surface.open_dialog {}
+                    open receive do(Finish) = do(..)
+                        label "tentative"
                         error "installation failed"
                     end
-                    install receive
                 end, "installation failed")
             expect(Application.statistics().surfaces == baseline)
             Application.pump
             expect(#outcomes == 2)
             refuses(do()
-                    local install = surface.open_dialog {} do(place, Finish)
-                        Finish.accept "too early"
-                    end
-                    install receive
+                    local open = surface.open_dialog {}
+                    open receive do(Finish) = do(..) Finish.accept "too early" end
                 end, "not been published")
             expect(Application.statistics().surfaces == baseline)
             local late, component
@@ -90,7 +88,7 @@ Ui.with_application Native do(Application)
         end)
 end
 -- Backend refusal is an opening outcome, not cancellation and not a raised programming error.
-local unavailable = meta { index = do(_, key) return Native[key] end } with
+local unavailable = meta { index = |_, key| -> Native[key] } with
     BK_node_new = do(kind)
         if kind == "filebrowser" then return nil end
         return Native.BK_node_new kind

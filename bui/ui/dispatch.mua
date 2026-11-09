@@ -196,7 +196,7 @@ local new = do(Native, owner, Boundary, Protocols, now)
         end, nil, "service")
     local warp = Boundary.callback("void (*)(void *, int, int)", do(token, x, y)
             local surface = Boundary.resolve token
-            if surface then post_host(surface, "warp", tonumber x, tonumber y) end
+            if surface then post_host(surface, "warp", { x = tonumber x, y = tonumber y }) end
         end, nil, "service")
     local clipboard_get = Boundary.callback("char *(*)(void *)", do(token)
             local surface = Boundary.resolve token
@@ -205,7 +205,10 @@ local new = do(Native, owner, Boundary, Protocols, now)
             local Services = surface.window.host_services
             if Services and Services.read_clipboard then
                 local outcome: Protocols.acquisition = Services.read_clipboard()
-                text = outcome { ready = value -> Check.string(value, "host clipboard"), unavailable() = nil }
+                text = outcome with
+                    ready = value -> Check.string(value, "host clipboard")
+                    unavailable() = nil
+                end
             end
             if text == nil then return nil end
             local pointer = Native.mua_bui_malloc(#text + 1)
@@ -341,9 +344,9 @@ local new = do(Native, owner, Boundary, Protocols, now)
         end
     end
 
-    local stop = Boundary.callback("int (*)(void)", do()
-            return (Boundary.failed() or quitting or woken or Delivery.pending() or has_due()) and 1 or 0
-        end, 1)
+    local stop = Boundary.callback("int (*)(void)",
+        || -> (Boundary.failed() or quitting or woken or Delivery.pending() or has_due()) and 1 or 0,
+        1)
     Native.BK_window_set_stop_check stop
     owner.defer do()
         Native.BK_window_set_stop_check(nil)
@@ -357,7 +360,7 @@ local new = do(Native, owner, Boundary, Protocols, now)
         .attach_surface
         .with_keep_alive
         .track_node
-        find_node = do(pointer) return nodes[tostring pointer] end
+        find_node = pointer -> nodes[tostring pointer],
         .each_node
         .assembling
         .run

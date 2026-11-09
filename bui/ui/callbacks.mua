@@ -7,81 +7,79 @@ local packed = do(..values) = values
 
 -- Own pooled trampolines until the body has retired every native user. Callback faults
 -- are captured here and raised only after the native stack has returned to the driver.
-local with_callbacks = do(Native)
-    return do(body)
-        local callbacks, registrations = {}, {}
-        local next_token = 0
-        local phase = "idle"
-        local failed, failure = false, nil
+local with_callbacks = do(Native) = do(body)
+    local callbacks, registrations = {}, {}
+    local next_token = 0
+    local phase = "idle"
+    local failed, failure = false, nil
 
-        local check_error = do()
-            if failed then error(failure, 0) end
+    local check_error = do()
+        if failed then error(failure, 0) end
+    end
+    local assert_mutation = do(operation)
+        if phase ~= "idle" and phase ~= "notification" then
+            error(operation .. ": forbidden during " .. phase .. " callback", 3)
         end
-        local assert_mutation = do(operation)
-            if phase ~= "idle" and phase ~= "notification" then
-                error(operation .. ": forbidden during " .. phase .. " callback", 3)
-            end
-        end
-        local callback = do(signature, handler, fallback, role)
-            local trampoline = ffi.cast(signature, do(..arguments)
-                    if failed then return fallback end
-                    local previous = phase
-                    phase = role or "native"
-                    local results = packed(pcall(handler, ..arguments))
-                    phase = previous
-                    if not results[1] then
-                        if not failed then failed, failure = true, results[2] end
-                        Native.BK_window_quit
-                        return fallback
-                    end
-                    return unpack(results, 2, results.n)
-                end)
-            callbacks[#callbacks + 1] = trampoline
-            return trampoline
-        end
-        local register = do(owner, value)
-            next_token += 1
-            local token = next_token
-            assert(token < 2 ^ 53, "native registration identity exhausted")
-            registrations[token] = { .owner, .value }
-            owner.defer do() registrations[token] = nil end
-            return ffi.cast("void *", token)
-        end
-        local resolve = do(token)
-            local registration = registrations[tonumber(ffi.cast("uintptr_t", token))]
-            if registration and registration.owner.is_alive() then return registration.value end
-        end
-        local in_phase = do(role, body)
-            local previous = phase
-            phase = role
-            local results = packed(pcall body)
-            phase = previous
-            if not results[1] then error(results[2], 0) end
-            check_error
-            return unpack(results, 2, results.n)
-        end
-        local statistics = do()
-            local count = 0
-            for _ in pairs registrations do count += 1 end
-            return { registrations = count, callbacks = #callbacks }
-        end
-        local Boundary = define
-            .check_error
-            .assert_mutation
-            .callback
-            .register
-            .resolve
-            .statistics
-            deliver = body -> in_phase("notification", body)
-            paint = body -> in_phase("draw", body)
-            serve = body -> in_phase("service", body)
-            failed = || -> failed
-        end
-        local results = packed(pcall(body, Boundary))
-        for _, trampoline in ipairs callbacks do trampoline:free end
+    end
+    local callback = do(signature, handler, fallback, role)
+        local trampoline = ffi.cast(signature, do(..arguments)
+                if failed then return fallback end
+                local previous = phase
+                phase = role or "native"
+                local results = packed(pcall(handler, ..arguments))
+                phase = previous
+                if not results[1] then
+                    if not failed then failed, failure = true, results[2] end
+                    Native.BK_window_quit
+                    return fallback
+                end
+                return unpack(results, 2, results.n)
+            end)
+        callbacks[#callbacks + 1] = trampoline
+        return trampoline
+    end
+    local register = do(owner, value)
+        next_token += 1
+        local token = next_token
+        assert(token < 2 ^ 53, "native registration identity exhausted")
+        registrations[token] = { .owner, .value }
+        owner.defer do() registrations[token] = nil end
+        return ffi.cast("void *", token)
+    end
+    local resolve = do(token)
+        local registration = registrations[tonumber(ffi.cast("uintptr_t", token))]
+        if registration and registration.owner.is_alive() then return registration.value end
+    end
+    local in_phase = do(role, body)
+        local previous = phase
+        phase = role
+        local results = packed(pcall body)
+        phase = previous
         if not results[1] then error(results[2], 0) end
+        check_error
         return unpack(results, 2, results.n)
     end
+    local statistics = do()
+        local count = 0
+        for _ in pairs registrations do count += 1 end
+        return { registrations = count, callbacks = #callbacks }
+    end
+    local Boundary = define
+        .check_error
+        .assert_mutation
+        .callback
+        .register
+        .resolve
+        .statistics
+        deliver = body -> in_phase("notification", body)
+        paint = body -> in_phase("draw", body)
+        serve = body -> in_phase("service", body)
+        failed = || -> failed
+    end
+    local results = packed(pcall(body, Boundary))
+    for _, trampoline in ipairs callbacks do trampoline:free end
+    if not results[1] then error(results[2], 0) end
+    return unpack(results, 2, results.n)
 end
 
 return define .with_callbacks end

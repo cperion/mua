@@ -5,7 +5,9 @@ if jit then jit.off(true, true) end
 local checks = 0
 local expect = do(condition, detail)
     checks += 1
-    assert(condition, "service check " .. checks .. (detail and ": " .. detail or ""))
+    assert(condition,
+        "service check " .. checks .. " at line " .. debug.getinfo(2, "l").currentline ..
+        (detail and ": " .. detail or ""))
 end
 local refuses = do(body, message)
     local succeeded, problem = pcall body
@@ -13,7 +15,7 @@ local refuses = do(body, message)
 end
 local opened = result -> result { opened = value -> value, unavailable = reason -> error reason }
 local last_class, last_token, last_node
-local Watched = meta { index = do(_, key) return Native[key] end } with
+local Watched = meta { index = |_, key| -> Native[key] } with
     BK_custom_set = do(node, class, token)
         if class ~= nil then
             last_class = ffi.new("BKCustomClass", class[0])
@@ -31,8 +33,9 @@ Ui.with_application Watched do(Application)
                 expect(surface.gpu false { ready() = true, unavailable() = false })
                 expect(surface.gpu_state() { software() = true,
                         starting() = false, hardware() = false })
-                expect(surface.manager.minimum(100, 100) { ready() = true, unavailable() = false })
-                expect(surface.manager.scale() { ready = value -> value.first > 0, unavailable() = false })
+                expect(surface.manager.set_minimum_size { width = 100, height = 100 } { ready() = true,
+                        unavailable() = false })
+                expect(surface.manager.scale() { ready = value -> value > 0, unavailable() = false })
                 surface.manager.topmost false { ready() = nil, unavailable() = nil }
                 surface.with_native do(Borrow) expect(Borrow.handles().handle ~= nil) end
                 Application.resources.with_raster { width = 8, height = 8 } do(Raster)
@@ -53,45 +56,72 @@ Ui.with_application Watched do(Application)
                 until predicate() or now() >= deadline
             end
             local painted, prepared, delivered = 0, 0, 0
-            local events, escaped_service, escaped_paint = {}
+            local events, escaped_service, escaped_paint, escaped_frame, escaped_notification = {}
             surface.with_content do(place)
                 frame = place.frame { width = 300, height = 80 } do(children)
                     label = children.label "Geometry"
                     label.layout { manager = "grid", row = 0, column = 0, sticky = "all" }
                 end
-                frame.grid_track("column", 1, 1, 100)
+                frame.configure_track "column" 1 { weight = 1, minimum = 100 }
                 custom = place.custom { height = 100 }
-                custom.behavior define
-                    width = 120
-                    height = 80
-                    event = do(event, Services)
+                local respond = do(event)
+                    refuses(surface.close, "forbidden during service")
+                    local received = do(snapshot)
+                        delivered = delivered + 1
+                        expect(snapshot == event)
+                    end
+                    return do(Services..)
                         events[#events + 1] = event
                         escaped_service = Services
+                        escaped_notification = notify_later received
                         refuses(surface.close, "forbidden during service")
-                        Services.cursor "crosshair"
-                        Services.invalidate
-                        Services.post(do(snapshot) delivered += 1; expect(snapshot == event) end,
-                            event)
+                        cursor "crosshair"
+                        invalidate
+                        notify_later received event
                         return Ui.Input.consumed()
                     end
-                    frame = do(Services)
-                        prepared += 1
+                end
+                local behavior = Ui.behavior do(..)
+                    natural_size { width = 120, height = 80 }
+                    when_pressed respond
+                    when_released respond
+                    when_moved respond
+                    when_left respond
+                    when_wheel respond
+                    when_key_pressed respond
+                    when_key_released respond
+                    when_focused respond
+                    when_blurred respond
+                    prepare_frame do(Frame..)
+                        escaped_frame = Frame
+                        expect(Frame.notify_later == nil and Frame.cursor == nil and Frame.focused == nil)
+                        prepared = prepared + 1
                         refuses(surface.close, "forbidden during frame")
+                        invalidate
                         return Ui.Frame.finished()
                     end
-                    draw = do(Paint, rectangle)
-                        painted += 1
-                        escaped_paint = Paint
+                    paint do(bounds)
                         refuses(surface.close, "forbidden during draw")
-                        Paint.rectangle with
-                            x = rectangle.x
-                            y = rectangle.y
-                            width = rectangle.width
-                            height = rectangle.height
-                            color = { 1, 0, 0, 1 }
+                        return do(Paint..)
+                            painted = painted + 1
+                            escaped_paint = Paint
+                            refuses(surface.close, "forbidden during draw")
+                            rectangle with
+                                x = bounds.x
+                                y = bounds.y
+                                width = bounds.width
+                                height = bounds.height
+                                color = { 1, 0, 0, 1 }
+                            end
                         end
                     end
                 end
+                custom.behave behavior
+                local published_token = last_token
+                behavior[1].width = 0
+                refuses(do() custom.behave behavior end, "natural width")
+                expect(last_token == published_token)
+                refuses(do() custom.behave { event = respond } end, "behavior description")
                 field = place.textarea { value = "before", height = 60 }
             end do()
                 if arg[2] == "--window" then
@@ -112,24 +142,33 @@ Ui.with_application Watched do(Application)
                     "placed dimensions")
                 label.reset_placement
                 refuses(|| -> label.layout { manager = "invalid" }, "unknown geometry")
-                refuses(|| -> frame.grid_track("row", 0, 1), "range")
+                refuses(|| -> frame.configure_track "row" 0 { weight = 1 }, "range")
                 local rectangle = custom.rectangle()
-                surface.input.press(rectangle.x + 10, rectangle.y + 10, 0)
-                surface.input.release(rectangle.x + 10, rectangle.y + 10, 0)
+                surface.input.press { x = rectangle.x + 10, y = rectangle.y + 10 }
+                surface.input.release { x = rectangle.x + 10, y = rectangle.y + 10 }
                 expect(custom.focused() and #events >= 3 and delivered == 0)
-                expect(surface.input.key("a", "a", 0))
+                expect(surface.input.key { text = "a", keysym = "a" })
                 expect(events[#events].kind == "key_pressed" and events[#events].text == "a")
                 Application.pump
                 expect(delivered == #events)
                 refuses(escaped_service.focused, "activity has ended")
+                refuses(escaped_frame.invalidate, "frame preparation has ended")
+                refuses(do() escaped_notification {} end, "activity has ended")
                 refuses(|| -> escaped_paint.rectangle with
                     width = 1
                     height = 1
                     color = { 1, 1, 1, 1 }
                 end, "activity has ended")
                 local old_class, old_token = last_class, last_token
-                local replacement = custom.behavior { event = do() return Ui.Input.ignored() end }
-                expect(not surface.input.key("b", "b", 0))
+                local before_replacement = delivered
+                expect(surface.input.key { text = "c", keysym = "c" })
+                local ignored = Ui.behavior do(..)
+                    when_key_pressed do(event) = do(..) return Ui.Input.ignored() end
+                end
+                local replacement = custom.behave ignored
+                Application.pump
+                expect(delivered == before_replacement)
+                expect(not surface.input.key { text = "b", keysym = "b" })
                 local event = ffi.new("BKCustomEvent[1]", { { type = 6 } })
                 expect(old_class.event(old_token, last_node, event) == 0)
                 replacement
@@ -157,12 +196,15 @@ refuses(|| -> Ui.with_application Native do(Application)
         opened(Application.with_surface { width = 100, height = 100 } do(surface)
                 surface.with_content do(place)
                     local custom = place.custom { height = 90 }
-                    custom.behavior { event = do() return Ui.Frame.finished() end }
+                    local wrong_protocol = Ui.behavior do(..)
+                        when_pressed do(event) = do(..) return Ui.Frame.finished() end
+                    end
+                    custom.behave wrong_protocol
                     return custom
                 end do(custom)
                     surface.render
                     local bounds = custom.rectangle()
-                    surface.input.press(bounds.x + 4, bounds.y + 4, 0)
+                    surface.input.press { x = bounds.x + 4, y = bounds.y + 4 }
                 end
             end)
     end, "Input")

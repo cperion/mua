@@ -84,17 +84,23 @@ local for_control = do(record)
         .parent
     end
     if record.kind ~= "frame" then return Layout end
-    local grid_track = do(axis, index, weight, minimum)
-        owner.mutate "configure grid track"
+    local configure_track = do(axis)
         assert(axis == "row" or axis == "column", "grid axis expects row or column")
-        Check.integer(index, "track index", 1, 1024)
-        Check.number(weight, "track weight", 0, 1e6)
-        Check.integer(Check.default(minimum, 0), "minimum track size", 0, 32768)
-        Native.BK_frame_grid_weight(node,
-            axis == "column" and 1 or 0, index - 1, weight, minimum or 0)
+        return do(index)
+            Check.integer(index, "track index", 1, 1024)
+            return do(settings)
+                owner.mutate "configure grid track"
+                Check.keys(settings, { weight = true, minimum = true }, "grid track settings")
+                local weight = Check.number(rawget(settings, "weight"), "track weight", 0, 1e6)
+                local minimum = Check.integer(Check.default(rawget(settings, "minimum"), 0),
+                    "minimum track size", 0, 32768)
+                Native.BK_frame_grid_weight(node, axis == "column" and 1 or 0,
+                    index - 1, weight, minimum)
+            end
+        end
     end
     return define ..Layout
-        .grid_track
+        .configure_track
     end
 end
 

@@ -26,6 +26,18 @@ local function formatted(name, input, expected, options)
     check(name, out == expected, out)
     check(name .. ' idempotent', fmt.format(out, options, name) == out)
 end
+formatted('retired assigned parameters', 'local f =: left right\n    return left + right\nend\n',
+    'local f = |left, right| -> left + right\n')
+formatted('retired returned parameters', 'local f = do()\n    return: x\n        return x\n    end\nend\n',
+    'local f = || -> x -> x\n')
+formatted('retired assigned home', 'local f =:\n    go\nend\n',
+    'local f = do(..)\n    go\nend\n')
+formatted('retired header comment', 'local f =: x -- keep this\n    return x\nend\n',
+    'local f = do(x)  -- keep this\n    return x\nend\n')
+formatted('retired vocabulary handler', 'local V = define\n    visit =: node walk\n        return walk(node)\n    end\nend\n',
+    'local V = define\n    visit = |node, walk| -> walk node\nend\n')
+formatted('colon text is not syntax', 'local s = "=: x" -- =: y\nlocal t = [=[=: z]=]\n',
+    'local s = "=: x"  -- =: y\nlocal t = [=[=: z]=]\n')
 formatted('golden', read(root .. '/tests/formatter/input.txt'), read(root .. '/tests/formatter/expected.txt'))
 formatted('concatenation is still infix', 'local r=a..b..c', 'local r = a .. b .. c\n')
 formatted('two-dot expansion', 'local f=do(..args):U32=add(1,..args)',
@@ -237,9 +249,7 @@ formatted('host spines keep their ends', [[local host = do
     end)
 end
 ]], [[local host = do
-    f do
-        return 1
-    end
+    f(|| -> 1)
 end
 ]])
 formatted('a lone trailing block keeps end', [[local import_words = do(n: U32): Unit
@@ -305,16 +315,16 @@ check('reject invalid syntax', not pcall(fmt.format, 'local =', nil, 'broken.nua
 formatted('a conditional is spaced', 'local x=a?b:c\n', 'local x = a ? b : c\n')
 formatted('safe navigation touches', 'local x=a?.b?.c ?? d\n', 'local x = a?.b?.c ?? d\n')
 formatted('short functions', 'local f=|a,b|->a+b\nlocal g=x->x*2\n', 'local f = |a, b| -> a + b\nlocal g = x -> x * 2\n')
-formatted('a short function with a block', 'local f=|x|->do\n    return x\nend\n', 'local f = |x| -> do\n    return x\nend\n')
+formatted('a short function sheds a return-only block', 'local f=|x|->do\n    return x\nend\n', 'local f = |x| -> x\n')
 
-formatted('a block with no parameters keeps its do', 'local f = do()\n    return 1\nend\nedit document do(..)\n    go\nend\n',
-    'local f = do()\n    return 1\nend\nedit document:\n    go\nend\n')
+formatted('only the expression body loses its do', 'local f = do()\n    return 1\nend\nedit document do(..)\n    go\nend\n',
+    'local f = || -> 1\nedit document:\n    go\nend\n')
 
--- a do block keeps its parameters; only the anonymous trailing block has a colon
-formatted('a returned block stays a do-form', 'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n',
-    'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n')
+-- Returned stages form a do chain; only an applied anonymous block has a colon.
+formatted('a returned block forms a do chain', 'local f = do(a)\n    return do(body)\n        go body\n    end\nend\n',
+    'local f = do(a) = do(body)\n    go body\nend\n')
 formatted('return of an expression lambda is an arrow', 'local f = do(a)\n    return do(x) = x + a\nend\n',
-    'local f = do(a)\n    return x -> x + a\nend\n')
+    'local f = a -> x -> x + a\n')
 
 -- lambda_style: a plain `do(a, b) = e` is the short function `|a, b| -> e`
 formatted('one name', 'local f = do(x) = x * 2\n', 'local f = x -> x * 2\n')
@@ -325,7 +335,7 @@ formatted('one name stays a juxtaposed argument', 'map xs do(x) = x + 1\n', 'map
 formatted('several names are bracketed after an operand', 'map xs do(a, b) = a + b\n', 'map xs (|a, b| -> a + b)\n')
 formatted('in a table', 'local t = { found = do(i) = i, missing = do() = -1 }\n', 'local t = { found = i -> i, missing = || -> -1 }\n')
 formatted('an opened parameter has no arrow', 'local f = do(ctx..) = x\n', 'local f = do(..) = x\n')
-formatted('a block body keeps its do', 'local f = do(x)\n    return x\nend\n', 'local f = do(x)\n    return x\nend\n')
+formatted('one returned expression becomes an arrow', 'local f = do(x)\n    return x\nend\n', 'local f = x -> x\n')
 formatted('lambda_style do keeps do', 'local f = do(x) = x * 2\n', 'local f = do(x) = x * 2\n', { lambda_style = 'do' })
 check('an invalid lambda_style is rejected', not pcall(fmt.format, 'local x=1', { lambda_style = 'fn' }))
 
@@ -351,7 +361,7 @@ formatted('define is not contextual with', 'local w = with\n    x = 1\n    y = 2
 -- define holds lists: positional entries, one per line, without commas
 formatted('a list of numbers', 'local t = define\n    1,\n    2,\n    3\nend\n', 'local t = define\n    1\n    2\n    3\nend\n')
 formatted('a list of tables', 'local t = define\n    { x = 1 },\n    { x = 2 }\nend\n', 'local t = define\n    { x = 1 }\n    { x = 2 }\nend\n')
-formatted('a list of functions', 'local t = define\n    do(x) = x + 1\n    x -> x * 2\nend\n', 'local t = define\n    x -> x + 1\n    x -> x * 2\nend\n')
+formatted('a list of functions', 'local t = define\n    do(x) = x + 1\n    x -> x * 2\nend\n', 'local t = define\n    x -> x + 1,\n    x -> x * 2\nend\n')
 formatted('a list of calls', 'local t = define\n    f(1)\n    f(2)\nend\n', 'local t = define\n    f 1\n    f 2\nend\n')
 formatted('a list mixed with keys', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\n', 'local t = define\n    "a"\n    "b"\n    n = 2\nend\n')
 
@@ -359,7 +369,7 @@ formatted('a list mixed with keys', 'local t = define\n    "a"\n    "b"\n    n =
 formatted('a long table in a call is indented once', 'print(f(Mul { left = Num { value = 0 }, right = Add { left = Num { value = 5 }, right = Num { value = 5 } } }))\n', 'print(f(Mul with\n    left = Num { value = 0 }\n    right = Add { left = Num { value = 5 }, right = Num { value = 5 } }\nend))\n')
 
 -- a block with parameters is a do-form; a rest parameter has no colon spelling
-formatted('parameters keep their do-form', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n')
+formatted('parameters keep their do-form', 'local V = define\n    First = do(node, walk)\n        return node\n    end\n    Second = do(node, walk)\n        return do(..arguments)\n            return arguments\n        end\n    end\nend\n', 'local V = define\n    First = |node, walk| -> node\n    Second = do(node, walk) = do(..arguments)\n        return arguments\n    end\nend\n')
 
 -- a headless `with` is not a table in braces: no pass may give it a head or braces
 formatted('a headless with as an argument stays', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n', 'local w = f(with\n    start = 2\n    stop = 9\nend)\n')

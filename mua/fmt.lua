@@ -193,28 +193,26 @@ local function parse(source, filename)
                     range.link = true
                     if #result == 1 then range.pure = true end
                 end
-                body_ranges[result] = range
             end
+            body_ranges[result] = range
             ranges[#ranges + 1] = range
         end
         depth = depth - 1
         return result
     end
-    local lambda = p.lambda
-    function p:lambda(hint)
-        local native = native_depth > 0
-        local first = r:peek(1).index
-        local node = lambda(self, hint)
-        local last_token = last
-        local closer
-        if ts[last] and (ts[last].v == 'end' or ts[last].v == 'endall') then
-            closer = last
-        else
-            closer = r:peek(1).index
+    local function remember_lambda(method)
+        return function(self, hint)
+            local native = native_depth > 0
+            local first = r:peek(1).index
+            local node = method(self, hint)
+            local range = node.fn.body and body_ranges[node.fn.body]
+            local closer = range and range[2] + 1 or last
+            lambdas[#lambdas + 1] = { fn = node.fn, closer = closer, native = native, first = first, last = last }
+            return node
         end
-        lambdas[#lambdas + 1] = { fn = node.fn, closer = closer, native = native, first = first, last = last_token }
-        return node
     end
+    p.lambda = remember_lambda(p.lambda)
+    p.short_function = remember_lambda(p.short_function)
     local entry, entry_spans = p.entry, {}
     function p:entry(...)
         local first = r:peek(1).index
@@ -318,9 +316,9 @@ local function parse(source, filename)
     -- Delimited lists can wrap after commas; application chains cannot.
     local stack, commas = {}, {}
     for i, tk in ipairs(ts) do
-        if tk.t == '(' or tk.t == '[' or tk.t == '{' then
-            stack[#stack + 1] = { start = i, kind = tk.t, commas = {} }
-        elseif tk.t == ')' or tk.t == ']' or tk.t == '}' then
+        if tk.pipe == 'open' or tk.t == '(' or tk.t == '[' or tk.t == '{' then
+            stack[#stack + 1] = { start = i, kind = tk.pipe == 'open' and '|' or tk.t, commas = {} }
+        elseif tk.pipe == 'close' or tk.t == ')' or tk.t == ']' or tk.t == '}' then
             local open = table.remove(stack)
             if open then
                 ranges[#ranges + 1] = { open.start + 1, i - 1 }
@@ -336,7 +334,7 @@ local function parse(source, filename)
     return { ast = ast, tokens = ts, ranges = ranges, groups = groups, group_of = group_of, facts = facts,
              colons = colons, commas = commas, unary = unary, chains = chains, lambdas = lambdas,
              typespans = typespans, locals = locals, parameter_names = parameter_names,
-             entry_spans = entry_spans }
+             entry_spans = entry_spans, body_ranges = body_ranges }
 end
 
 -- Compare the compiler's proven application normal forms, not just spelling.
@@ -379,6 +377,26 @@ local function movable_spread(items)
 end
 M.movable_spread = movable_spread
 
+-- One returned expression is the same expression body, including a call's several
+-- results. A bare return, several return expressions, or preceding work is not.
+local function returned_expression(fn)
+    local body = fn.body
+    local stat = body and #body == 1 and body[1]
+    local values = stat and stat.k == 'return' and stat.exprs
+    return values and #values == 1 and values[1] or nil
+end
+local function returned_lambda(fn)
+    local value = returned_expression(fn)
+    return value and value.k == 'lambda' and value or nil
+end
+local function plain_parameters(fn)
+    if fn.result or fn.vararg or fn.rest or fn.colon then return false end
+    for _, parameter in ipairs(fn.params or {}) do
+        if parameter.type or parameter.opened or parameter.unnamed then return false end
+    end
+    return true
+end
+
 local function fingerprint(root)
     local facts = analyze(root)
     local function encode(node)
@@ -387,6 +405,13 @@ local function fingerprint(root)
             return type(node) .. ':' .. #value .. ':' .. value
         end
         node = facts.normal[node] or node
+        local returned = node.params and returned_expression(node)
+        if returned then
+            local copy = {}
+            for key, value in pairs(node) do copy[key] = value end
+            copy.body, copy.expr = nil, returned
+            node = copy
+        end
         -- a movable spread is compared where it would stand first (spread_style)
         if (node.k == 'table' or node.k == 'with') and node.items then
             local at = movable_spread(node.items)
@@ -531,6 +556,130 @@ local function spread_first(source, info, filename)
     return found or source
 end
 
+-- Remove pure returned-stage wrappers and, in arrow style, one-expression return
+-- bodies. Never move setup work or erase a statement's deliberate lack of results.
+-- Comments at the replaced boundaries stay with their original block.
+local function returned_lambdas(source, info, filename, options)
+    local ts, edits, parents, shared = info.tokens, {}, {}, {}
+    for _, item in ipairs(info.lambdas) do
+        local child = item.fn.expr or returned_lambda(item.fn)
+        if child and child.k == 'lambda' then parents[child.fn] = item.fn end
+    end
+    for _, range in ipairs(info.ranges) do
+        if range.endall then
+            local index = range[2] + 1
+            shared[index] = (shared[index] or 0) + 1
+        end
+    end
+    local function plain_chain(fn)
+        while fn do
+            if not plain_parameters(fn) then return false end
+            fn = parents[fn]
+        end
+        return true
+    end
+    local function sig(i, step)
+        i = i + step
+        while ts[i] and (ts[i].t == 'space' or ts[i].t == 'comment') do i = i + step end
+        return i
+    end
+    local function spaces(first, last)
+        for i = first, last do if ts[i].t ~= 'space' then return false end end
+        return true
+    end
+    for _, item in ipairs(info.lambdas) do
+        local fn, value = item.fn, returned_expression(item.fn)
+        local stage = value and value.k == 'lambda'
+        local compact = value and not stage and options.lambda_style == 'arrow' and plain_chain(fn)
+        local range = (stage or compact) and info.body_ranges[fn.body]
+        -- `-> do` is the arrow's own block, not the head of a returned do lambda.
+        if range and (not fn.arrow or not stage or value.fn.arrow) then
+            local head = range[1] - 1
+            local ret = sig(head, 1)
+            local first_value = sig(ret, 1)
+            local close = ts[item.closer]
+            local before_close = sig(item.closer, -1)
+            local closing_comment = false
+            -- Keep comments attached to a stage's closer at that stage.
+            for j = item.closer + 1, #ts do
+                if ts[j].t == 'space' and ts[j].v:find('\n', 1, true) then break end
+                if ts[j].t == 'comment' then closing_comment = true; break end
+                if ts[j].t ~= 'space' then break end
+            end
+            local commented_head = false
+            if compact then
+                for index = item.first, head do
+                    if ts[index].t == 'comment' then commented_head = true end
+                end
+            end
+            if ts[ret].v == 'return' and not commented_head
+                and (compact or ts[first_value].v == 'do' or value.fn.arrow)
+                and spaces(head + 1, ret - 1) and spaces(ret + 1, first_value - 1)
+                and (close.v == 'endall' or spaces(before_close + 1, item.closer - 1))
+                and not closing_comment then
+                local text = fn.arrow and '' or (head == item.first and '()' or '') .. ' = '
+                local first = fn.arrow and ts[head].first or ts[head].last + 1
+                local changes = { { first, ts[first_value].first - 1, text }, closer = item.closer }
+                if close.v == 'end' then
+                    changes[#changes + 1] = { ts[before_close].last + 1, close.last, '' }
+                end
+                edits[#edits + 1] = changes
+            end
+        end
+    end
+    if #edits == 0 then return source end
+    local signature = fingerprint(info.ast)
+    local function apply(groups)
+        local ops, removed = {}, {}
+        for _, group in ipairs(groups) do
+            for _, op in ipairs(group) do ops[#ops + 1] = op end
+            removed[group.closer] = (removed[group.closer] or 0) + 1
+        end
+        for index, count in pairs(removed) do
+            if count == shared[index] then
+                -- No block still owns this endall. Do not leave a stray closer
+                -- when a whole returned chain becomes expressions at once.
+                local before = sig(index, -1)
+                ops[#ops + 1] = { ts[before].last + 1, ts[index].last, '' }
+            end
+        end
+        table.sort(ops, function(a, b) return a[1] > b[1] end)
+        local out = source
+        for _, op in ipairs(ops) do out = out:sub(1, op[1] - 1) .. op[3] .. out:sub(op[2] + 1) end
+        local ok, parsed = pcall(parse, out, filename)
+        if ok and fingerprint(parsed.ast) == signature then return out end
+    end
+    local all = apply(edits)
+    if all then return all end
+    -- An endall/typed-body boundary can prevent one fold without preventing others.
+    local accepted = {}
+    for _, group in ipairs(edits) do
+        if apply { group } then accepted[#accepted + 1] = group end
+    end
+    return apply(accepted) or source
+end
+
+-- Collapsing returned stages can leave just one block at a former shared closer.
+-- It then needs `end`, not `endall`. Count parsed blocks, including arrow bodies.
+local function single_ends(source, info, filename)
+    local counts, ts = {}, info.tokens
+    for _, range in ipairs(info.ranges) do
+        if range.endall then
+            local index = range[2] + 1
+            counts[index] = (counts[index] or 0) + 1
+        end
+    end
+    local out, changed = {}, false
+    for i, tk in ipairs(ts) do
+        if counts[i] == 1 then out[i], changed = 'end', true else out[i] = tk.v end
+    end
+    if not changed then return source end
+    local candidate = table.concat(out)
+    local ok, parsed = pcall(parse, candidate, filename)
+    if ok and fingerprint(parsed.ast) == fingerprint(info.ast) then return candidate end
+    return source
+end
+
 -- `do(a, b) = e` with plain parameters is the short function `|a, b| -> e` (`x -> e` for one
 -- name): the same function, spelled the way LuaJIT 3.0 spells it. Typed, opened and rest
 -- parameters have no arrow spelling and stay. After an operand (a juxtaposed argument) only the
@@ -543,39 +692,53 @@ local function arrow_lambdas(source, info, filename)
         while ts[i] and (ts[i].t == 'space' or ts[i].t == 'comment') do i = i + step end
         return i
     end
-    local edits = {}
+    -- Decide a whole expression chain together. In particular, `a -> do(..)` is
+    -- not an arrow returning an opened function: `-> do` opens the arrow's own body.
+    -- Block-ending do chains stay do chains; scalar expression chains may use arrows.
+    local parents, headers = {}, {}
     for _, item in ipairs(info.lambdas) do
-        local fn = item.fn
-        local plain = fn.expr and not fn.result and not fn.vararg and not fn.rest and not fn.colon
-        for _, prm in ipairs(fn.params or {}) do
-            if prm.type or prm.opened or prm.unnamed then plain = false end
-        end
-        if plain then
+        local fn, child = item.fn, item.fn.expr
+        if child and child.k == 'lambda' then parents[child.fn] = fn end
+        if fn.expr and not fn.arrow and plain_parameters(fn) then
             local open = sig(item.first, 1)
             if ts[open] and ts[open].t == '(' then
-                -- the parameter list's `)`, then `=`; a comment inside the head keeps the form
                 local depth, close = 0, open
                 while ts[close] do
                     if ts[close].t == '(' then depth = depth + 1
-                    elseif ts[close].t == ')' then depth = depth - 1; if depth == 0 then break end
-                    elseif ts[close].t == 'comment' then plain = false end
+                    elseif ts[close].t == ')' then depth = depth - 1; if depth == 0 then break end end
                     close = close + 1
                 end
-                local eq = sig(close, 1)
-                if plain and ts[eq] and ts[eq].t == '=' then
-                    local names = {}
-                    for _, prm in ipairs(fn.params) do names[#names + 1] = prm.name end
-                    local head
-                    if #names == 1 then head = names[1] .. ' ->'
-                    else head = '|' .. table.concat(names, ', ') .. '| ->' end
-                    local before = ts[sig(item.first, -1)]
-                    local after_operand = before and (before.t == 'iden' or before.t == 'string' or before.t == 'number'
-                        or before.v == ')' or before.v == ']' or before.v == '}')
-                    local wrap = after_operand and #names ~= 1
-                    edits[#edits + 1] = { from = ts[item.first].first, to = ts[eq].last,
-                        text = (wrap and '(' or '') .. head, close = wrap and ts[item.last].last or nil }
+                local eq, clean = sig(close, 1), true
+                for index = item.first, eq do
+                    if ts[index] and ts[index].t == 'comment' then clean = false end
                 end
+                if clean and ts[eq] and ts[eq].t == '=' then headers[fn] = eq end
             end
+        end
+    end
+    local function arrow_chain(fn)
+        if not plain_parameters(fn) then return false end
+        if fn.body then return fn.arrow == true end
+        if not fn.arrow and not headers[fn] then return false end
+        return fn.expr and (fn.expr.k ~= 'lambda' or arrow_chain(fn.expr.fn))
+    end
+    local edits = {}
+    for _, item in ipairs(info.lambdas) do
+        local fn, root = item.fn, item.fn
+        while parents[root] do root = parents[root] end
+        local eq = headers[fn]
+        if eq and arrow_chain(root) then
+            local names = {}
+            for _, prm in ipairs(fn.params) do names[#names + 1] = prm.name end
+            local head
+            if #names == 1 then head = names[1] .. ' ->'
+            else head = '|' .. table.concat(names, ', ') .. '| ->' end
+            local before = ts[sig(item.first, -1)]
+            local after_operand = before and (before.t == 'iden' or before.t == 'string' or before.t == 'number'
+                or before.v == ')' or before.v == ']' or before.v == '}')
+            local wrap = after_operand and #names ~= 1
+            edits[#edits + 1] = { from = ts[item.first].first, to = ts[eq].last,
+                text = (wrap and '(' or '') .. head, close = wrap and ts[item.last].last or nil }
         end
     end
     if #edits == 0 then return source end
@@ -717,6 +880,12 @@ local HOST_SAFE = { name = true, num = true, str = true, ['true'] = true, ['fals
 
 local function decide_calls(info, column_width)
     local ts, facts, group_of = info.tokens, info.facts, info.group_of
+    local bare_arrow = {}
+    for _, item in ipairs(info.lambdas) do
+        if item.fn.arrow and #item.fn.params == 1 and ts[item.first].t == 'iden' then
+            bare_arrow[item.fn] = true
+        end
+    end
     local parent, order = {}, {}
     local function walk(node, up, key)
         local here = up
@@ -746,7 +915,7 @@ local function decide_calls(info, column_width)
         local k = e.k
         if k == 'name' or k == 'num' or k == 'str' or k == 'true' or k == 'false' or k == 'table' then return 'primary' end
         if k == 'paren' then return (e.e.k == 'num' or e.e.k == 'str') and 'primary' or 'group' end
-        if k == 'lambda' then return e.fn.body and 'primary' or 'compound' end
+        if k == 'lambda' then return (e.fn.body or bare_arrow[e.fn]) and 'primary' or 'compound' end
         if k == 'field' or k == 'index' then
             local base = form(e.obj)
             return (base == 'primary' or base == 'call') and 'primary' or 'compound'
@@ -799,7 +968,8 @@ local function decide_calls(info, column_width)
             local a = G.args[1]
             local f = form(a)
             if f ~= 'primary' and f ~= 'call' then return end
-            if not G.native and (G.host_argument or not (HOST_SAFE[a.k] or (a.k == 'lambda' and a.fn.body))) then
+            if not G.native and (G.host_argument or not (HOST_SAFE[a.k]
+                or (a.k == 'lambda' and (a.fn.body or bare_arrow[a.fn])))) then
                 return
             end
         else
@@ -1080,6 +1250,8 @@ function format(source, options, filename)
         prefix = source:match('^[^\n]*') .. '\n'
         source = source:sub(#prefix + 1)
     end
+    -- Migrate retired assigned blocks before parsing; never print them back.
+    source = colon.assigned_blocks(source, filename)
     -- the trailing colon is read as the do-block it means; see mua.fmt_text
     source = colon.expand(source, true, nil, filename)
     local info = parse(source, filename)
@@ -1102,6 +1274,15 @@ function format(source, options, filename)
             info = parse(source, filename)
         end
     end
+    -- Removing a shared closer can make a typed stage safe to collapse; collapsing
+    -- a stage can make its shared closer singular. Reach that fixed point now.
+    repeat
+        local previous = source
+        local written = single_ends(source, info, filename)
+        if written ~= source then source = written; info = parse(source, filename) end
+        written = returned_lambdas(source, info, filename, options)
+        if written ~= source then source = written; info = parse(source, filename) end
+    until source == previous
     if options.lambda_style == 'arrow' then
         local written = arrow_lambdas(source, info, filename)
         if written ~= source then
@@ -1136,7 +1317,7 @@ function format(source, options, filename)
         error(filename .. ': fmt: formatting would change the parsed program; source left unchanged', 0)
     end
     if options.data_style == 'with' then result = colon.mark_tables(result) end
-    result = colon.withize(result, (' '):rep(options.indent_width), options.spread_style == 'top')
+    result = colon.withize(result, (' '):rep(options.indent_width), options.spread_style == 'top', filename)
     if options.spine_style ~= 'none' then result = colon.foldends(result, (' '):rep(options.indent_width)) end
     if options.block_style == 'colon' then result = colon.colonize(result) end
     return prefix .. result

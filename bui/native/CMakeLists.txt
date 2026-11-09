@@ -88,7 +88,7 @@ if(BUILD_TESTING)
     "${MUA_SOURCE_DIR}/tests/bui_ui_ownership.mua")
   add_test(NAME bui_ui_menu_descriptions COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
     "${MUA_SOURCE_DIR}/tests/bui_ui_menu_descriptions.mua")
-  foreach(activity_test bui_ui_collections bui_ui_graphics bui_ui_menus bui_ui_services bui_ui_dialogs bui_ui_integration bui_ui_graphs bui_ui_canvas_language bui_ui_controls bui_ui_coverage)
+  foreach(activity_test bui_ui_behavior bui_ui_staging bui_ui_collections bui_ui_graphics bui_ui_menus bui_ui_services bui_ui_dialogs bui_ui_integration bui_ui_graphs bui_ui_canvas_language bui_ui_controls bui_ui_language bui_ui_coverage)
     add_test(NAME ${activity_test} COMMAND "${MUA_LUAJIT_EXECUTABLE}" "${MUA_SOURCE_DIR}/mua.lua"
       "${MUA_SOURCE_DIR}/tests/${activity_test}.mua" "$<TARGET_FILE:mua_bui>")
     set_tests_properties(${activity_test} PROPERTIES WORKING_DIRECTORY "${MUA_SOURCE_DIR}" TIMEOUT 15)

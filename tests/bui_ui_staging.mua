@@ -1,0 +1,136 @@
+-- Stages have meanings: select a destination, then perform work there. A saved stage is
+-- neither a snapshot of mutable native state nor permission to outlive its owner.
+local ffi = require "ffi"
+local Ui = require "bui.ui"
+local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
+local checks = 0
+local expect = do(condition)
+    checks += 1
+    assert(condition, "staging check " .. checks)
+end
+local refuses = do(body, fragment)
+    local succeeded, problem = pcall body
+    expect(not succeeded and tostring(problem):find(fragment, 1, true), tostring problem)
+end
+local ready = outcome -> outcome { ready = value -> value, unavailable = reason -> error reason }
+local opened = outcome -> outcome { opened = value -> value, unavailable = reason -> error reason }
+local expired_insert, expired_upload, expired_menu, escaped_paint_stage
+local uploads = {}
+local Watched = meta { index = |_, key| -> Native[key] } with
+    BUI_texture_update = do(texture, x, y, width, height, pixels, stride)
+        local current_width, current_height = ffi.new "int[1]", ffi.new "int[1]"
+        Native.BUI_texture_size(texture, current_width, current_height)
+        uploads[#uploads + 1] = { .x, .y, width = tonumber current_width[0] }
+        return Native.BUI_texture_update(texture, x, y, width, height, pixels, stride)
+    end
+end
+
+local controls = do(..)
+    local Text = textarea { value = "draft", height = 80 }
+    local Curve = curve {}
+    local Tree = tree { height = 80 }
+    return define .Text, .Curve, .Tree end
+end
+
+Ui.with_application Watched:
+    gpu_default false
+    local result = with_surface { width = 320, height = 300 }:
+        with_content controls do(Parts)
+            local Text, Curve, Tree = Parts.Text, Parts.Curve, Parts.Tree
+            local prepend = Text.insert_at 0
+            expect(Text.current() == "draft")
+            prepend "First "
+            prepend "Second "
+            expect(Text.current() == "Second First draft")
+            Text.select { start = 0, stop = 7 }
+            local selected = Text.selection() with
+                selected = span -> span
+                empty() = error "expected a selected range"
+            end
+            Text.erase selected
+            expect(Text.current() == "First draft")
+            -- A position is scalar data; whether it is a UTF-8 boundary belongs to execution.
+            local insert_inside = Text.insert_at 1
+            Text.set "é"
+            refuses(do() insert_inside "bad" end, "UTF-8")
+            expect(Text.current() == "é")
+            expired_insert = prepend
+
+            local set_red_points = Curve.set_points 1
+            local set_green_points = Curve.set_points 2
+            local red_points, green_points = { { 0, 0 }, { 1, 1 } }, { { 0, 1 }, { 1, 0 } }
+            set_red_points red_points
+            set_green_points green_points
+            expect(math.abs(Curve.sample 1 0.25 - 0.25) < 0.02)
+            expect(math.abs(Curve.sample 2 0.25 - 0.75) < 0.02)
+
+            Tree.replace_forest(Ui.forest { { id = "document", label = "Before" } })
+            local rename_document = Tree.rename_item "document"
+            Tree.replace_forest(Ui.forest { { id = "document", label = "Replacement" } })
+            rename_document "After"
+            expect(Tree.item "document" { selected = item -> item.label == "After",
+                    empty() = false })
+            Tree.replace_forest {}
+            refuses(do() rename_document "Gone" end, "unknown tree item")
+            render
+        end
+        refuses(do() expired_insert "Gone" end, "activity has ended")
+
+        local commands = Ui.menu:
+            item { caption = "Before", action = || -> nil }
+        end
+        local open_commands = open_menu commands
+        commands[1].caption = "After"
+        open_commands { x = 10, y = 10 }
+        render
+        expect(popup_rows()[1].rows[1].text == "Before")
+        close_popups
+        expired_menu = open_commands
+
+        -- Host injection takes one complete event, not an unlabelled C argument tuple.
+        input.motion { x = 10, y = 10 }
+        input.button { x = 10, y = 10, button = 1, action = "press" }
+        input.button { x = 10, y = 10, button = 1, action = "release" }
+        input.scroll { x = 10, y = 10, horizontal = 0.5, vertical = -1 }
+        input.key_release { keysym = "a" }
+        refuses(do() input.press { x = 1, y = 2, modifiers = false } end, "modifiers")
+        refuses(do() input.button { x = 1, y = 2, button = 1, action = "toggle" } end, "action")
+        refuses(do() input.press { x = 1 } end, "pointer y")
+        refuses(do() input.key { keysym = "a", text = "a", typo = true } end, "unknown field")
+    end
+    opened result
+    refuses(do() expired_menu { x = 0, y = 0 } end, "activity has ended")
+
+    local Image = ready(resources.acquire_image with
+        width = 3
+        height = 3
+        rgba = string.char(255, 255, 255, 255):rep 9
+    end)
+    local texture_result = resources.with_texture { width = 2, height = 2 } do(Texture)
+        local origin = { x = 0, y = 0 }
+        local upload = Texture.upload_at origin
+        origin.x = -100
+        expect(#uploads == 0)
+        ready(Texture.copy_frame Image 1)
+        expect(ready(Texture.size()).width == 3)
+        upload { width = 1, height = 1, rgba = string.char(255, 0, 0, 255) }
+        expect(#uploads == 1 and uploads[1].x == 0 and uploads[1].y == 0 and uploads[1].width == 3)
+        expired_upload = upload
+    end
+    ready texture_result
+    refuses(do() expired_upload { width = 1, height = 1, rgba = "rgba" } end, "activity has ended")
+
+    local raster_result = resources.with_raster { width = 8, height = 8 }:
+        with_frame {}:
+            local triangle = { { 0, 0 }, { 4, 0 }, { 4, 4 } }
+            escaped_paint_stage = polygon triangle
+            escaped_paint_stage { 1, 0, 0, 1 }
+        end
+        refuses(do() escaped_paint_stage { 0, 1, 0, 1 } end, "drawing activity has ended")
+        with_frame {}:
+            refuses(do() escaped_paint_stage { 0, 1, 0, 1 } end, "drawing activity has ended")
+        end
+    end
+    ready raster_result
+end
+print("BUI staged sentences: " .. checks .. " checks passed")

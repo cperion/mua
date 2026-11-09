@@ -25,12 +25,10 @@ local Editing = define
 end
 -- (error messages carry the file and line; `reason` keeps just the reason)
 local reason = message -> (tostring(message):gsub("^[^:]+:%d+: ", ""))
-print(reason(select(2, pcall do()
-                return define
-                    ..Edits
-                    ..Edits
-                end
-            end)))
+print(reason(select(2, pcall (|| -> define
+    ..Edits
+    ..Edits
+end))))
 
 -- An instance is the type spread with overrides; explicit entries win wherever they are written.
 local Margins = define
@@ -68,8 +66,8 @@ local Node = closed define
 end
 local n = { ..Node, place = 7 }
 print(n.op, n.place, n.what)
-print(reason(select(2, pcall(do() = { ..Node }))))
-print(reason(select(2, pcall(do() = { ..Node, place = 1, plcae = 2 }))))
+print(reason(select(2, pcall(|| -> { ..Node }))))
+print(reason(select(2, pcall(|| -> { ..Node, place = 1, plcae = 2 }))))
 
 --[=[ output
 spread-overlap: field 'insert' comes from two spreads

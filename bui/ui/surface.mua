@@ -12,51 +12,81 @@ if jit then jit.off(true, true) end
 local packed = do(..values) = values
 
 local input_for = do(Native, owner, context, check_error)
-    local pointer_input = with
-        press = { call = Native.BK_press, arity = 3 }
-        release = { call = Native.BK_release, arity = 3 }
-        motion = { call = Native.BK_motion, arity = 3 }
-        wheel = { call = Native.BK_wheel, arity = 4 }
-        button = { call = Native.BK_button, arity = 5 }
-        context_menu = { call = Native.BK_context_menu, arity = 3 }
+    -- An injected event is one value. Coordinates, text and modifier state are named data,
+    -- not a positional reproduction of the C ABI and not unrelated construction stages.
+    local pointer_fields = { x = true, y = true, modifiers = true }
+    local position = do(event)
+        return Check.integer(rawget(event, "x"), "pointer x"),
+        Check.integer(rawget(event, "y"), "pointer y"),
+        Check.integer(Check.default(rawget(event, "modifiers"), 0), "modifiers", 0)
     end
+    local pointer_input = {
+        press = Native.BK_press, release = Native.BK_release,
+        motion = Native.BK_motion, context_menu = Native.BK_context_menu,
+    }
     local PointerInput = {}
-    for name, operation in pairs pointer_input do
-        PointerInput[name] = do(..arguments)
+    for name, send in pairs pointer_input do
+        PointerInput[name] = do(event)
             owner.mutate name
-            assert(arguments.n == operation.arity, name .. ": wrong number of arguments")
-            for index = 1, arguments.n do Check.integer(arguments[index], name) end
-            local consumed = operation.call(context, ..arguments)
+            Check.keys(event, pointer_fields, name .. " event")
+            local horizontal, vertical, modifiers = position event
+            local consumed = send(context, horizontal, vertical, modifiers)
             check_error
             return consumed ~= 0
         end
     end
-    local key = do(text, keysym, modifiers)
+    local wheel = do(event)
+        owner.mutate "wheel"
+        Check.keys(event, { ..pointer_fields, delta = true }, "wheel event")
+        local horizontal, vertical, modifiers = position event
+        local consumed = Native.BK_wheel(context, horizontal, vertical,
+            Check.integer(rawget(event, "delta"), "wheel delta"), modifiers)
+        check_error
+        return consumed ~= 0
+    end
+    local button = do(event)
+        owner.mutate "pointer button"
+        Check.keys(event, { ..pointer_fields, button = true, action = true }, "button event")
+        local horizontal, vertical, modifiers = position event
+        local action = rawget(event, "action")
+        assert(action == "press" or action == "release", "button action expects press or release")
+        local consumed = Native.BK_button(context, horizontal, vertical,
+            Check.integer(rawget(event, "button"), "pointer button"),
+            action == "release" and 1 or 0, modifiers)
+        check_error
+        return consumed ~= 0
+    end
+    local key = do(event)
         owner.mutate "key"
-        local consumed = Native.BK_key(context, Check.string(text, "key text"),
-            Check.string(keysym, "keysym"),
-            Check.integer(Check.default(modifiers, 0), "modifiers", 0))
+        Check.keys(event, { text = true, keysym = true, modifiers = true }, "key event")
+        local consumed = Native.BK_key(context, Check.string(rawget(event, "text"), "key text"),
+            Check.string(rawget(event, "keysym"), "keysym"),
+            Check.integer(Check.default(rawget(event, "modifiers"), 0), "modifiers", 0))
         check_error
         return consumed ~= 0
     end
-    local key_release = do(keysym, modifiers)
-        owner.mutate "key_release"
-        local consumed = Native.BK_key_release(context, Check.string(keysym, "keysym"),
-            Check.integer(Check.default(modifiers, 0), "modifiers", 0))
+    local key_release = do(event)
+        owner.mutate "key release"
+        Check.keys(event, { keysym = true, modifiers = true }, "key release event")
+        local consumed = Native.BK_key_release(context,
+            Check.string(rawget(event, "keysym"), "keysym"),
+            Check.integer(Check.default(rawget(event, "modifiers"), 0), "modifiers", 0))
         check_error
         return consumed ~= 0
     end
-    local scroll = do(horizontal_position, vertical_position, horizontal, vertical, modifiers)
+    local scroll = do(event)
         owner.mutate "scroll"
-        local consumed = Native.BK_scroll(context,
-            Check.integer(horizontal_position, "x"), Check.integer(vertical_position, "y"),
-            Check.number(horizontal, "horizontal scroll"),
-            Check.number(vertical, "vertical scroll"),
-            Check.integer(Check.default(modifiers, 0), "modifiers", 0))
+        Check.keys(event, { ..pointer_fields, horizontal = true, vertical = true }, "scroll event")
+        local horizontal, vertical, modifiers = position event
+        local consumed = Native.BK_scroll(context, horizontal, vertical,
+            Check.number(rawget(event, "horizontal"), "horizontal scroll"),
+            Check.number(rawget(event, "vertical"), "vertical scroll"), modifiers)
         check_error
         return consumed ~= 0
     end
     return define ..PointerInput
+        .wheel
+        .button
         .key
         .key_release
         .scroll
@@ -85,26 +115,24 @@ end
 local capabilities_for = do(Application, window)
     local Native, owner, context = Application.native, window.owner, window.context
     local mounted = {}
-    local content = do(region, root)
-        return do(installer)
+    local content = do(region, root) = do(installer)
+        owner.mutate("mount " .. region)
+        Check.callable(installer, "component installer")
+        return do(body)
             owner.mutate("mount " .. region)
-            Check.callable(installer, "component installer")
-            return do(body)
-                owner.mutate("mount " .. region)
-                assert(not mounted[region],
-                    region .. " is already mounted; use a slot for replacement")
-                mounted[region] = true
-                local results = packed(pcall(Mount.with_content,
-                        Application, window, root, installer, body))
-                mounted[region] = nil
-                if not results[1] then error(results[2], 0) end
-                return unpack(results, 2, results.n)
-            end
+            assert(not mounted[region],
+                region .. " is already mounted; use a slot for replacement")
+            mounted[region] = true
+            local results = packed(pcall(Mount.with_content,
+                    Application, window, root, installer, body))
+            mounted[region] = nil
+            if not results[1] then error(results[2], 0) end
+            return unpack(results, 2, results.n)
         end
     end
     local after = do(milliseconds)
         owner.mutate "schedule timer"
-        return do(body) return Application.after(owner, window, milliseconds, body) end
+        return body -> Application.after(owner, window, milliseconds, body)
     end
     local on_close_requested = do(body)
         owner.mutate "connect close request"
@@ -122,10 +150,11 @@ local capabilities_for = do(Application, window)
         Application.check_error
         return rendered
     end
-    local resize = do(width, height)
+    local resize = do(size)
         owner.mutate "resize"
-        Check.integer(width, "width", 1, 32768)
-        Check.integer(height, "height", 1, 32768)
+        Check.keys(size, { width = true, height = true }, "surface size")
+        local width = Check.integer(rawget(size, "width"), "width", 1, 32768)
+        local height = Check.integer(rawget(size, "height"), "height", 1, 32768)
         if window.pointer then Native.BK_window_set_size(window.pointer, width, height)
         else
             window.width, window.height = width, height
@@ -267,17 +296,11 @@ local acquire_surface = do(Application, parent, options, acquire, host_services)
         end)
 end
 
-local with_acquired_surface = do(Application, options, acquire, host_services)
-    return do(body)
-        Check.callable(body, "surface body")
-        return acquire_surface(Application, Application.owner, options, acquire, host_services) with
-            unavailable = Application.protocols.opening.unavailable
-            opened = do(window)
-                return Scope.with_owner window.owner do()
-                    return Application.protocols.opening.opened(body window.capabilities)
-                end
-            end
-        end
+local with_acquired_surface = do(Application, options, acquire, host_services) = do(body)
+    Check.callable(body, "surface body")
+    return acquire_surface(Application, Application.owner, options, acquire, host_services) with
+        unavailable = Application.protocols.opening.unavailable
+        opened = window -> Scope.with_owner window.owner (|| -> Application.protocols.opening.opened(body window.capabilities))
     end
 end
 
@@ -288,14 +311,12 @@ local open_child = do(Application, parent_window, parent, options)
 end
 
 -- Own a native window, its context and mounted children for the body lifetime.
-local with_window = do(Application, options)
-    return with_acquired_surface(Application, options, acquire_window)
-end
+local with_window = |Application, options| -> with_acquired_surface(Application,
+    options, acquire_window)
 
 -- Own an offscreen raster with exactly the same mounting and input semantics.
-local with_surface = do(Application, options)
-    return with_acquired_surface(Application, options, acquire_raster)
-end
+local with_surface = |Application, options| -> with_acquired_surface(Application,
+    options, acquire_raster)
 
 -- An embedding host drives pump/input/render; synchronous services never run on worker threads.
 local with_host = do(Application, Services)
@@ -303,9 +324,7 @@ local with_host = do(Application, Services)
             schedule = true, read_clipboard = true, write_clipboard = true }, "embedded host")
     local copied = {}
     for name, service in pairs Services do copied[name] = Check.callable(service, name) end
-    return do(options)
-        return with_acquired_surface(Application, options, acquire_raster, copied)
-    end
+    return options -> with_acquired_surface(Application, options, acquire_raster, copied)
 end
 
 return define

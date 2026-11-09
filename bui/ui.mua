@@ -5,6 +5,7 @@ local Descriptions = require "bui.ui.descriptions"
 local Collections = require "bui.ui.collections"
 local Menus = require "bui.ui.menus"
 local Graphs = require "bui.ui.graphs"
+local Behavior = require "bui.ui.behavior"
 
 local Opening = oneof { opened: Any, unavailable: String }
 local Acquisition = oneof { ready: Any, unavailable: String }
@@ -50,13 +51,9 @@ local Protocols = define
 end
 
 -- Own the integration, all child activities, and their deterministic completion.
-local activities = do(clock)
-    return define
-        with_application = do(Native)
-            return do(body: Function): Any
-                return Application.with_application(Native, Protocols, body, clock)
-            end
-        end
+local activities = clock -> define
+    with_application = do(Native) = do(body: Function): Any
+        return Application.with_application(Native, Protocols, body, clock)
     end
 end
 
@@ -85,4 +82,5 @@ return define
     forest = Collections.forest
     menu = Menus.menu
     keymap = Menus.keymap
+    behavior = Behavior.behavior
 end

@@ -158,19 +158,24 @@ local for_control = do(record)
             total = tonumber(Native.BK_get_num(node, prefix .. "total")),
             visible = tonumber(Native.BK_get_num(node, prefix .. "visible")) }
     end
-    record.view_snapshot = do() return { horizontal = view "horizontal",
-            vertical = view "vertical" } end
-    local move_view = do(axis, fraction)
-        owner.mutate "move view"
-        Native.BK_set_num(node,
-            axis_name axis .. "view", Check.number(fraction, "view fraction", 0, 1))
-        record.application.check_error
+    record.view_snapshot = || -> { horizontal = view "horizontal",
+        vertical = view "vertical" }
+    local move_view = do(axis)
+        local property = axis_name axis .. "view"
+        return do(fraction)
+            owner.mutate "move view"
+            Native.BK_set_num(node, property, Check.number(fraction, "view fraction", 0, 1))
+            record.application.check_error
+        end
     end
-    local scroll_view = do(axis, units)
-        owner.mutate "scroll view"
-        Native.BK_set_num(node,
-            axis_name axis .. "scroll", Check.integer(units, "scroll units", -1000000, 1000000))
-        record.application.check_error
+    local scroll_view = do(axis)
+        local property = axis_name axis .. "scroll"
+        return do(units)
+            owner.mutate "scroll view"
+            Native.BK_set_num(node,
+                property, Check.integer(units, "scroll units", -1000000, 1000000))
+            record.application.check_error
+        end
     end
     local Views = define .view, .move_view, .scroll_view end
     if record.kind ~= "list" then return Views end
@@ -182,16 +187,20 @@ local for_control = do(record)
         end
         return values
     end
-    local mark = do(index, marked)
-        owner.mutate "mark list item"
-        Check.integer(index, "list index", 1, Native.BK_strs_count(node, "items"))
-        Native.BK_set_num(node, "mark" .. (index - 1), Check.boolean(marked, "marked") and 1 or 0)
+    local set_marked = do(index)
+        Check.integer(index, "list index", 1)
+        return do(marked)
+            owner.mutate "mark list item"
+            Check.integer(index, "list index", 1, Native.BK_strs_count(node, "items"))
+            Native.BK_set_num(node,
+                "mark" .. (index - 1), Check.boolean(marked, "marked") and 1 or 0)
+        end
     end
     local clear_marks = do() owner.mutate "clear list marks"; Native.BK_set_num(node,
             "clearmarks", 1) end
     return define ..Views
         .items
-        .mark
+        .set_marked
         .clear_marks
     end
 end

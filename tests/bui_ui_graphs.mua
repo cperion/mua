@@ -32,8 +32,10 @@ Ui.with_application Native do(Application)
             graph = place.node_editor { height = 350 } do(editor)
                 placement = editor
                 refuses(|| -> editor.label "Invalid", "only graph nodes")
-                first = editor.include do(component)
-                    return component.graph_node { caption = "First", x = 20, y = 20 }
+                first = editor.include component -> component.graph_node with
+                    caption = "First"
+                    x = 20
+                    y = 20
                 end
                 second = editor.graph_node { caption = "Second", x = 250, y = 20 }
                 first.set_sockets source
@@ -80,9 +82,9 @@ Ui.with_application Native do(Application)
             mounted.connect { changed = do(change) events[#events + 1] = change end }
             surface.render
             local box = first.graph_rectangle()
-            surface.input.press(box.x + 30, box.y + 10, 0)
-            surface.input.motion(box.x + 50, box.y + 30, 0)
-            surface.input.release(box.x + 50, box.y + 30, 0)
+            surface.input.press { x = box.x + 30, y = box.y + 10 }
+            surface.input.motion { x = box.x + 50, y = box.y + 30 }
+            surface.input.release { x = box.x + 50, y = box.y + 30 }
             expect(#events == 0)
             Application.pump
             local moved, reordered = false, false

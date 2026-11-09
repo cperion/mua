@@ -1,0 +1,224 @@
+-- The SAME Lisp as lisp.mua, with two different traversal boundaries.
+-- Run from the repository root: luajit mua.lua examples/lisp_pull.mua
+--
+-- This companion shares the original families, parser, checker, interpreter, lowering,
+-- optimizer handlers and emitter. It changes the traversal boundaries, and states each one as
+-- the language's cursor (`iter`):
+--   * reading: one cursor over the source text, one datum per step, so there is no spaced copy
+--     of the source and no token array;
+--   * rewriting: each handler answers with a cursor over the instructions that replace it, so
+--     the driver reads `for replacement in pass(instruction, work) do … end`;
+--   * a batch of independent COMPLETE programs, compiled only as demanded.
+-- Whole-program trees and instruction lists remain materialized: reaching can retract the
+-- preceding Jump, so that output cannot be streamed away.
+
+local mode, shared = ...
+local core = shared or assert(require("mua.init").loadfile "examples/lisp.mua") "library"
+
+------------------------------------------------------------------------------------------------
+-- Reading: one cursor over the text. The state is the scanner, so a step needs no closure of its
+-- own: a position, one token of lookahead, and whether the source is spent.
+
+local peek_token = do(state)
+    if state.pending == nil and not state.finished then
+        local first = state.source:find("%S", state.position)
+        if first == nil then
+            state.position = #state.source + 1
+            state.finished = true
+            return
+        end
+        local character = state.source:sub(first, first)
+        local last = first
+        if character ~= "(" and character ~= ")" then
+            last = (state.source:find("[%s()]", first) or #state.source + 1) - 1
+        end
+        state.position = last + 1
+        state.pending = state.source:sub(first, last)
+    end
+    return state.pending
+end
+
+local take_token = do(state)
+    local token = peek_token state
+    state.pending = nil
+    return token
+end
+
+local read_datum
+read_datum = do(state)
+    local token = take_token state
+    if token == nil then error("read: the text ends inside a list", 0) end
+    if token == ")" then error("read: a ) closes nothing", 0) end
+    if token ~= "(" then return tonumber token or token end
+    local items = {}
+    while peek_token state ~= ")" do
+        if peek_token state == nil then error("read: a ( is never closed", 0) end
+        items[#items + 1] = read_datum state
+    end
+    take_token state
+    return items
+end
+
+-- Tokens are strings, exactly as in the original reader: there are no per-token wrapper records.
+-- The scanner is the cursor's state and the source position is its control, so the whole traversal
+-- is a start and a step.
+local forms = text -> iter { source = text, position = 1 } do(state, control)
+    if peek_token state == nil then return end
+    local datum = read_datum state
+    return state.position, datum
+end
+
+-- This boundary is intentional: the unchanged parser needs the final expression and wraps the
+-- preceding definitions around it. A complete program consumes all input, including errors in
+-- its tail. A prefix is NOT a compiled whole program.
+local read = do(text)
+    local written = {}
+    for form in forms text do written[#written + 1] = form end
+    return written
+end
+
+------------------------------------------------------------------------------------------------
+-- One answer is an iterator over the instructions that replace one, so a handler never builds a
+-- list and an answer allocates nothing: the step is shared, the instruction is its state, and the
+-- control says whether it has been read. An answer is not a traversal; a cursor here would cost a
+-- closure and a table per instruction (measured in docs/lisp-pull-comparison.md).
+
+local once = do(state, control)
+    if control then return end
+    return true, state
+end
+local never = do(state, control)
+    return
+end
+
+local single = do(node) return once, node, nil end
+local empty = || -> never
+
+local rewrite = do(pass, code, state)
+    local written = {}
+    local work = { ..state, .written }
+    for _, instruction in ipairs code do
+        for _, replacement in pass(instruction, work) do
+            written[#written + 1] = replacement
+        end
+    end
+    return written
+end
+local optimizer = core.make_optimizer(single, empty, rewrite)
+local compile = core.make_compiler(read, optimizer.optimize)
+
+------------------------------------------------------------------------------------------------
+-- Pull whole compilations across independent program boundaries. The cursor is the batch: each
+-- step compiles one complete program, so an error in a later program happens when it is asked
+-- for. Do not prefetch.
+
+local compiled_programs = sources -> iter sources do(state, control)
+    local source = state[control + 1]
+    if source == nil then return end
+    return control + 1, compile source
+end
+
+if mode == "library" then
+    return { .core, .forms, .read, .compile, .compiled_programs, .single, .empty, .rewrite,
+        .optimizer }
+end
+
+------------------------------------------------------------------------------------------------
+-- Equivalent work: exact intermediate representations AND emitted text, then optimized execution,
+-- unoptimized execution and the reference interpreter.
+
+local corpus = {
+    { name = "constant condition", source = "(if (< 1 2) (+ 10 (* 2 3)) 99)", expected = 16 },
+    { name = "function",
+        source = "(define square (lambda (x) (* x x))) (square (+ 3 4))", expected = 49 },
+    { name = "recursion",
+        source = "(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 10)",
+        expected = 3628800 },
+    { name = "closure",
+        source = "(define adder (lambda (a) (lambda (b) (+ a b)))) ((adder 3) 4)", expected = 7 },
+    { name = "shadowing", source = "(let ((x 2)) (+ (let ((x 5)) x) x))", expected = 7 },
+    { name = "false result", source = "(= 1 2)", expected = false },
+    { name = "nested functions",
+        source = "(define apply (lambda (f x) (f x))) (apply (lambda (n) (if (< n 0) (- 0 n) n)) (- 0 4))",
+        expected = 4 },
+    { name = "recursive let",
+        source = "(let ((sum (lambda (n) (if (< n 1) 0 (+ n (sum (- n 1))))))) (sum 10))",
+        expected = 55 },
+}
+for _, program in ipairs corpus do
+    local eager = core.compile program.source
+    local pulled = compile program.source
+    assert(core.same(eager.tree, pulled.tree), program.name .. ": tree")
+    assert(core.same(eager.instructions, pulled.instructions), program.name .. ": lowering")
+    assert(core.same(eager.optimized, pulled.optimized), program.name .. ": optimization")
+    assert(eager.lua == pulled.lua, program.name .. ": emitted Lua")
+    assert(core.same(optimizer.optimize pulled.optimized, pulled.optimized),
+        program.name .. ": fixed point")
+    local result = assert(loadstring(pulled.lua, "=pull " .. program.name))()
+    assert(result == program.expected and result == core.evaluate(pulled.tree, {}))
+    assert(assert(loadstring(core.emit_lua pulled.instructions))() == result)
+    print(("%s -> %s; identical tree, IR and Lua"):format(program.name, tostring result))
+end
+
+-- Repeat and nest work: later rewrites must not mutate earlier results.
+local retained = compile corpus[3].source
+local before = core.listing retained.optimized
+compile corpus[7].source
+assert(core.listing retained.optimized == before)
+
+-- Same refusals, not merely the same successful outputs.
+local refusal = do(compiler, source)
+    local accepted, problem = pcall(compiler, source)
+    assert(not accepted, "accepted invalid source: " .. source)
+    return problem
+end
+for _, invalid in ipairs { "(+ 1)", "(+ 1 missing)", "(if 1 2)", "(+ 1 2", ")", "1 2" } do
+    assert(refusal(core.compile, invalid) == refusal(compile, invalid))
+end
+print "refusals -> identical"
+
+-- Reader laziness is separate from program semantics. Reading ONE datum leaves the malformed
+-- tail untouched. Full compilation must reject that same source.
+local prefix = "(+ 20 22)"
+local cursor = forms(prefix .. " (")
+assert(cursor.state.position == 1)
+assert(core.same(cursor(), core.read(prefix)[1]))
+assert(cursor.state.position == #prefix + 1 and cursor.control == #prefix + 1)
+assert(not pcall cursor)
+assert(refusal(core.compile, prefix .. " (") == refusal(compile, prefix .. " ("))
+print "reader prefix -> tail unread; full compilation still rejects it"
+
+-- Likewise, requesting the first complete program does not compile the second.
+local batch = compiled_programs { corpus[3].source, "(" }
+local first_compiled = batch()
+assert(assert(loadstring first_compiled.lua)() == 3628800)
+assert(batch.control == 1)
+assert(not pcall batch)
+print "batch prefix -> recursion compiled; next program deferred until resume"
+
+-- Independent cursors interleave; one cursor used again continues where it stopped. A cursor's
+-- state is the traversal's own, so two cursors over one source share nothing.
+local left, right = forms "1 2", forms "10 20"
+assert(left() == 1 and right() == 10 and left() == 2 and right() == 20)
+assert(left() == nil and right() == nil)
+local ten = forms "1 2 3 4"
+assert(ten() == 1 and ten() == 2)
+local third = ten:take 1
+assert(third() == 3 and third() == nil)
+assert(ten() == 4 and ten() == nil)
+print "ownership -> repeated, nested and interleaved work checked"
+
+--[=[ output
+constant condition -> 16; identical tree, IR and Lua
+function -> 49; identical tree, IR and Lua
+recursion -> 3628800; identical tree, IR and Lua
+closure -> 7; identical tree, IR and Lua
+shadowing -> 7; identical tree, IR and Lua
+false result -> false; identical tree, IR and Lua
+nested functions -> 4; identical tree, IR and Lua
+recursive let -> 55; identical tree, IR and Lua
+refusals -> identical
+reader prefix -> tail unread; full compilation still rejects it
+batch prefix -> recursion compiled; next program deferred until resume
+ownership -> repeated, nested and interleaved work checked
+]=]

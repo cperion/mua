@@ -6,9 +6,7 @@ local read = do(path)
     file:close
     return contents
 end
-local public = do(name)
-    return name:match "^BK_" or name:match "^BUI_" or name:match "^GPU_" or name:match "^bui_"
-end
+local public = name -> name:match "^BK_" or name:match "^BUI_" or name:match "^GPU_" or name:match "^bui_"
 local declared, inventory, count = {}, {}, 0
 for name in read("bui/cdef.lua"):gmatch "([%a_][%w_]*)%s*%(" do
     if public name then declared[name] = true end
@@ -36,7 +34,7 @@ end
 assert(next listed == nil and total == 48, "review the native node catalog")
 print("BUI coverage inventory: " .. count .. " native functions, " .. total .. " node kinds accounted for")
 local Compiler, snippets = require "mua.init", 0
-for _, path in ipairs { "docs/bui-ui.md", "docs/bui-coverage.md" } do
+for _, path in ipairs { "docs/bui-activities.md", "docs/bui-ui.md", "docs/bui-coverage.md" } do
     for language, code in read(path):gmatch "```([%w_-]+)[^\n]*\n(.-)\n```" do
         if language == "mua" then
             snippets += 1

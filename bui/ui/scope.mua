@@ -4,9 +4,7 @@ local ledgers = meta { mode = "k" } {}
 
 local packed = do(..values) = values
 
-local ledger_of = do(owner)
-    return assert(ledgers[owner], "expected an activity owner")
-end
+local ledger_of = owner -> assert(ledgers[owner], "expected an activity owner")
 
 local revoke
 revoke = do(ledger)
@@ -56,10 +54,8 @@ new = do(parent, label, Guard)
         integration = inherited and inherited.integration or {}
     end
     local owner
-    local is_alive = do()
-        return (ledger.state == "acquiring" or ledger.state == "live")
-        and (not parent or parent.is_alive())
-    end
+    local is_alive = || -> (ledger.state == "acquiring" or ledger.state == "live")
+    and (not parent or parent.is_alive())
     local check = do(operation)
         if not is_alive() then
             error((operation or "use") .. ": " .. label .. " activity has ended", 3)
@@ -113,20 +109,16 @@ new = do(parent, label, Guard)
 end
 
 -- Distinguish separate integrations without exposing their mutable application state.
-local same_integration = do(first, second)
-    return ledger_of(first).integration == ledger_of(second).integration
-end
+local same_integration = |first, second| -> ledger_of(first).integration == ledger_of(second).integration
 
 -- Complete the owner on every exit, preserving nil results and the original body failure.
-local with_owner = do(owner)
-    return do(body)
-        assert(type body == "function", "activity body expects a function")
-        local results = packed(pcall(body, owner))
-        local cleaned, problem = pcall owner.close
-        if not results[1] then error(results[2], 0) end
-        if not cleaned then error(problem, 0) end
-        return unpack(results, 2, results.n)
-    end
+local with_owner = do(owner) = do(body)
+    assert(type body == "function", "activity body expects a function")
+    local results = packed(pcall(body, owner))
+    local cleaned, problem = pcall owner.close
+    if not results[1] then error(results[2], 0) end
+    if not cleaned then error(problem, 0) end
+    return unpack(results, 2, results.n)
 end
 
 -- Adopt successful acquisitions; a failed preparation releases only its new ledger entries.

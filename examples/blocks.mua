@@ -2,12 +2,10 @@
 --   luajit mua.lua examples/blocks.mua
 
 -- A function that takes a block is an activity: it sets up, runs the block, and completes.
-local with_log = do(title)
-    return do(body)
-        print("begin " .. title)
-        body
-        print("end " .. title)
-    end
+local with_log = do(title) = do(body)
+    print("begin " .. title)
+    body
+    print("end " .. title)
 end
 
 -- The trailing colon opens a block that takes the home (`do(..)`); no parentheses.
@@ -17,10 +15,8 @@ with_log "import":
 end
 
 -- A block's parameters are the do lambda's parameters.
-local each = do(items)
-    return do(body)
-        for i, item in ipairs items do body(i, item) end
-    end
+local each = do(items) = do(body)
+    for i, item in ipairs items do body(i, item) end
 end
 
 each { "a", "b", "c" } do(index, item)
@@ -28,12 +24,10 @@ each { "a", "b", "c" } do(index, item)
 end
 
 -- Activities stack, and `endall` closes the whole spine at once.
-local timed = do(label)
-    return do(body)
-        print("start " .. label)
-        body
-        print("stop " .. label)
-    end
+local timed = do(label) = do(body)
+    print("start " .. label)
+    body
+    print("stop " .. label)
 end
 
 with_log "outer" do

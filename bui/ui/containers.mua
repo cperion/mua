@@ -7,9 +7,9 @@ local for_control = do(record, mount_header)
         local header_active = false
         local expanded = do() owner.check "panel expansion"; return Native.BK_get_num(node,
                 "collapsed") == 0 end
-        local expand = do(open)
-            owner.mutate "expand panel"
-            Native.BK_set_num(node, "collapsed", Check.boolean(open, "expanded") and 0 or 1)
+        local set_expanded = do(expanded)
+            owner.mutate "set panel expansion"
+            Native.BK_set_num(node, "collapsed", Check.boolean(expanded, "expanded") and 0 or 1)
             record.application.check_error
         end
         local with_header = do(installer)
@@ -26,7 +26,7 @@ local for_control = do(record, mount_header)
             end
         end
         record.change_snapshot = expanded
-        return define .expanded, .expand, .with_header end
+        return define .expanded, .set_expanded, .with_header end
     end
     if record.kind == "scrollbar" then
         local range = do()
@@ -34,10 +34,11 @@ local for_control = do(record, mount_header)
             return { first = tonumber(Native.BK_get_num(node, "first")),
                 last = tonumber(Native.BK_get_num(node, "last")) }
         end
-        local set_range = do(first, last)
+        local set_range = do(fractions)
             owner.mutate "set scrollbar range"
-            Check.number(first, "first fraction", 0, 1)
-            Check.number(last, "last fraction", first, 1)
+            Check.keys(fractions, { first = true, last = true }, "scrollbar range")
+            local first = Check.number(rawget(fractions, "first"), "first fraction", 0, 1)
+            local last = Check.number(rawget(fractions, "last"), "last fraction", first, 1)
             Native.BK_set_num(node, "first", first)
             Native.BK_set_num(node, "last", last)
         end

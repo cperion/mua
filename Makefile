@@ -4,12 +4,19 @@ LUA ?= luajit
 test:
 	$(LUA) tests/mua.lua
 	$(LUA) tests/iter.lua
+	$(LUA) tests/specialization.lua
+	$(LUA) tests/lisp_pull.lua
 	$(LUA) tests/guide.lua
 	$(LUA) tests/cli.lua
 	$(LUA) tests/fmt.lua
 	$(LUA) tests/fmt_do.lua
 	$(LUA) tests/examples.lua
 	$(LUA) tests/tour.lua
+
+# Optional external Lua Fun integration; set LUA_PATH to its checkout first.
+.PHONY: test-luafun
+test-luafun:
+	$(LUA) tests/luafun.lua
 
 # Editor support (Neovim Tree-sitter): the grammar is Mua's; hosts such as Nua add queries over it
 TREE_SITTER ?= tree-sitter

@@ -1,91 +1,97 @@
--- A composed UI using only managed activities and vocabularies (no native pointers).
+-- Activities own the work; opened vocabularies supply the instructions inside it.
 -- luajit mua.lua examples/bui/activities.mua path/to/mua_bui.dll [--smoke|--headless]
 local ffi = require "ffi"
-local Bui = require "bui.ffi"
 local Ui = require "bui.ui"
 local filename = ffi.os == "Windows" and "mua_bui.dll" or "libmua_bui.so"
-local Native = Bui.load(arg[1] or "./build/bui/" .. filename)
+local Native = require("bui.ffi").load(arg[1] or "./build/bui/" .. filename)
 
--- Each invocation of the installer owns independent state. Notifications point outward;
--- the returned increment/current vocabulary points inward. Neither exposes the controls.
+-- Inputs and outward notifications stay explicit. The returned installer opens placement;
+-- its returned vocabulary is the parent's inward access, not the implementation's controls.
 local counter_panel = do(inputs)
-    assert(type inputs.initial == "number" and inputs.initial >= 0 and inputs.initial <= 20)
+    local initial, caption = inputs.initial, inputs.caption
+    assert(type initial == "number" and initial >= 0 and initial <= 20)
+    assert(type caption == "string", "counter needs a caption")
     return do(Notify)
         assert(type Notify.changed == "function", "counter needs a changed continuation")
-        return do(place)
-            local value = inputs.initial
-            local readout, slider
+        local Notify = define changed = Notify.changed end
+        return do(..)
+            local value = initial
+            local Readout, Slider
             local set_count = do(count)
                 value = math.max(0, math.min(20, count))
-                readout.display(string.format("Count / %d", value))
-                slider.set value
+                Readout.display(string.format("Count / %d", value))
+                Slider.set value
                 Notify.changed value
             end
             local increment = || -> set_count(value + 1)
-            place.box with padding = 16, spacing = 10, fill = true end do(children)
-                children.label { caption = inputs.caption, bold = true, font_scale = 1.2 }
-                readout = children.label(string.format("Count / %d", value))
-                slider = children.slider with
+            box { padding = 16, spacing = 10, fill = true }:
+                label { .caption, bold = true, font_scale = 1.2 }
+                Readout = label(string.format("Count / %d", value))
+                Slider = slider with
                     minimum = 0
                     maximum = 20
                     .value
                     integer = true
                     precision = 0
                 end
-                slider.connect define changed = set_count end
-                children.button "Increment" increment
-                children.button "Reset" (|| -> set_count inputs.initial)
+                Slider.connect define changed = set_count end
+                button "Increment" increment
+                button "Reset" (|| -> set_count initial)
             end
             return define .increment, current = || -> value end
         end
     end
 end
 
--- A pure drawing description. Rebuilding it changes no native object until canvas.replace.
-local landscape = do(width, height, badge)
-    return Ui.drawing do(draw)
-        draw.rectangle with
+-- Description building is pure; canvas publication is a separate instruction.
+local landscape = do(Badge) = do(size)
+    local width, height = size.width, size.height
+    return Ui.drawing:
+        rectangle with
             coordinates = { 0, 0, width, height }
             fill = { 0.06, 0.12, 0.24, 1 }
         end
-        draw.oval with
+        oval with
             coordinates = { width * 0.68, 15, width * 0.68 + 54, 69 }
             fill = { 1, 0.73, 0.4, 1 }
         end
-        draw.polygon with
+        polygon with
             coordinates = { 0, height, width * 0.3, 25, width * 0.6, height }
             fill = { 0.22, 0.45, 0.55, 1 }
         end
-        draw.polygon with
+        polygon with
             coordinates = { width * 0.3, height, width * 0.7, 55, width, height }
             fill = { 0.1, 0.3, 0.4, 1 }
         end
-        draw.image with
+        image with
             coordinates = { width - 40, height - 40, width - 16, height - 16 }
-            image = badge
+            image = Badge
         end
     end
 end
 
-local studio = do(place)
-    local first, second
-    place.column with padding = 20, spacing = 14, fill = true end do(children)
-        children.label { caption = "Mua / activities", font_scale = 1.7, bold = true }
-        children.label "Two components. Independent state. Explicit parent wiring."
-        local status = children.label "Ready"
-        local report = value -> status.display(string.format("A counter reported %d", value))
-        local first_inputs = { caption = "First counter", initial = 4 }
-        local second_inputs = { caption = "Second counter", initial = 10 }
-        children.row { spacing = 16 } do(columns)
-            first = columns.include(counter_panel first_inputs define changed = report end)
-            second = columns.include(counter_panel second_inputs define changed = report end)
+local studio = do(..)
+    local First, Second
+    column { padding = 20, spacing = 14, fill = true }:
+        label { caption = "Mua / activities", font_scale = 1.7, bold = true }
+        label "Two components. Independent state. Explicit parent wiring."
+        local Status = label "Ready"
+        local Notifications = define
+            changed = value -> Status.display(string.format("A counter reported %d", value))
         end
-        children.button "Advance both" do()
-            first.increment
-            second.increment
+        local first_panel = counter_panel { caption = "First counter", initial = 4 }
+        local second_panel = counter_panel { caption = "Second counter", initial = 10 }
+        row { spacing = 16 }:
+            First = include(first_panel Notifications)
+            Second = include(second_panel Notifications)
         end
-        -- The column owns this copied image; its canvas may retain it for the entire mount.
-        local badge = children.resources.acquire_image with
+        -- These subjects are intentionally named: the command addresses both children.
+        button "Advance both" do()
+            First.increment
+            Second.increment
+        end
+        -- This instruction resolves to the column's resources, not the application's.
+        local Badge = resources.acquire_image with
             width = 2
             height = 2
             rgba = string.char(255, 186, 102, 255, 56, 115, 140, 255,
@@ -94,46 +100,44 @@ local studio = do(place)
             ready(image) = image,
             unavailable(reason) = error reason,
         }
-        local canvas = children.canvas { height = 140, fill = true }
-        canvas.connect define
-            configured = rectangle -> canvas.replace(landscape(rectangle.width,
-                    rectangle.height, badge))
+        local Canvas = canvas { height = 140, fill = true }
+        Canvas.connect define
+            configured = bounds -> Canvas.replace(landscape Badge bounds)
         end
-        local slot = children.slot {}
-        children.button "Replace the note" do()
-            slot.replace do(note)
-                note.label "This child has its own mount lifetime. Its predecessor was retired safely."
+        local Note = slot {}
+        button "Replace the note" do()
+            Note.replace:
+                label "This child has its own mount lifetime. Its predecessor was retired safely."
             end
         end
-        slot.replace do(note)
-            note.label "The native driver owns dispatch. Components never enter a nested event loop."
+        Note.replace:
+            label "The native driver owns dispatch. Components never enter a nested event loop."
         end
     end
     return define
-        advance_first = first.increment
-        first_count = first.current
-        second_count = second.current
+        advance_first = First.increment
+        first_count = First.current
+        second_count = Second.current
     end
 end
 
-Ui.with_application Native do(application)
-    application.gpu_default false
-    application.theme "dark"
+Ui.with_application Native:
+    gpu_default false
+    theme "dark"
     local headless = arg[2] == "--headless"
-    local open = headless and application.with_surface or application.with_window
-    local options = { title = "Mua / activity-based BUI", width = 850, height = 650 }
-    return open options do(window)
-        window.with_content studio do(components)
-            components.advance_first
-            assert(components.first_count() == 5 and components.second_count() == 10)
+    local open = headless and with_surface or with_window
+    return open { title = "Mua / activity-based BUI", width = 850, height = 650 }:
+        with_content studio:
+            advance_first
+            assert(first_count() == 5 and second_count() == 10)
             if headless then
-                window.render
-                application.pump
-                window.render
+                render
+                pump
+                render
             else
-                window.show
-                if arg[2] == "--smoke" then window.after 200 window.close end
-                application.run
+                show
+                if arg[2] == "--smoke" then after 200 close end
+                run
             end
         end
     end {

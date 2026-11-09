@@ -23,9 +23,10 @@ Ui.with_application Native do(Application)
     end)
     local Texture = ready(Application.resources.acquire_texture { image = Image })
     expect(ready(Texture.size()).width == 2)
-    Texture.update(0, 0, { rgba = string.char(0, 255, 0, 255), width = 1, height = 1 })
-    ready(Texture.copy_image Image)
-    refuses(|| -> Texture.update(0, 0, { rgba = "short", width = 2, height = 2 }), "too small")
+    Texture.upload_at { x = 0, y = 0 } { rgba = string.char(0, 255, 0, 255), width = 1, height = 1 }
+    ready(Texture.copy_frame Image 1)
+    refuses(|| -> Texture.upload_at { x = 0, y = 0 } { rgba = "short", width = 2, height = 2 },
+        "too small")
     ready(Application.resources.with_texture { width = 1, height = 1 } do(texture)
             expired_texture = texture
             expect(ready(texture.size()).height == 1)
@@ -49,7 +50,11 @@ Ui.with_application Native do(Application)
                 if ffi.os == "Windows" then expect have_frame end
                 refuses(|| -> Application.resources.acquire_texture { video = Video },
                     "transfer owner")
-                refuses(|| -> Texture.update(0, 0, { width = 1, height = 1, rgba = image_bytes }),
+                refuses(|| -> Texture.upload_at { x = 0, y = 0 } with
+                    width = 1
+                    height = 1
+                    rgba = image_bytes
+                end,
                     "updated by refresh")
             end)
         ready(Application.resources.with_texture { video = Video } do(Texture)
@@ -68,7 +73,8 @@ Ui.with_application Native do(Application)
             if name == "rgba" then fabricated += 1; return image_bytes end
         end
     end { width = 1, height = 1 }
-    refuses(|| -> Texture.update(0, 0, fake_pixels), "needs RGBA")
+    local origin = { x = 0, y = 0 }
+    refuses(|| -> Texture.upload_at origin fake_pixels, "needs RGBA")
     expect(fabricated == 0)
     local Text
     if Application.typography.available() then
@@ -81,7 +87,7 @@ Ui.with_application Native do(Application)
             unavailable() = nil
             ready = do(bytes)
                 local generation = tonumber(Native.BUI_text_generation())
-                ready(Application.typography.add_font("mua-regression", 0, bytes))
+                ready(Application.typography.register_font "mua-regression" "regular" bytes)
                 expect(tonumber(Native.BUI_text_generation()) > generation)
                 expect(ready(Text.width()) > 0 and #ready(Text.mask()).bytes > 0)
                 expect(ready(Application.typography.measure with
@@ -93,7 +99,7 @@ Ui.with_application Native do(Application)
         end
         ready(Application.resources.with_text { text = "Temporary" } do(text) expired_text = text end)
         refuses(expired_text.width, "activity has ended")
-        Application.typography.add_font("invalid", 0, "not a font") with
+        Application.typography.register_font "invalid" "regular" "not a font" with
             ready() = error "invalid font was accepted"
             unavailable = reason -> expect(type reason == "string")
         end
@@ -105,7 +111,7 @@ Ui.with_application Native do(Application)
                 expired_paint = Paint
                 Paint.rectangle { width = 64, height = 64, color = white }
                 Paint.rectangle { width = 16, height = 16, color = red }
-                Paint.with_clip { 4, 4, 4, 4 } do(View)
+                Paint.with_clip { x = 4, y = 4, width = 4, height = 4 } do(View)
                     expired_view = View
                     View.rectangle { width = 64, height = 64, color = green }
                 end
@@ -116,9 +122,11 @@ Ui.with_application Native do(Application)
                 Paint.circle { x = 20, y = 20, radius = 2, color = red }
                 Paint.ellipse { x = 30, y = 30, radius_x = 3, radius_y = 2, color = green }
                 Paint.line { x = 40, y = 40, x2 = 50, y2 = 50, color = blue }
-                Paint.polygon({ { 30, 40 }, { 35, 40 }, { 35, 45 } }, red)
-                Paint.triangles({ { 30, 40 }, { 35, 40 }, { 35, 45 } }, { red, green, blue })
-                Paint.points({ { 20, 50 } }, { red }, 2)
+                local triangle = { { 30, 40 }, { 35, 40 }, { 35, 45 } }
+                Paint.polygon triangle red
+                local vertex_colors = { red, green, blue }
+                Paint.triangles triangle vertex_colors
+                Paint.points { { 20, 50 } } { red } 2
                 local vertices = {}
                 vertices[1] = meta with
                     index = do()
@@ -150,13 +158,14 @@ Ui.with_application Native do(Application)
                     bottom_right = blue
                     bottom_left = white
                 end
-                ready(Paint.image({ 60, 60, 2, 2 }, Image))
+                ready(Paint.image(Image) { x = 60, y = 60, width = 2, height = 2 } {})
                 ready(Paint.mesh with
                     vertices = { { x = 40, y = 40 }, { x = 48, y = 40 }, { x = 48, y = 48 } }
                     indices = { 1, 2, 3 }
                     texture = Texture
+                    clip = { x = 40, y = 40, width = 8, height = 8 }
                 end)
-                Paint.with_view { 60, 0, 4, 4 } do(View)
+                Paint.with_clip { x = 60, y = 0, width = 4, height = 4 } do(View)
                     View.with_primitive_sink do()
                         local sink = Native.GPU_backend_sink_get()
                         local coordinates = ffi.new("float[3][2]",
@@ -172,8 +181,10 @@ Ui.with_application Native do(Application)
                     end
                 end
                 if Text then
-                    ready(Paint.text_run({ 16, 60 }, Text, blue))
-                    ready(Paint.text({ 16, 40 }, { text = "A", size = 10 }, red))
+                    local baseline = { x = 16, y = 60 }
+                    ready(Paint.text_run Text baseline blue)
+                    local letter, origin = { text = "A", size = 10 }, { x = 16, y = 40 }
+                    ready(Paint.text letter origin red)
                 end
             end
             refuses(|| -> expired_paint.rectangle { width = 1, height = 1, color = red },
@@ -190,7 +201,7 @@ Ui.with_application Native do(Application)
             Raster.with_frame {} do() end
             expect(#Raster.damage() == 0)
             refuses(|| -> Raster.with_frame {} do() error("paint failed", 0) end, "paint failed")
-            Raster.with_frame { region = { 0, 0, 2, 2 } } do(Paint)
+            Raster.with_frame { region = { x = 0, y = 0, width = 2, height = 2 } } do(Paint)
                 Paint.rectangle { width = 64, height = 64, color = blue }
             end
             pixels = ready(Raster.pixels())
@@ -222,7 +233,7 @@ Ui.with_application Native do(Application)
             end
             -- Immediate drawing may use a live sibling resource; it is not a retained loan.
             ready(Application.resources.with_image { rgba = image_bytes, width = 2, height = 2 } do(Temporary)
-                    Raster.with_frame {} do(Paint) ready(Paint.image({ 0, 0, 2, 2 }, Temporary)) end
+                    Raster.with_frame {} do(Paint) ready(Paint.image(Temporary) { width = 2, height = 2 } {}) end
                 end)
         end)
     refuses(expired_raster.size, "activity has ended")

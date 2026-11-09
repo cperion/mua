@@ -39,42 +39,58 @@ local for_surface = do(Application, window)
         Application.check_error
         return Acquisition.ready(nil)
     end
-    local size_request = do(key)
-        return do(width, height)
-            return request(key,
-                Check.integer(width, "window width", 1, 32768),
-                Check.integer(height, "window height", 1, 32768))
+    local size_request = do(key) = do(size)
+        Check.keys(size, { width = true, height = true }, "window size")
+        return request(key,
+            Check.integer(rawget(size, "width"), "window width", 1, 32768),
+            Check.integer(rawget(size, "height"), "window height", 1, 32768))
+    end
+    local flag_request = key -> enabled -> request(key,
+        Check.boolean(enabled, key) and 1 or 0)
+    local states = { normal = 0, minimized = 1, hidden = 2, maximized = 3 }
+    local reading = do(key) = do(project) = do()
+        local result = query key
+        return result with
+            unavailable = Acquisition.unavailable
+            ready = values -> Acquisition.ready(project values)
         end
     end
-    local flag_request = do(key)
-        return do(enabled) return request(key, Check.boolean(enabled, key) and 1 or 0) end
-    end
-    local states = { normal = 0, minimized = 1, hidden = 2, maximized = 3 }
+    local point = values -> { x = values.first, y = values.second }
+    local dimensions = values -> { width = values.first, height = values.second }
+    local state_names = {[0] = "normal", "minimized", "hidden", "maximized" }
     local manager = define
-        position = do() return query "pos" end
-        screen = do() return query "screen" end
-        pointer = do() return query "pointer" end
-        scale = do() return query "scale" end
-        state = do() return query "state" end
-        move = do(x, y) return request("pos",
-                Check.integer(x, "window x"), Check.integer(y, "window y")) end
-        minimum = size_request "minsize"
-        maximum = size_request "maxsize"
-        resizable = do(horizontal, vertical)
-            return request("resizable", Check.boolean(horizontal, "horizontal resize") and 1 or 0,
-                Check.boolean(vertical, "vertical resize") and 1 or 0)
+        position = reading "pos" point
+        screen = reading "screen" dimensions
+        pointer = reading "pointer" point
+        scale = reading "scale" values -> values.first
+        state = reading "state" do(values)
+            local name = assert(state_names[values.first], "unknown native window state")
+            return name
+        end
+        move_to = do(position)
+            Check.keys(position, { x = true, y = true }, "window position")
+            return request("pos", Check.integer(rawget(position, "x"), "window x"),
+                Check.integer(rawget(position, "y"), "window y"))
+        end
+        set_minimum_size = size_request "minsize"
+        set_maximum_size = size_request "maxsize"
+        allow_resize = do(axes)
+            Check.keys(axes, { horizontal = true, vertical = true }, "resizable axes")
+            return request("resizable",
+                Check.boolean(rawget(axes, "horizontal"), "horizontal resize") and 1 or 0,
+                Check.boolean(rawget(axes, "vertical"), "vertical resize") and 1 or 0)
         end
         set_state = do(name)
             local code = assert(states[name], "unknown window state")
             return request("state", code)
         end
-        raise = do() return request("lift", 0) end
-        lower = do() return request("lower", 0) end
-        focus = do() return request("focus", 0) end
+        raise = || -> request("lift", 0)
+        lower = || -> request("lower", 0)
+        focus = || -> request("focus", 0)
         topmost = flag_request "topmost"
         borderless = flag_request "override"
         disabled = flag_request "disabled"
-        opacity = do(value) return request("alpha", Check.number(value, "opacity", 0, 1)) end
+        opacity = value -> request("alpha", Check.number(value, "opacity", 0, 1))
     end
     local gpu = do(enabled)
         owner.mutate "window GPU"

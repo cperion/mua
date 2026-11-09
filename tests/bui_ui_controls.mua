@@ -3,7 +3,7 @@ local Widgets = require "bui.ui.widgets"
 local Native = require("bui.ffi").load(assert(arg[1], "native library path required"))
 if jit then jit.off(true, true) end
 local spans_written
-local Watched = meta { index = do(_, name) return Native[name] end } with
+local Watched = meta { index = |_, name| -> Native[name] } with
     BK_textarea_set_spans = do(node, spans, count)
         spans_written = count
         return Native.BK_textarea_set_spans(node, spans, count)
@@ -105,9 +105,9 @@ Ui.with_application Watched do(Application)
                         expect(control.children()[1].children == 2, name .. " body routing")
                     end
                     if name == "panel" then
-                        control.expand false
+                        control.set_expanded false
                         expect(not control.expanded())
-                        control.expand true
+                        control.set_expanded true
                         local header
                         control.with_header do(place) return place.label "Header accessory" end do(label)
                             header = label
@@ -117,7 +117,7 @@ Ui.with_application Watched do(Application)
                         expect(not pcall header.caption)
                     end
                     if name == "scrollbar" then
-                        control.set_range(0.2, 0.4)
+                        control.set_range { first = 0.2, last = 0.4 }
                         expect(control.range().first == 0.2 and control.range().last == 0.4)
                         local units = 0
                         control.connect with
@@ -125,7 +125,7 @@ Ui.with_application Watched do(Application)
                                 request { moveto() = nil, units = do(value) units = value end }
                             end
                         end
-                        surface.input.wheel(box.x + 8, box.y + 8, 1, 0)
+                        surface.input.wheel { x = box.x + 8, y = box.y + 8, delta = 1 }
                         expect(units == 0)
                         Application.pump
                         expect(units == -1)
@@ -149,7 +149,10 @@ Ui.with_application Watched do(Application)
             Bundle.Group.set_values { 2, 3 }
             expect(changes == 0 and Bundle.Group.values()[2] == 3)
             Bundle.Group.copy
-            expect(surface.clipboard.read() { ready = text -> text == "[2, 3]", unavailable() = false })
+            expect(surface.clipboard.read() with
+                ready = text -> text == "[2, 3]"
+                unavailable() = false
+            end)
             surface.clipboard.write "[3, 4]"
             expect(Bundle.Group.paste() { ready() = true, unavailable() = false })
             expect(changes == 0 and Bundle.first.current() == 3 and Bundle.second.current() == 4)
@@ -161,9 +164,9 @@ Ui.with_application Watched do(Application)
             surface.render
             local box = Bundle.first.rectangle()
             local x, y = box.x + box.width / 2, box.y + box.height / 2
-            surface.input.press(x, y, 4)
-            surface.input.motion(x + 20, y, 4)
-            surface.input.release(x + 20, y, 4)
+            surface.input.press { .x, .y, modifiers = 4 }
+            surface.input.motion { x = x + 20, .y, modifiers = 4 }
+            surface.input.release { x = x + 20, .y, modifiers = 4 }
             expect(Bundle.first.current() ~= 3)
             expect(math.abs(Bundle.second.current() - Bundle.first.current() - 1) < 1e-9)
             Bundle.disconnect
@@ -178,8 +181,8 @@ Ui.with_application Watched do(Application)
             toggle.connect { changed = do(value) expect value; notifications += 1 end }
             surface.render
             local box = toggle.rectangle()
-            surface.input.press(box.x + 8, box.y + box.height / 2, 0)
-            surface.input.release(box.x + 8, box.y + box.height / 2, 0)
+            surface.input.press { x = box.x + 8, y = box.y + box.height / 2 }
+            surface.input.release { x = box.x + 8, y = box.y + box.height / 2 }
             expect(toggle.current() and notifications == 0)
             Application.pump
             expect(notifications == 1)

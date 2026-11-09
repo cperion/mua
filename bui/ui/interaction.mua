@@ -85,12 +85,19 @@ local for_surface = do(Application, window)
         Native.BK_focus_node(context, nil)
         Application.check_error
     end
-    local pointer = do(horizontal, vertical)
+    local position_pointer = do(position)
         owner.mutate "set input pointer"
+        Check.keys(position, { x = true, y = true }, "pointer position")
         Native.BK_set_pointer(context,
-            Check.integer(horizontal, "pointer x"), Check.integer(vertical, "pointer y"))
+            Check.integer(rawget(position, "x"), "pointer x"),
+            Check.integer(rawget(position, "y"), "pointer y"))
     end
-    return define .ime, .interaction, .clear_focus, .pointer end
+    return define
+        .ime
+        .interaction
+        .clear_focus
+        .position_pointer
+    end
 end
 
 return define .for_surface end

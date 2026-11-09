@@ -19,13 +19,24 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
   `blocks` (trailing blocks, activities, `endall`), `vocabularies` (`define`, spread, opening, closed
   types), `contracts` (`struct`, `oneof`, matching), `router` (a builder and its engine),
   `lifecycle` (a state machine as a `oneof`), `editor` (activities, outcomes and commands: the guide's
-  worked example), `ffi` (`ffistruct`), `variants` (`meta`: a metatable per tag, behaviors shared by spread), `lisp` (a small Lisp compiled to Lua: two `family` types, a pass per stage). Each ends with a comment holding what it prints; `tests/examples.lua` runs them against it.
+  worked example), `ffi` (`ffistruct`), `variants` (`meta`: a metatable per tag, behaviors shared by spread), `lisp` (a small Lisp compiled to Lua: two `family` types, a pass per stage),
+  `lisp_pull` (the same Lisp and passes, with a pull reader, iterator-returning rewrites, and
+  demand-driven batches; compared by `bench/lisp_pull.lua`). Each ends with a comment holding what it prints;
+  `tests/examples.lua` runs them against it.
 - `docs/reading-mua.md`: a tour for newcomers: one function read slowly, its sugar undone step by
   step, and the colon explained. Start here if `with_log "import":` looks strange.
 - `bench/micro.lua`: micro-benchmarks of the emitted code against hand-written Lua.
+- `docs/specialization.md`: runtime plans, bound factories, and experimental struct specialization;
+  `bench/specialization.lua` compares generic and generated construction. Generic remains the default.
 - `docs/syntax.md`: the surface language. `docs/designing-and-writing-mua.md`: how to compose with it.
 - `docs/writing-compilers.md`: writing compilers and language tools in Mua: one compiler built
   from text to running Lua, with families, passes, an IR, an optimizer and tests; its code blocks run.
+- `docs/lisp-pull-comparison.md`: the same compiler with pull traversal boundaries, differential
+  tests, and measurements separating full consumption from avoided work.
+- `docs/luafun.md`: optional Lua Fun integration using native methods, opened/curried vocabularies,
+  and a pipeline builder; `examples/luafun/idioms.mua` exercises them with the Lisp compiler.
+  `docs/luafun-compiler.md` tests compiling a vocabulary to generators, with an independent
+  interpreter, benchmarks, and JIT-trace evidence of fusion and its limits.
 
 Needs LuaJIT 2.1 with the 3.0 syntax backport (merged upstream 2026-07-20). `make test`
 runs `tests/mua.lua`; `LUA=/path/to/luajit make test` selects the interpreter.

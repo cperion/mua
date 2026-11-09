@@ -32,9 +32,7 @@ local get = do(Capabilities, kind, borrower)
 end
 
 -- Return the checked resource owner for a same-integration immediate operation.
-local owner = do(Capabilities, kind)
-    return lookup(Capabilities, kind).owner
-end
+local owner = |Capabilities, kind| -> lookup(Capabilities, kind).owner
 
 -- Recognize registered resources; a structural copy deliberately has no resource identity.
 local kind = do(Capabilities)

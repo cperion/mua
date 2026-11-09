@@ -8,22 +8,20 @@ local Methods = { get = 1, post = 2 }
 
 -- The builder: one verb per method. It checks each sentence and reports at the line that spoke
 -- it (error level 3: the verb, the block's call, the line in the block).
-local router = do(Verbs)
-    return do(body)
-        local routes, seen, Routing = {}, {}, {}
-        for name, code in pairs Verbs do
-            Routing[name] = do(path)
-                if type path ~= "string" or path:sub(1, 1) ~= "/" then
-                    error(name .. ": a path starts with '/', got " .. tostring path, 3)
-                end
-                if seen[name .. path] then error(name .. " " .. path .. " is declared twice", 3) end
-                seen[name .. path] = true
-                return do(handler) routes[#routes + 1] = { method = code, .path, .handler } end
+local router = do(Verbs) = do(body)
+    local routes, seen, Routing = {}, {}, {}
+    for name, code in pairs Verbs do
+        Routing[name] = do(path)
+            if type path ~= "string" or path:sub(1, 1) ~= "/" then
+                error(name .. ": a path starts with '/', got " .. tostring path, 3)
             end
+            if seen[name .. path] then error(name .. " " .. path .. " is declared twice", 3) end
+            seen[name .. path] = true
+            return do(handler) routes[#routes + 1] = { method = code, .path, .handler } end
         end
-        body Routing
-        return routes
     end
+    body Routing
+    return routes
 end
 local routes = router Methods
 

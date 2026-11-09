@@ -132,9 +132,9 @@ local function run()
                 local canvas = place.canvas { width = 40, height = 40 }
                 local video_node = place.video { width = 40, height = 40 }
                 local slot = place.slot {}
-                picture.show_image(image, 'contain')
-                rejects(function() picture.show_image({}) end, 'owned image')
-                rejects(function() picture.show_image(image, false) end, 'image fit')
+                picture.show_image(image) 'contain'
+                rejects(function() picture.show_image({}) 'contain' end, 'owned image')
+                rejects(function() picture.show_image(image)(false) end, 'image fit')
                 canvas.replace(Ui.drawing(function(draw)
                     draw.image { coordinates = { 0, 0, 40, 40 }, image = image }
                 end))
@@ -149,7 +149,7 @@ local function run()
                     return ready(child_place.resources.acquire_image { rgba = red, width = 1, height = 1 })
                 end)
                 check(component_resource.rgba() == red, 'component resource alias retains its identity')
-                rejects(function() picture.show_image(component_resource) end, 'must outlive')
+                rejects(function() picture.show_image(component_resource) 'contain' end, 'must outlive')
                 slot.clear()
                 rejects(function() component_resource.info() end, 'ended')
                 local target = slot.replace(function(child) return child.label 'Temporary' end)
@@ -169,7 +169,7 @@ local function run()
                 setmetatable(holes, { __index = function() return 'not an owned array entry' end })
                 rejects(function() place.dropdown { items = holes } end, 'hole')
                 ready(application.resources.with_image { rgba = red, width = 1, height = 1 }(function(temporary_image)
-                    rejects(function() picture.show_image(temporary_image) end, 'must outlive')
+                    rejects(function() picture.show_image(temporary_image) 'contain' end, 'must outlive')
                     rejects(function()
                         canvas.replace(Ui.drawing(function(draw)
                             draw.image { coordinates = { 0, 0 }, image = temporary_image }
@@ -178,7 +178,7 @@ local function run()
                     check(canvas.count() == 1, 'failed replacement preserves installed items')
                 end))
                 local local_image = ready(place.resources.acquire_image { rgba = red, width = 1, height = 1 })
-                picture.show_image(local_image) -- Acquisition may follow construction: children still release first.
+                picture.show_image(local_image) 'contain' -- Acquisition may follow construction: children still release first.
                 local player = place.resources.acquire_video(video_fixture) {
                     ready = function(value) return value end,
                     unavailable = function(reason)
@@ -188,7 +188,7 @@ local function run()
                 }
                 expired_player = player
                 if player then
-                    video_node.show_video(player)
+                    video_node.show_video(player) 'contain'
                     canvas.append { id = 2, kind = 'image', coordinates = { 0, 0, 30, 30 }, video = player }
                 end
                 picture.show_frame(1); picture.play_image()
@@ -250,8 +250,8 @@ local function run()
                     rejects(function() application.images.threads(2) end, 'before installing')
                     check(player.time() >= 0 and player.duration() >= 0, 'player clock queries')
                 end
-                content.picture.clear_image(); content.picture.show_source(fixture, 'cover')
-                application.images.prefetch(fixture, 10, 10, 'contain')
+                content.picture.clear_image(); content.picture.show_source(fixture) 'cover'
+                application.images.prefetch(fixture) { width = 10, height = 10 } 'contain'
                 application.pump()
                 check(application.images.statistics().entries >= 1, 'source cache participates in managed dispatch')
                 content.canvas.replace {}
@@ -329,7 +329,7 @@ local function run()
             surface.with_content(function(place)
                 local player = ready(place.resources.acquire_video(fixture))
                 local picture, canvas = place.video {}, place.canvas {}
-                picture.show_video(player)
+                picture.show_video(player) 'contain'
                 canvas.replace { { id = 1, kind = 'image', coordinates = { 0,0,40,40 }, video = player } }
                 rejects(function()
                     Ui.drawing(function(draw) draw.image { coordinates = { 0, 0 }, video = player } end)
@@ -364,7 +364,7 @@ local function run()
             surface.with_content(function(place)
                 local player = ready(place.resources.acquire_video(video_fixture))
                 player.on_state_changed(function() delivered = delivered + 1 end)
-                place.video { width = 80, height = 60 }.show_video(player)
+                place.video { width = 80, height = 60 }.show_video(player) 'contain'
             end)(function() surface.render() end)
             application.pump()
             check(delivered == 0 and application.statistics().registrations == registrations,
@@ -398,7 +398,7 @@ local function run()
             surface.with_content(function(place)
                 local picture = place.image {}
                 local image = ready(place.resources.acquire_image { rgba = red, width = 1, height = 1 })
-                picture.show_image(image)
+                picture.show_image(image) 'contain'
             end)(function() surface.render() end)
         end))
     end)

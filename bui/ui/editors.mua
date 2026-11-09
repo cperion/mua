@@ -78,28 +78,32 @@ local curve = do(record)
         end
         return values
     end
-    local set_points = do(channel, values)
-        owner.mutate "set curve points"
+    local set_points = do(channel)
         Check.integer(channel, "channel", 0, 3)
-        Check.array(values, "curve points")
-        assert(#values >= 2 and #values <= 64, "a curve needs 2..64 points")
-        local count = #values
-        local coordinates = ffi.new("float[?][2]", count)
-        for index = 1, count do
-            local point = values[index]
-            Check.array(point, "curve point")
-            assert(#point == 2, "a curve point needs x,y")
-            coordinates[index - 1][0] = Check.number(point[1], "curve x", -1e7, 1e7)
-            coordinates[index - 1][1] = Check.number(point[2], "curve y", -1e7, 1e7)
+        return do(values)
+            owner.mutate "set curve points"
+            Check.array(values, "curve points")
+            assert(#values >= 2 and #values <= 64, "a curve needs 2..64 points")
+            local count = #values
+            local coordinates = ffi.new("float[?][2]", count)
+            for index = 1, count do
+                local point = values[index]
+                Check.array(point, "curve point")
+                assert(#point == 2, "a curve point needs x,y")
+                coordinates[index - 1][0] = Check.number(point[1], "curve x", -1e7, 1e7)
+                coordinates[index - 1][1] = Check.number(point[2], "curve y", -1e7, 1e7)
+            end
+            owner.mutate "publish curve points"
+            Native.BK_curve_set(node, channel, ffi.cast("const float (*)[2]", coordinates), count)
         end
-        owner.mutate "publish curve points"
-        Native.BK_curve_set(node, channel, ffi.cast("const float (*)[2]", coordinates), count)
     end
-    local sample = do(channel, position)
-        owner.check "sample curve"
+    local sample = do(channel)
         Check.integer(channel, "channel", 0, 3)
-        return tonumber(Native.BK_curve_evaluate(node, channel,
-                Check.number(position, "curve position", -1e7, 1e7)))
+        return do(position)
+            owner.check "sample curve"
+            return tonumber(Native.BK_curve_evaluate(node, channel,
+                    Check.number(position, "curve position", -1e7, 1e7)))
+        end
     end
     record.change_snapshot = do()
         local channel = tonumber(Native.BK_get_num(node, "channel"))
@@ -122,14 +126,25 @@ local textarea = do(record, Control)
         offset(last, text)
         assert(first <= last, "byte range is reversed")
     end
-    local insert = do(position, text)
-        owner.mutate "insert text"
-        Native.BK_textarea_insert(node, offset position, Check.string(text, "inserted text"))
-        record.application.check_error
+    -- The byte position chooses the destination; supplying text performs the insertion.
+    -- The final stage rechecks the current buffer, not the buffer at partial application.
+    local insert_at = do(position)
+        Check.integer(position, "UTF-8 byte offset", 0)
+        return do(text)
+            owner.mutate "insert text"
+            Native.BK_textarea_insert(node, offset position, Check.string(text, "inserted text"))
+            record.application.check_error
+        end
     end
-    local delete = do(first, last)
-        owner.mutate "delete text"
+    local checked_span = do(span)
+        Check.keys(span, { start = true, stop = true }, "text range")
+        local first, last = rawget(span, "start"), rawget(span, "stop")
         range(first, last)
+        return first, last
+    end
+    local erase = do(span)
+        owner.mutate "erase text range"
+        local first, last = checked_span span
         Native.BK_textarea_delete(node, first, last)
         record.application.check_error
     end
@@ -141,9 +156,9 @@ local textarea = do(record, Control)
         owner.mutate "move caret"
         Native.BK_textarea_set_caret(node, offset position)
     end
-    local select = do(first, last)
-        owner.mutate "select text"
-        range(first, last)
+    local select = do(span)
+        owner.mutate "select text range"
+        local first, last = checked_span span
         Native.BK_textarea_set_selection(node, first, last)
     end
     local selection = do()
@@ -153,10 +168,12 @@ local textarea = do(record, Control)
         if Native.BK_textarea_selection(node, first, last) == 0 then return Selection.empty() end
         return Selection.selected { start = tonumber first[0], stop = tonumber last[0] }
     end
-    local index_at = do(horizontal, vertical)
+    local index_at = do(position)
         owner.check "text index"
-        return tonumber(Native.BK_textarea_index_at(node,
-                Check.integer(horizontal, "x"), Check.integer(vertical, "y")))
+        Check.keys(position, { x = true, y = true }, "text position")
+        local horizontal = Check.integer(rawget(position, "x"), "text x")
+        local vertical = Check.integer(rawget(position, "y"), "text y")
+        return tonumber(Native.BK_textarea_index_at(node, horizontal, vertical))
     end
     local reveal = do(position)
         owner.mutate "reveal text"
@@ -195,8 +212,8 @@ local textarea = do(record, Control)
         Native.BK_textarea_set_spans(node, native_spans, count)
     end
     return define
-        .insert
-        .delete
+        .insert_at
+        .erase
         .caret
         .move_caret
         .select

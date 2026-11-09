@@ -25,15 +25,15 @@ works normally. A plain Lua embedding host installs `require('mua.init').searche
 local Ui = require "bui.ui"
 local Native = require("bui.ffi").load "./build/bui/libmua_bui.so"
 
-Ui.with_application Native do(application)
-    application.gpu_default false
-    return application.with_window { title = "Hello", width = 480, height = 240 } do(window)
-        window.with_content do(place)
-            place.label "An activity owns this UI."
-            place.button "Close" window.close
-        end do()
-            window.show
-            application.run
+Ui.with_application Native:
+    gpu_default false
+    return with_window { title = "Hello", width = 480, height = 240 }:
+        with_content:
+            label "An activity owns this UI."
+            button "Close" close
+        end:
+            show
+            run
         end
     end {
         opened() = nil,
@@ -67,9 +67,58 @@ before parent resources. Native contexts outlive all mounted node destruction; w
 freed before their contexts, and contexts before permanent roots. Cleanup continues after a
 cleanup error. The original body error takes precedence over secondary cleanup failures.
 
+## Writing the UI language
+
+Open an activity's vocabulary and speak its instructions. In the example above, `label` and
+`button` belong to mounting, `close` and `show` belong to the window, and `run` belongs to the
+application. Missing inner names fall through lexically; inner `resources` and container words
+select the inner owner. Nothing tracks a global current builder.
+
+- Use `activity options:` for a trailing opened body. Assigned/returned installers use
+  `do(..)` because the function itself is a value, not a call site.
+- Bind capabilities when the identity matters: `First.increment`, `Second.increment`, and
+  `Notify.changed value` deliberately identify different subjects/directions.
+- Use explicit parameters for event values and outcomes. A button activation takes no new
+  vocabulary, so a multi-statement activation is `do() ... end`, not an invented opened context.
+- Stage roles rather than mixing parameters: `draw(bounds)` returns painting instructions;
+  an input response receives its event and returns response instructions; `form(Finish)` returns
+  placement instructions. Each returned instruction block opens one vocabulary.
+- Order and name operands by their purpose, not by their positions in a native call. For example,
+  `Text.insert_at position text` selects a byte destination before insertion; `Text.erase span`
+  consumes one range value. A point, size, range, or input event is cohesive data—not a reason
+  to combine data with a capability or continuation. See the [sentence contracts](bui-activities.md#argument-roles-determine-the-stages).
+- A description builder completes before publication. Name its result rather than embedding a
+  large builder inside a parenthesized setter call.
+
+With `refresh` and `choose` supplied by your component:
+
+```mua
+local commands = Ui.menu:
+    item { caption = "Refresh", action = refresh }
+    submenu { caption = "Document" }:
+        item { caption = "Choose file", action = choose }
+    end
+end
+local shortcuts = Ui.keymap:
+    bind "Ctrl+r" refresh
+end
+```
+
+The menu builder records commands; it does not install native menus. A mounting instruction
+creates `local Document = menu_button "Document"`; `Document.menu commands` publishes the
+checked description under that control's owner. `bind_keys shortcuts` installs the keymap under
+the enclosing window. A callback can capture an instruction for later use, but the instruction
+still checks its original owner. Opening does not prolong that owner's lifetime.
+
+`examples/bui/activities.mua` shows two independently owned components, parent wiring, pure
+canvas descriptions and deferred replacement. `examples/bui/workbench.mua` composes graph review,
+command descriptions, file completion and a reusable custom preview. Reusable components and
+workflows keep vocabulary boundaries small; do not put an entire application in one deeply
+nested lexical block (LuaJIT also bounds a closure's captured upvalues).
+
 ## Placement and controls
 
-Containers take options then an assembly body: `place.column options do(children) ... end`.
+Containers take options then an assembly body: `column options:` followed by its instructions.
 The body receives that container's placement vocabulary. The container's returned capabilities
 refer to the live container; its children are adopted rather than released at the assembly exit.
 
@@ -162,7 +211,7 @@ Only library native-entry prototypes disable JIT; the library does not globally 
 
 ## Surface services
 
-Windows and headless surfaces expose `render`, `resize(width,height)`, `size`, `close`,
+Windows and headless surfaces expose `render`, `resize {width,height}`, `size`, `close`,
 `with_content`, `with_header`, timers, `undo`, `redo`, `undo_depth`, `close_popups`, and clipboard
 `read`/`write`. Clipboard reads return `Ui.Acquisition.ready(text)` or `unavailable(reason)`;
 headless clipboards are surface-local. Native clipboard buffers are copied and freed using
@@ -173,11 +222,15 @@ Native windows also support `show`, `title text`, `frames`, animation and
 a supplied handler must eventually call `close` if it wants to accept. Headless surfaces require
 explicit rendering/pumping and cannot be shown or animated.
 
-`surface.input` offers `press(x,y,modifiers)`, `release`, `motion`, `wheel(x,y,delta,modifiers)`,
-`scroll(x,y,horizontal,vertical,modifiers)`, `button(x,y,button,release,modifiers)`,
-`context_menu(x,y,modifiers)`, `key(text,keysym,modifiers)` and `key_release(keysym,modifiers)`.
-These are synchronous input injections; their notifications are still deferred. Modifier/button
-codes are BUI's published codes. Application `theme`, `scale`, `font`, `gpu_default` change the
+`surface.input` takes one named event value per injection:
+
+- `press`, `release`, `motion`, `context_menu`: `{x,y,modifiers}`;
+- `wheel`: `{x,y,delta,modifiers}`; `scroll`: `{x,y,horizontal,vertical,modifiers}`;
+- `button`: `{x,y,button,action,modifiers}`, with action `press` or `release`;
+- `key`: `{text,keysym,modifiers}`; `key_release`: `{keysym,modifiers}`.
+
+Modifiers default to zero. These are synchronous injections returning whether input was consumed;
+their notifications are still deferred. Modifier/button codes are BUI's published codes. Application `theme`, `scale`, `font`, `gpu_default` change the
 corresponding global policy; `statistics()` reports live managed registration counts.
 
 ## Canvas descriptions
@@ -197,7 +250,7 @@ frame number. A pure description retains resource identities, not ownership: pub
 still prove that each borrowed resource outlives the canvas.
 
 Canvas capabilities are `replace descriptions`, `set_item description`, `append description`,
-`put(index,description)`, `delete id`, `truncate count`, `raise id`, `lower id`, and `count()`.
+`put_at index description`, `delete id`, `truncate count`, `raise id`, `lower id`, and `count()`.
 Descriptions are validated/copied before publication; duplicate identities and undersized pixel
 buffers are refused. Installed records retain borrowed font strings. Replacing/truncating the
 native items happens before dropping that retention. A drawing builder cannot be used after
@@ -247,9 +300,9 @@ Its `info()` returns intrinsic dimensions, frame count and loop count. `next_fra
 and copies ownership of a frame into the receiving owner; the resulting image can outlive the
 decoder. Advancing the decoder is not rolled back if a later installer fails.
 
-Image, video, label and button nodes expose `show_image(image,fit)`, `show_source(path,fit)`,
+Image, video, label and button nodes expose `show_image Image fit`, `show_source path fit`,
 `show_frame(index)`, `play_image()` and `clear_image()`. Image/video nodes additionally expose
-`show_video(player,fit)`. Labels/buttons retain BUI's intrinsic-size image presentation.
+`show_video Player fit`. Labels/buttons retain BUI's intrinsic-size image presentation.
 
 **Retained loans require an ancestor owner.** An application-owned image can be shown by its
 windows; a mount-owned image can be shown by that mount's descendants. A shorter-lived or sibling
@@ -259,19 +312,21 @@ use placement-owned acquisitions for retained UI. Copying/spreading a resource's
 does not copy its identity. Returning a resource directly from an installer produces a checked
 alias whose loan is narrowed to that component's lifetime.
 
-For example, inside an installer:
+For example, a placement installer can acquire an image for its descendants:
 
 ```mua
-local result = place.resources.acquire_image {
-    rgba = string.char(255, 180, 80, 255), width = 1, height = 1,
-}
-result {
-    ready = do(image)
-        local picture = place.image { width = 64, height = 64 }
-        picture.show_image(image, "contain")
-    end,
-    unavailable(reason) = place.label(reason),
-}
+local badge = do(..)
+    local result = resources.acquire_image {
+        rgba = string.char(255, 180, 80, 255), width = 1, height = 1,
+    }
+    result {
+        ready = do(Image)
+            local Picture = image { width = 64, height = 64 }
+            Picture.show_image(Image) "contain"
+        end,
+        unavailable = reason -> label reason,
+    }
+end
 ```
 
 A player exposes `play`, `pause`, `seek(seconds)`, `rate(number)`, `loop(boolean)`,
@@ -301,7 +356,8 @@ the library does not claim that the video player supports them. Playback is mute
 - `budget(bytes)` sets the decoded shared-cache budget, not a limit on all owned images.
 - `threads(count)` accepts 0–64 (zero: native automatic policy). Choose it before installing
   asynchronous sources/players or prefetching; clearing the cache does not reopen configuration.
-- `prefetch(path,width,height,fit)`, `clear()`, and `statistics()` manage settled cache entries.
+- `prefetch path size fit`, `clear()`, and `statistics()` manage settled cache entries. Size is
+  `{width,height}`; the last stage starts prefetching.
   Statistics copy `bytes`, `budget`, `entries`, `pending`, `decoded`, `failed`, `cancelled`,
   `evicted`, and `decode_ms`; prefetch success is not promised synchronously.
 - `video_backends()` returns compiled backend names, not a runtime codec guarantee.
@@ -310,10 +366,11 @@ the library does not claim that the video player supports them. Playback is mute
 
 - Ramp: `stops`, `set_stops`, `sample(position)`, `active_stop`, `select_stop(index)`,
   `set_active_color`. Stops are `{position,color}` records; 2–32 stops are accepted.
-- Curve: `points(channel)`, `set_points(channel,points)`, `sample(channel,position)`;
+- Curve: `points channel`, `set_points channel points`, `sample channel position`;
   2–64 `{x,y}` points, native channels 0–3. Change notifications snapshot the active channel.
-- Textarea: `insert(offset,text)`, `delete(start,stop)`, `caret`, `move_caret`, `select(start,stop)`,
-  `selection`, `index_at(x,y)`, `reveal(offset)`, `set_spans`. Offsets are UTF-8 **bytes**,
+- Textarea: `insert_at byte_position text`, `erase span`, `caret`, `move_caret`, `select span`,
+  `selection`, `index_at position`, `reveal byte_position`, `set_spans`. A span is `{start,stop}`;
+  a position is `{x,y}`. Selection returns that same span shape, usable for erasure. Offsets are UTF-8 **bytes**,
   zero-based, with an exclusive stop; splitting a multibyte sequence is rejected. `selection()`
   returns `Ui.Selection.selected({start,stop})` or `empty()`. Spans optionally carry `foreground`
   and `background` RGBA arrays.
@@ -331,7 +388,7 @@ action. `checked = false` differs from an omitted check indicator. Actions are r
 not executed while describing a menu. Returning from the builder revokes its instructions.
 
 `menu_button.menu(descriptions)` installs a menu and returns a disconnect function. Surfaces
-provide `open_menu(descriptions, options)`, `open_pie(descriptions, options)`, `close_popups()`,
+provide `open_menu descriptions placement`, `open_pie descriptions placement`, `close_popups()`,
 and copied `popup_rows()` inspection. Placement options are `title`, `x`, and `y`; pie menus
 admit at most eight entries. Native notifications enqueue actions for a later driver turn.
 Replacement and disconnection revoke old registrations and cancel their queued delivery.
@@ -378,12 +435,12 @@ an old binding does not cancel its replacement.
 `tree.replace_forest` prepares a complete replacement before publication. Tree capabilities:
 
 - `selection()` and `item(id)` return `Selection.selected(snapshot)` or `empty()`;
-- `select_item(id)` (nil clears), `rename_item(id,label)`, `item_values(id,values)`,
-  `expand_item(id,bool)`, `mark_item(id,bool)`, `toggle_item(id,column,bool)`;
+- `select_item identifier` (nil clears), `rename_item identifier label`, `set_item_values identifier values`,
+  `set_expanded identifier expanded`, `set_marked identifier marked`, `set_toggle identifier column enabled`;
 - `item_children(id)` returns copied selections, and `tree_rows()` returns IDs and rectangles.
 
 Toggle columns are one-based. Tree notifications copy stable IDs and state, never item pointers.
-Lists have `items()`, `mark(index,bool)`, `clear_marks()` and the shared view capabilities.
+Lists have `items()`, `set_marked index marked`, `clear_marks()` and the shared view capabilities.
 `selection_mode` is `single`, `multiple`, `extended` or `optional` for lists and trees.
 
 `node_editor options body` accepts only direct `graph_node` children. Graph nodes are leaves,
@@ -413,12 +470,12 @@ native pointers. `deletion` contains the selected node states: the application d
 to remove them. Querying `links()` returns live node capabilities for further editing; outward
 link snapshots instead contain identity tokens. See `examples/bui/workbench.mua` for composition.
 
-Panels have silent `expand(bool)`, `expanded()`, and `with_header installer body`. The latter
+Panels have silent `set_expanded expanded`, `expanded()`, and `with_header installer body`. The latter
 mounts header accessories independently of the collapsible body and retires them on every exit.
 Panel user changes report the expanded boolean. All view-capable controls provide
-`view(axis)`, `move_view(axis,fraction)` and `scroll_view(axis,units)`, where axis is `horizontal`
+`view axis`, `move_view axis fraction` and `scroll_view axis units`, where axis is `horizontal`
 or `vertical`. A view snapshot has `first`, `last`, `total`, `visible`.
-Standalone scrollbars add `range()` and `set_range(first,last)`; `scrolled` carries
+Standalone scrollbars add `range()` and `set_range {first,last}`; `scrolled` carries
 `Ui.Scrolling.moveto(fraction)` or `units(count)`. Wiring a scrollbar to a view is explicit.
 
 `place.link_fields {first,second,...}` links 2–64 number/slider controls in the same surface.
@@ -438,30 +495,63 @@ Every control has `layout(options)`, `reset_placement()`, `geometry()`, `inspect
 and `parent()`. Inspection returns copied kind/rectangle/child-count data; `parent()` uses
 `Selection`. Layout managers are `none`, `pack`, `grid`, `place`; options include side, fill,
 anchor/sticky, padding, expand, row/column/spans and absolute/relative placement. Grid row/column
-coordinates are zero-based. A frame's `grid_track(axis,index,weight,minimum)` uses a one-based
-track index, with axis `row` or `column`. Layout descriptions are validated before publication.
+coordinates are zero-based. A frame's `configure_track axis index settings` selects a track,
+then supplies `{weight,minimum}`. Index is one-based; axis is `row` or `column`; minimum defaults
+to zero. Both settings are checked before publication.
 
-Surfaces add `interaction()`, `clear_focus()`, `pointer(x,y)`, and an `ime` vocabulary:
+Surfaces add `interaction()`, `clear_focus()`, `position_pointer {x,y}`, and an `ime` vocabulary:
 `start()`, `compose {result,composite,cursor,start,stop}`, `finish()`, `state()`, `composing()`.
 Composition offsets are UTF-8 byte offsets, with `-1` meaning unspecified. Invalid byte splits
 and reversed selections are refused. `state()` synchronizes native IME state and returns
 `changed`, `enabled`, `restart`, `x`, `y`; it is not a pure query. Interaction snapshots include
 cursor, hover/focus selections, modal/tooltip/popup state and rendering/animation needs.
 
-A custom control installs `behavior {event,frame,draw,width,height}`, returning disconnect.
-Replacement retires the old binding; old disconnects cannot clear a replacement. Width/height
-are natural dimensions, default 160 and bounded to 1–32768.
+`Ui.behavior:` builds a pure, inspectable description. Its instructions are:
 
-- `event(event,Services)` is synchronous and returns `Ui.Input.consumed()` or `ignored()`.
-  Kinds are `pressed`, `released`, `moved`, `left`, `wheel`, `key_pressed`, `key_released`,
-  `focused`, `blurred`. Coordinates, modifiers, clicks, wheel deltas, text and keysym are copied.
-- `frame(Services)` returns `Ui.Frame.next_frame()` or `finished()`. Each requested frame
-  invalidates this control; continuing requests another frame.
-- `draw(Paint,rectangle)` is synchronous drawing, not notification delivery. Paint is borrowed
-  from the current native raster and expires on return, including exceptional return.
-- Borrowed services are `request_frame(milliseconds=0)`, `invalidate()`, `cursor(name)`,
-  `focused()`, and `post(notification,payload)`. They expire when the callback returns.
-  `post` schedules ordinary work under the behavior's owner; it does not deliver inside C.
+- `natural_size {width,height}`: dimensions default to 160 when no size is declared; each is
+  bounded to 1–32768.
+- `when_pressed`, `when_released`, `when_moved`, `when_left`, `when_wheel`, `when_key_pressed`,
+  `when_key_released`, `when_focused`, `when_blurred`: each takes `event -> response instructions`.
+  The event has copied `kind`, coordinates, modifiers, clicks, deltas, text and keysym. The
+  returned instructions open the restricted response vocabulary and return `Ui.Input.consumed()`
+  or `ignored()`. Undeclared events are ignored.
+- `prepare_frame:`: frame instructions receive only `invalidate` and return `Ui.Frame.next_frame()`
+  or `finished()`. Each requested frame invalidates the control; continuing requests another.
+- `paint draw`: `draw(bounds)` returns painting instructions. These open a borrowed painting
+  vocabulary, not a notification or input-service vocabulary.
+- `use description`: contribute another description's clauses. Later clauses replace only their
+  own event, preparation, painting, or size. Nested builders own separate output.
+
+`Preview.behave description` lowers and installs one binding, returning disconnect. It rechecks
+and snapshots the description before publication. Old disconnects cannot clear a replacement.
+Builder return revokes builder instructions; it does **not** execute handlers or install C hooks.
+
+Input response instructions offer `request_frame milliseconds`, `invalidate`, `cursor name`,
+`focused`, and `notify_later notification payload`. A notification function is a destination,
+not an activity body: choose that destination first, then supply its payload to queue outward
+delivery under the binding's owner. It cannot deliver inside C. Frame preparation has no cursor/focus/notification
+operations. Painting has neither response nor frame-preparation operations. Each vocabulary
+expires on its own synchronous exit, including errors.
+
+```mua
+local responding = do(pointer) = do(..)
+    cursor "crosshair"
+    invalidate
+    return Ui.Input.consumed()
+end
+local painting = do(bounds) = do(..)
+    rectangle { ..bounds, color = { 1, 0, 0, 1 } }
+end
+local preview_behavior = Ui.behavior:
+    natural_size { width = 240, height = 120 }
+    when_pressed responding
+    paint painting
+end
+```
+
+The closed `Response | Preparation | Painting | NaturalSize` family and exhaustive checking and
+lowering passes live in `bui/ui/behavior.mua`. Native lifecycle and phase handling live in
+`custom.mua`; the old `{event,frame,draw,...}` callback-bag interface is not supported.
 
 Custom controls also expose guarded ordinary `request_frame`, `cursor`, `focused` capabilities.
 Ordinary mutation, destruction and recursive dispatch are forbidden during services/drawing.
@@ -471,8 +561,8 @@ A thrown callback error becomes the application's first fatal callback fault, no
 
 Surfaces and placement vocabularies provide:
 
-- `open_dialog options installer completed`, where `installer(place,Finish)` returns inward
-  capabilities and `Finish` supplies `accept(value)` and `cancel()`;
+- `open_dialog options completed form`, where `form(Finish)` returns placement instructions,
+  and those instructions return inward capabilities; `Finish` supplies `accept value` and `cancel`;
 - `confirm {title,message,accept="OK",cancel="Cancel"} completed`;
 - `choose_file {title,browser=properties} completed`.
 
@@ -508,26 +598,45 @@ Do not reinterpret their zero high byte as image transparency. Frame options can
 restrict completion to a checked `{x,y,width,height}` region.
 Frame end and temporary-view expiry occur even when drawing fails.
 
-`Paint` provides rectangle/outline/round-rectangle/circle/ellipse/line/polygon/triangle/point
-painting; shadows, gradients, HSV circles and spheres; `text`, `text_run`, `image`, `mesh`,
-`widget`, `widget_base`; and bounded `with_clip`, `with_view`, `with_primitive_sink` activities.
-Colors are RGBA in `[0,1]`. Image source/destination boxes use x/y/width/height. Mesh vertices
-have x/y/u/v and optional packed RGBA color; triangle indices are one-based. Mesh/widget clips
-use min/max coordinates. A view borrows pixels and never begins/ends/frees a frame.
+`Paint` provides rectangle/outline/round-rectangle/circle/ellipse/line painting; shadows,
+gradients, HSV circles and spheres; `mesh`, `widget`, `widget_base`; and bounded `with_clip`,
+`with_primitive_sink` activities. Multi-operand sentences are staged by role:
+
+- `polygon coordinates color`, `triangles coordinates colors`, `points coordinates colors size`;
+- `text description position color`, `text_run Text position color`;
+- `image Image destination options`, with sampling options `{frame,source,alpha,nearest}` (use
+  `{}` for defaults). Source and destination rectangles are distinct operands.
+
+A saved stage retains its original painting borrow, not a global current frame. Calling it
+after the borrow expires fails before C, even if another frame is now active.
+Colors are RGBA in `[0,1]`. Positions and offsets are `{x,y}`. Image source/destination boxes,
+clipping boxes and widget/text rectangles are `{x,y,width,height}`; box x/y default to zero.
+Mesh vertices have x/y/u/v and optional packed RGBA color; triangle indices are one-based.
+`paint_geometry.mua` lowers boxes to native min/max clipping where necessary; callers do not
+switch rectangle conventions for different primitives. Optional mesh/widget clips must be
+nonempty (native empty clipping would mean **no restriction**).
+`with_clip bounds:` borrows a restricted painting vocabulary. Coordinates stay in the parent
+raster's space; clipping does not translate the origin. Its native view never begins, ends, or
+frees the surrounding frame.
 `with_primitive_sink` temporarily installs the raster's native primitive adapters, leaving
 begin/end to the enclosing frame, and restores the previous sink on every exit. Its pooled
 clip adapter intersects producer scissors (including reset) with the enclosing view; native
 shallow-copy sink userdata cannot escape that clip. Producers must not retain the sink. These are synchronous UI-thread activities, not Lua worker callbacks.
 
-Text descriptions contain `text`, optional `family`, `flags`, `size`. Prepared text exposes
+Text descriptions contain `text`, optional `family`, `style`, `underline`, `size`. Styles are
+`regular` (default), `bold`, `italic`, `bold_italic`; underline is a boolean decoration, not a
+font face. Prepared text exposes
 `width()` and a copied `mask()` (bytes, dimensions, origin, ascent). It owns a description, not
 an immortal native cache pointer: every use checks the native generation. Whitespace-only or
 unavailable native runs are acquisition-unavailable. `application.typography` supplies
-`available`, `measure(description)`, `ui_width(text)`, `add_font(family,flags,bytes)` and
+`available`, `measure description`, `ui_width text`, `register_font family style bytes` and
 `default_font()` (copied embedded font bytes). Font registration is global integration policy.
 
 Textures accept copied `{width,height,rgba,stride}`, an owned `{image,frame}`, or `{video}`.
-They provide `size()`, `update(x,y,pixels)`, `copy_image(image,frame)` and video-only `refresh()`.
+They provide `size()`, `upload_at position pixels`, `copy_frame Image frame` and video-only
+`refresh()`. Upload position is `{x,y}`, captured as scalar destination coordinates. Supplying
+pixels performs the upload against the current owned texture; supplying a frame copies that
+one-based image frame.
 Only one evolving texture transfer may own a video's native texture bookkeeping at a time;
 competing acquisitions and manual updates are refused. A not-yet-decoded texture is an explicit
 unavailable size/mesh result. Immediate painting can use live same-integration sibling resources;
@@ -541,7 +650,7 @@ NV12 dimensions must be even. Rows are one-based. No caller-generated cache key 
 
 `application.with_host(Services)(options)(body)` opens an offscreen surface with explicit host
 capabilities. The host drives the existing `pump`, input, IME, render and pixel APIs. Queued
-notifications are `request()`, `cursor(code)`, `warp(x,y)`, `write_clipboard(text)`. Synchronous
+notifications are `request()`, `cursor(code)`, `warp(position)` with `{x,y}`, and `write_clipboard(text)`. Synchronous
 services are `wake()` (arm a later host turn), `schedule(milliseconds)`, and `read_clipboard()`
 (return `Acquisition.ready(string)` or `unavailable(reason)`). Services may not mutate managed UI
 or pump recursively. Keep polling on the UI thread while asynchronous media/GPU work is pending;
@@ -561,7 +670,7 @@ calls are checked; raw pointer copies cannot be made safe by a Mua wrapper.
 `application.with_render_sink(Services)(body)` temporarily installs a primitive backend sink,
 not a kit renderer. Optional synchronous drawing services are `begin_frame`, `clip`, `triangles`,
 `lines`, `points`, `text`, `end_frame`; arguments are copied records/arrays. The body receives
-`viewport(width,height)`. Sink restoration is scoped; viewport size is explicit global native
+`set_viewport {width,height}`. Sink restoration is scoped; viewport size is explicit global native
 configuration, not an invented restorable query. Nested sinks restore correctly; callback faults
 use the normal safe boundary. These bodies/producers must stay synchronous on the UI thread.
 
@@ -571,9 +680,11 @@ The wake callback runs on the UI thread; only the native C wake function is fore
 The external integration must arrange wakeups and own its worker/queue lifetime. Stop/wake hooks
 are cleared before Lua trampolines retire. Without keep-alive, `run` still ends when windows close.
 
-Native windows have `manager` queries (`position`, `screen`, `pointer`, `scale`, `state`) returning
-acquisitions of `{first,second}` and checked requests: `move`, `minimum`, `maximum`, `resizable`,
-`set_state`, `raise`, `lower`, `focus`, `topmost`, `borderless`, `disabled`, `opacity`.
+Native windows have `manager` queries returning acquisitions: `position` and `pointer` produce
+`{x,y}`, `screen` produces `{width,height}`, `scale` produces a number, and `state` produces a
+state name. Requests are `move_to position`, `set_minimum_size size`, `set_maximum_size size`,
+`allow_resize {horizontal,vertical}`, `set_state`, `raise`, `lower`, `focus`, `topmost`,
+`borderless`, `disabled`, `opacity`.
 State names are `normal`, `minimized`, `hidden`, `maximized`. Unsupported host operations return
 unavailable; an accepted request does not promise that the window manager honored it.
 `gpu(bool)` returns an acquisition; `gpu_state()` is `Gpu.software`, `starting`, or `hardware`.
@@ -588,9 +699,10 @@ return no success indication. `images.source_info(path)` queries retained-source
 
 ## Implementation and verification
 
-The managed implementation is Mua throughout `bui/ui/`, not a Mua façade over a Lua framework.
-It follows [the activity guide](designing-and-writing-mua.md) and the vocabulary/composition
-patterns in `examples/lisp.mua`. Raw declarations and library loading remain in `bui.ffi`.
+The managed implementation lives in `bui/ui/`. The [activity guide](designing-and-writing-mua.md)
+and [sentence contracts](bui-activities.md) govern its design; writing `.mua` files or passing
+regressions does not by itself establish conformance. Raw declarations and library loading
+remain in `bui.ffi`.
 
 - `application.mua` is the composition root: it owns the exclusive integration and composes
   the driver, resource and appearance vocabularies. There is no `Application` superclass.
@@ -610,6 +722,10 @@ patterns in `examples/lisp.mua`. Raw declarations and library loading remain in 
   `handles.mua` checks resource identities and retained loans.
 - `menu_descriptions.mua` models the closed menu language. Its pure passes and the lowering pass
   in `menus.mua` are checked against that family, independently of component capabilities.
+- `behavior.mua` describes custom-control work with a closed clause family and separate checking
+  and lowering passes. `custom.mua` owns publication and the distinct response/frame/painting
+  borrows. `dialogs.mua` represents preparing, presented, accepted and cancelled states explicitly;
+  completion delivery belongs to teardown, not to the accept button.
 
 Copying a capability vocabulary shares its captured state; a new activity creates independent
 state. No native pointer, destructor or callback registration becomes caller-owned merely because
@@ -645,8 +761,16 @@ playback. Set `MUA_LUAJIT_EXECUTABLE` to the LuaJIT with the syntax backport req
 
 The [coverage inventory](bui-coverage.md) maps every native facility to an activity, ownership
 policy and regression. Its handwritten native-function ledger has a separate accounting test;
-that test is explicitly not behavioral evidence. The control regression mutates, renders and
-retires each ordinary catalog kind; specialized regressions cover collections, graphs, menus,
+that test is explicitly not behavioral evidence. `tests/bui_ui_language.mua` executes opened UI programs: nested lexical subjects, late delivery
+while another workspace is open, nearest-owner resource acquisition, rollback, explicit dialog
+completion and clipped painting. These assertions test the meaning of the sentences, not the
+number of colons. `bui_ui_staging.mua` checks what survives partial application: current UTF-8
+boundaries, stable tree identity across replacement, copied upload destinations, prepared menus,
+and expiry even when another activity could provide similarly named operations.
+`bui_ui_behavior.mua` checks pure clauses, independent lowering, deliberate shared captures,
+ordered composition, validation and exhaustive consumers without loading BUI.
+The control regression mutates, renders and retires each ordinary catalog
+kind; specialized regressions cover collections, graphs, menus,
 custom services, dialogs, IME, hosting and graphics. Native-window tests run on Linux and on
 actual Windows binaries. Availability remains platform-dependent, particularly for codecs,
 GPU/text backends and window-manager operations. No constructor count or raw escape hatch is

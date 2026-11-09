@@ -1,0 +1,155 @@
+-- Optional integration experiment; no vendored dependency or new Mua syntax.
+-- From the repository root, with Lua Fun on package.path:
+--   LUA_PATH='/path/to/luafun/?.lua;;' luajit mua.lua examples/luafun/idioms.mua
+-- Tested against Lua Fun 057ede73d78b0e6bdbb354b35492d28c7950f857.
+
+local Fun = require "fun"
+local even = value -> value % 2 == 0
+local square = value -> value * value
+
+-- 1. No adapter at all: subject first, short functions, native Lua Fun methods.
+local direct = Fun.range(100):filter(even):map(square):take(5):sum()
+assert(direct == 220)
+print("native methods -> " .. direct);
+
+-- Opening is lexical. Unlike require('fun')(), it does not populate _G.
+do
+    local Fun..
+    local total = sum(take(5, map(square, filter(even, range 100))))
+    assert(total == direct)
+    print("opened vocabulary -> " .. total)
+end
+
+-- 2. A thin vocabulary changes application shape, not iterator representation.
+-- Bind a policy first, then accept all THREE values of a raw iterator. A wrapper
+-- object also works because Lua Fun recognizes it. No per-element adapter closure.
+local with_argument = operation -> argument -> |generator, parameter, control| -> operation(argument,
+    generator, parameter, control)
+local Sequences = define ..Fun
+    map = with_argument Fun.map
+    filter = with_argument Fun.filter
+    take = with_argument Fun.take
+end
+
+do
+    local Sequences..
+    local total = sum(take 5 (map square (filter even (range 100))))
+    assert(total == direct)
+    print("curried vocabulary -> " .. total)
+
+    -- Reusable policy, not a captured traversal. Each application has its own input.
+    local squares = map square
+    assert(sum(squares(range 3)) == 14)
+    assert(sum(squares(range 4)) == 30)
+
+    -- Raw triples must not collapse to their first result through the adapter.
+    assert(sum(map square (ipairs { 1, 2, 3 })) == 14)
+
+    -- Mapper results remain multiple results, including nil holes and false.
+    local annotate = do(value) return value, nil, false end
+    local count = 0
+    for _, value, missing, flag in map annotate (range 3) do
+        assert(value == count + 1 and missing == nil and flag == false)
+        count += 1
+    end
+    assert(count == 3)
+end
+
+-- 3. A builder for a longer pipeline. Its verbs replace a build-owned traversal;
+-- the returned value is still a Lua Fun iterator, not a new stream object.
+-- The body configures the pipeline: its return value is deliberately not a result
+-- channel. Completion returns the traversal. This is not a resource/cleanup scope.
+-- Only lazy transformations are offered here: adding drop would change that promise.
+local through = do(generator, parameter, control)
+    local original = Fun.iter(generator, parameter, control)
+    return do(body)
+        local current = original
+        body define
+            map = do(transform) current = Fun.map(transform, current) end
+            filter = do(predicate) current = Fun.filter(predicate, current) end
+            take = do(count) current = Fun.take_n(count, current) end
+        end
+        -- Return a wrapper AND its parameter/control, like every Lua Fun producer.
+        return Fun.iter current
+    end
+end
+
+local pipeline = through(Fun.range 100):
+    filter even
+    map square
+    take 5
+end
+assert(pipeline:sum() == direct)
+print("pipeline builder -> " .. direct)
+
+-- A local binding retains only the wrapper. Reopen its triple with iter when
+-- using a for loop; `for ... in pipeline` alone loses parameter/control values.
+local collected = {}
+for _, value in Fun.iter pipeline do collected[#collected + 1] = value end
+assert(table.concat(collected, ",") == "4,16,36,64,100")
+
+-- Build-time and pull-time effects are separate. take_n stops without requesting
+-- the following value. These counters demonstrate demand, not a speed claim.
+local inspected, mapped = 0, 0
+local inspect_even = do(value)
+    inspected += 1
+    return even value
+end
+local count_square = do(value)
+    mapped += 1
+    return square value
+end
+local demanded = through(Fun.range 100):
+    filter inspect_even
+    map count_square
+    take 5
+end
+assert(inspected == 0 and mapped == 0)
+assert(demanded:sum() == 220)
+assert(inspected == 10 and mapped == 5)
+print "demand -> inspected 10, mapped 5; nothing ran while building"
+
+-- Real integration: retain the full Lisp compiler from the companion example.
+-- The iterator's control is internal; map receives the compiled program, not its
+-- ordinal. take_n(1) prevents compilation of the malformed second program.
+local Lisp = assert(require("mua.init").loadfile "examples/lisp_pull.mua") "library"
+local programs = {
+    "(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 10)",
+    "(",
+}
+local executed = 0
+local execute = do(compiled)
+    executed += 1
+    return assert(loadstring compiled.lua)()
+end
+-- A cursor's step, state and control are already Lua Fun's (f, parameter, control):
+-- no adapter. The loop's own control is the cursor's progress.
+local compilations = Lisp.compiled_programs programs
+local answers = through(compilations.step, compilations.state, compilations.control):
+    map execute
+    take 1
+end
+assert(executed == 0)
+assert(answers:head() == 3628800 and executed == 1)
+print "Lisp -> factorial 3628800; malformed next program was never compiled"
+
+-- Mutable reader state cannot be replayed by copying or wrapping a cursor. Consume
+-- it once. Do NOT feed it to cycle, partition, or span; those require replayability.
+local forms = Lisp.forms "1 2 3"
+local reader = Fun.iter(forms.step, forms.state, forms.control)
+assert(reader:head() == 1)
+assert(reader:head() == 2)  -- another pull advances the shared reader, not a rewind
+print "one-shot reader -> repeated head advances; wrappers do not promise replay"
+
+-- No global namespace injection occurred.
+assert(rawget(_G, "range") == nil and rawget(_G, "filter") == nil)
+
+--[=[ output
+native methods -> 220
+opened vocabulary -> 220
+curried vocabulary -> 220
+pipeline builder -> 220
+demand -> inspected 10, mapped 5; nothing ran while building
+Lisp -> factorial 3628800; malformed next program was never compiled
+one-shot reader -> repeated head advances; wrappers do not promise replay
+]=]

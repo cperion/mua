@@ -178,18 +178,14 @@ local Instructions = define
     strings = StringsSetting
 end
 local Publishing = define
-    NumberSetting = do(node, recurse, record)
-        return record.native.BK_set_num(record.node, node.key, node.value)
-    end
-    StringSetting = do(node, recurse, record)
-        return record.native.BK_set_str(record.node, node.key, node.value)
-    end
-    ColorSetting = do(node, recurse, record)
-        return record.native.BK_set_color(record.node, node.key, node.value)
-    end
-    StringsSetting = do(node, recurse, record)
-        return record.native.BK_set_strs(record.node, node.key, node.value, node.count)
-    end
+    NumberSetting = |node, recurse, record| -> record.native.BK_set_num(record.node,
+        node.key, node.value)
+    StringSetting = |node, recurse, record| -> record.native.BK_set_str(record.node,
+        node.key, node.value)
+    ColorSetting = |node, recurse, record| -> record.native.BK_set_color(record.node,
+        node.key, node.value)
+    StringsSetting = |node, recurse, record| -> record.native.BK_set_strs(record.node,
+        node.key, node.value, node.count)
     GeometrySetting = do(node, recurse, record)
         record.native.BK_geom_set(record.node, node.key, node.value)
         return 1

@@ -5,14 +5,12 @@ local Typography = require "bui.ui.typography"
 local Pixels = require "bui.ui.pixels"
 
 -- Compose resource activities over one owner; copying the vocabulary never transfers a resource.
-local for_owner = do(Application, owner)
-    return define
-        ..Media.resources(Application, owner)
-        ..Raster.resources(Application, owner)
-        ..Textures.resources(Application, owner)
-        ..Typography.resources(Application, owner)
-        ..Pixels.for_owner(Application, owner)
-    end
+local for_owner = |Application, owner| -> define
+    ..Media.resources(Application, owner)
+    ..Raster.resources(Application, owner)
+    ..Textures.resources(Application, owner)
+    ..Typography.resources(Application, owner)
+    ..Pixels.for_owner(Application, owner)
 end
 
 return define .for_owner end

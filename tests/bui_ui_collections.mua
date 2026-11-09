@@ -58,40 +58,40 @@ Ui.with_application Native do(Application)
             expect(#tree.tree_rows() == 2)
             tree.select_item 7
             expect(selected(tree.selection()).label == "Child")
-            tree.rename_item(7, "Renamed")
-            tree.item_values(7, { "column" })
-            tree.toggle_item(7, 32, true)
-            tree.mark_item(7, true)
+            tree.rename_item 7 "Renamed"
+            tree.set_item_values 7 { "column" }
+            tree.set_toggle 7 32 true
+            tree.set_marked 7 true
             local item = selected(tree.item 7)
             expect(item.label == "Renamed" and item.values[1] == "column" and item.toggles[32] and item.marked)
-            tree.expand_item("root", false)
+            tree.set_expanded "root" false
             expect(#tree.tree_rows() == 1)
-            tree.expand_item("root", true)
+            tree.set_expanded "root" true
             refuses(|| -> tree.replace_forest { { id = 1, label = "Bad", icon = "NOT_AN_ICON" } },
                 "unknown tree icon")
             expect(selected(tree.selection()).id == 7 and #tree.tree_rows() == 2)
             local bounds = tree.tree_rows()[1].rectangle
-            surface.input.press(bounds.x + 2, bounds.y + 5, 0)
-            surface.input.release(bounds.x + 2, bounds.y + 5, 0)
+            surface.input.press { x = bounds.x + 2, y = bounds.y + 5 }
+            surface.input.release { x = bounds.x + 2, y = bounds.y + 5 }
             expect(#observations == 0)
             Application.pump
             expect(#observations == 1 and observations[1].id == "root" and not observations[1].expanded)
 
             local previous = surface.bind_keys { ["SHIFT+CTRL+K"] = action }
-            expect(surface.input.key("", "k", 3))
+            expect(surface.input.key { text = "", keysym = "k", modifiers = 3 })
             expect(actions == 0)
             Application.pump
             expect(actions == 1)
             local replacement = surface.bind_keys {["ctrl+shift+k"] = do() actions += 10 end }
             previous
-            surface.input.key("", "k", 3)
+            surface.input.key { text = "", keysym = "k", modifiers = 3 }
             Application.pump
             expect(actions == 11)
-            surface.input.key("", "k", 3)
+            surface.input.key { text = "", keysym = "k", modifiers = 3 }
             replacement
             Application.pump
             expect(actions == 11)
-            expect(surface.input.key("", "k", 3))  -- reservation remains consumed after disconnect
+            expect(surface.input.key { text = "", keysym = "k", modifiers = 3 })  -- reservation remains consumed after disconnect
             refuses(|| -> surface.bind_keys { ["+bad"] = action }, "invalid key")
             refuses(|| -> surface.bind_keys { ["a"] = action,["A"] = action }, "duplicate key")
             local bindings = {}
@@ -101,13 +101,16 @@ Ui.with_application Native do(Application)
             surface.bind_keys { ["CTRL+SHIFT+K"] = action }
 
             local click = do(rectangle)
-                surface.input.press(rectangle.x + rectangle.width / 2,
-                    rectangle.y + rectangle.height / 2, 0)
-                surface.input.release(rectangle.x + rectangle.width / 2,
-                    rectangle.y + rectangle.height / 2, 0)
+                local position = { x = rectangle.x + rectangle.width / 2,
+                    y = rectangle.y + rectangle.height / 2 }
+                surface.input.press position
+                surface.input.release position
             end
-            surface.open_menu(Ui.menu do(Menu) Menu.item { caption = "Run", .action } end,
-                { x = 30, y = 30 })
+            local commands = Ui.menu:
+                item { caption = "Run", .action }
+            end
+            local menu_position = { x = 30, y = 30 }
+            surface.open_menu commands menu_position
             surface.render
             local popup = surface.popup_rows()[1]
             expect(popup.kind == "menu" and popup.rows[1].text == "Run")
@@ -115,8 +118,11 @@ Ui.with_application Native do(Application)
             expect(actions == 11)
             Application.pump
             expect(actions == 12)
-            surface.open_pie(Ui.menu do(Menu) Menu.item { caption = "Pie", .action } end,
-                { x = 200, y = 200 })
+            local pie_commands = Ui.menu:
+                item { caption = "Pie", .action }
+            end
+            local pie_position = { x = 200, y = 200 }
+            surface.open_pie pie_commands pie_position
             surface.render
             expect(surface.popup_rows()[1].kind == "pie")
             surface.close_popups

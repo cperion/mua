@@ -65,12 +65,8 @@ local describe = do(items)
         return Submenu { ..attributes, .children }
     end
     local Checking = define
-        Command = do(node, recurse, depth, at)
-            return read_command({ ..node }, at)
-        end
-        Submenu = do(node, recurse, depth, at)
-            return read_submenu({ ..node }, depth, at)
-        end
+        Command = |node, recurse, depth, at| -> read_command({ ..node }, at)
+        Submenu = |node, recurse, depth, at| -> read_submenu({ ..node }, depth, at)
         Separator = do(node, recurse, depth, at)
             Check.keys(node, {}, at)
             return Separator {}
@@ -115,19 +111,16 @@ local describe = do(items)
 end
 
 local Writing = define
-    Command = do(node, recurse)
-        return { caption = node.caption, icon = node.icon, shortcut = node.shortcut,
-            checked = node.checked, enabled = node.enabled, action = node.action }
-    end
+    Command = |node, recurse| -> { caption = node.caption,
+        icon = node.icon, shortcut = node.shortcut,
+        checked = node.checked, enabled = node.enabled, action = node.action }
     Submenu = do(node, recurse)
         local children = {}
         for index, child in ipairs node.children do children[index] = recurse child end
         return { caption = node.caption, icon = node.icon, shortcut = node.shortcut,
             checked = node.checked, enabled = node.enabled, .children }
     end
-    Separator = do(node, recurse)
-        return { separator = true }
-    end
+    Separator = |node, recurse| -> { separator = true }
 end
 local write_entry = Entry.pass "write a menu description as supplied data" with ..Writing end
 

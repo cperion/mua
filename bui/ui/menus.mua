@@ -164,16 +164,19 @@ local for_surface = do(Application, window)
                 return lifetime.close
             end)
     end
-    local open_menu = do(items, options)
-        return popup(items, options, do(specifications, count, title, horizontal, vertical)
+    local open_menu = do(items)
+        local descriptions = describe items
+        return placement -> popup(descriptions,
+            placement, do(specifications, count, title, horizontal, vertical)
                 Native.BK_open_menu(window.context,
                     nil, specifications, count, title, horizontal, vertical)
             end)
     end
-    local open_pie = do(items, options)
-        Check.array(items, "pie menu")
-        assert(#items <= 8, "a pie menu admits at most eight items")
-        return popup(items, options, do(specifications, count, title, horizontal, vertical)
+    local open_pie = do(items)
+        local descriptions = describe items
+        assert(#descriptions <= 8, "a pie menu admits at most eight items")
+        return placement -> popup(descriptions,
+            placement, do(specifications, count, title, horizontal, vertical)
                 Native.BK_set_pointer(window.context, horizontal, vertical)
                 Native.BK_open_pie(window.context, specifications, count, title)
             end)

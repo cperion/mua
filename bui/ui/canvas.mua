@@ -108,9 +108,7 @@ local lower_common = do(node, code)
     end
     return { shape = node, .item, .coordinates }
 end
-local primitive = do(code)
-    return do(node, recurse, owner) return lower_common(node, code) end
-end
+local primitive = code -> |node, recurse, owner| -> lower_common(node, code)
 local Lowering = define
     Rectangle = primitive 0
     Oval = primitive 1
@@ -150,9 +148,7 @@ local Lowering = define
     end
 end
 local lower = Language.Shape.pass "lower a canvas shape to retained native storage" with ..Lowering end
-local marshal = do(description, owner)
-    return { ..lower(Language.read description, owner), .description }
-end
+local marshal = |description, owner| -> { ..lower(Language.read description, owner), .description }
 
 -- Own the installed list and all native-borrowed strings; public indexes are one-based.
 local for_control = do(record)
@@ -220,18 +216,21 @@ local for_control = do(record)
         installing entry
         Native.BK_canvas_add_item(node, entry.item)
     end
-    local put = do(index, description)
-        owner.mutate "put canvas item"
-        Check.integer(index, "canvas index", 1, #installed + 1)
-        local entry = prepared description
-        owner.mutate "publish indexed canvas item"
-        local existing = find entry.description.id
-        assert(not existing or existing == index, "duplicate canvas item id")
-        local previous = installed[index]
-        installed[index] = entry
-        installing entry
-        Native.BK_canvas_put_item(node, index - 1, entry.item)
-        if previous then previous = nil end
+    local put_at = do(index)
+        Check.integer(index, "canvas index", 1)
+        return do(description)
+            owner.mutate "put canvas item"
+            Check.integer(index, "canvas index", 1, #installed + 1)
+            local entry = prepared description
+            owner.mutate "publish indexed canvas item"
+            local existing = find entry.description.id
+            assert(not existing or existing == index, "duplicate canvas item id")
+            local previous = installed[index]
+            installed[index] = entry
+            installing entry
+            Native.BK_canvas_put_item(node, index - 1, entry.item)
+            if previous then previous = nil end
+        end
     end
     local delete = do(identifier)
         owner.mutate "delete canvas item"
@@ -273,7 +272,7 @@ local for_control = do(record)
         .replace
         .set_item
         .append
-        .put
+        .put_at
         .delete
         .truncate
         .count

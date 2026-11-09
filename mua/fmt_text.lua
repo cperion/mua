@@ -99,7 +99,7 @@ local function significant_after(tokens, i)
 end
 
 -- does the `with` at i stand where an expression starts, and begin entries (not a variable)?
-local EXPRESSION_START = { ['='] = true, ['('] = true, [','] = true, ['{'] = true, [';'] = true }
+local EXPRESSION_START = { ['='] = true, ['('] = true, [','] = true, ['{'] = true, [';'] = true, ['->'] = true }
 local function contextual_with(tokens, i)
     local p = skip_back(tokens, i)
     if p < 1 then return false end
@@ -163,7 +163,46 @@ local parse_mod = require 'mua.parse'
 -- the formatter for the call it makes: a function from a file name to a Mua parse host
 local parse_host
 function M.use_host(f) local saved = parse_host; parse_host = f; return saved end
-local WITH_START = { ['='] = true, ['('] = true, [','] = true, ['{'] = true, [';'] = true }
+local WITH_START = { ['='] = true, ['('] = true, [','] = true, ['{'] = true, [';'] = true, ['->'] = true }
+
+-- Formatting also migrates the retired assigned-colon spelling. Scan tokens,
+-- not lines: strings and comments containing `=:` must remain untouched. Only
+-- the old plain-name header is recognized; malformed headers still fail parsing.
+function M.assigned_blocks(source, filename)
+    local tokens = lex.scan(source, filename or '?')
+    local out, i = {}, 1
+    while i <= #tokens do
+        local tk = tokens[i]
+        local migrated = false
+        if tk.t == '=' or tk.t == 'keyword' and tk.v == 'return' then
+            local j = i + 1
+            while tokens[j] and tokens[j].t == 'space' and not tokens[j].v:find '\n' do j = j + 1 end
+            if tokens[j] and tokens[j].t == ':' then
+                local names, k = {}, j + 1
+                while tokens[k] do
+                    local next = tokens[k]
+                    if next.t == 'name' then
+                        names[#names + 1] = next.v
+                    elseif next.t ~= 'space' or next.v:find '\n' then
+                        break
+                    end
+                    k = k + 1
+                end
+                local ending = tokens[k]
+                if ending and (ending.t == 'comment' or ending.t == 'space' and ending.v:find '\n') then
+                    out[#out + 1] = tk.v .. ' do(' .. (#names > 0 and table.concat(names, ', ') or '..') .. ')'
+                    if ending.t == 'comment' then out[#out + 1] = ' ' end
+                    i, migrated = k, true
+                end
+            end
+        end
+        if not migrated then
+            if tk.t ~= 'eof' then out[#out + 1] = tk.v end
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
 
 function M.expand(source, mark, full, filename)
     filename = filename or '?'
@@ -378,12 +417,39 @@ end
 -- Which block or bracket is innermost at each token, for source text that has no
 -- colon blocks and no `with` (it was expanded): returns top_at[i] (a frame) and
 -- the frame each bracket token opens.
-local function frames_of(tokens)
-    local stack, top_at, opened = {}, {}, {}
+local function frames_of(tokens, source, filename)
+    -- Parameter commas in `|left, right| -> ...` are not table separators.
+    -- Let Mua's parser distinguish those pipes from bitwise-or operators.
+    local pipes, expression_boundaries = {}, {}
+    filename = filename or '?'
+    local reader = parse_mod.reader(lex.scan(source, filename), filename)
+    local parser = parse_mod.parser(reader, parse_host and parse_host(filename))
+    function parser:pipes(open, close) pipes[open.pos], pipes[close.pos] = 'open', 'close' end
+    local function remember_boundary(method)
+        return function(self, ...)
+            local node = method(self, ...)
+            local next_token = reader:peek(1)
+            if node.fn.expr and next_token.t == ',' then expression_boundaries[next_token.pos] = true end
+            return node
+        end
+    end
+    parser.lambda = remember_boundary(parser.lambda)
+    parser.short_function = remember_boundary(parser.short_function)
+    parser:block('top')
+    reader:expect('eof')
+    local stack, top_at, opened, expression_commas, position = {}, {}, {}, {}, 1
     for i, tk in ipairs(tokens) do
         top_at[i] = stack[#stack]
         local t, v = tk[1], tk[2]
-        if t == '(' or t == '{' or t == '[' then
+        local pipe = pipes[position]
+        expression_commas[i] = expression_boundaries[position]
+        position = position + #v
+        if pipe == 'open' then
+            stack[#stack + 1] = { kind = 'parameters' }
+        elseif pipe == 'close' then
+            assert(stack[#stack] and stack[#stack].kind == 'parameters')
+            stack[#stack] = nil
+        elseif t == '(' or t == '{' or t == '[' then
             local f = { kind = 'bracket', open = i }
             stack[#stack + 1] = f
             opened[i] = f
@@ -406,7 +472,7 @@ local function frames_of(tokens)
             end
         end
     end
-    return top_at, opened
+    return top_at, opened, expression_commas
 end
 
 -- The matching closers of a token list, and whether a table is data: some top-level entry
@@ -471,7 +537,7 @@ local function inline_pass(source, limit, width, keep_spreads)
                 end
                 if multiline then return nil end
             end
-            if t == 'keyword' and BLOCK[text] then return nil end
+            if text == '->' or t == 'keyword' and BLOCK[text] then return nil end
             if t == '(' or t == '{' or t == '[' then depth = depth + 1
             elseif t == ')' or t == '}' or t == ']' then depth = depth - 1
             elseif depth == 0 and (t == ',' or t == ';') then count = count + 1; any = false
@@ -589,10 +655,10 @@ end
 -- `name:` or a line of its own, and before the closing brace). Without the marks
 -- the source is returned with its braces; the result is only accepted when
 -- expanding it gives the braces' own token stream.
-function M.withize(source, unit, spread_beside)
+function M.withize(source, unit, spread_beside, filename)
     unit = unit or '    '
     local tokens = lexer.scan_raw_tokenlist(source)
-    local top_at, opened = frames_of(tokens)
+    local top_at, opened, expression_commas = frames_of(tokens, source, filename)
     local close_of, stack = {}, {}
     for i, tk in ipairs(tokens) do
         local t = tk[1]
@@ -741,7 +807,14 @@ function M.withize(source, unit, spread_beside)
                         -- a plain `with` keeps the commas of positional entries; a `define` list is
                         -- written without them
                         local plain_start = first and (first[1] == 'iden' or first[1] == '.')
-                        if nx == close_of[i] or (newline and (starts or (block.define and begins) or plain_start)) then
+                        -- An expression lambda can absorb a following `.field`, literal,
+                        -- or positional entry across the newline. Its separator is not
+                        -- cosmetic; named `field = value` entries provide their own boundary.
+                        local named = first and first[1] == 'iden' and second and second[1] ~= '->'
+                            and first[2] ~= 'with' and first[2] ~= 'define'
+                        local needed = expression_commas[k] and not (starts or named) and nx ~= close_of[i]
+                        if not needed and (nx == close_of[i]
+                            or (newline and (starts or (block.define and begins) or plain_start))) then
                             block.drop[k] = true
                         end
                     end
@@ -841,6 +914,7 @@ function M.withize(source, unit, spread_beside)
     for _, block in ipairs(blocks) do
         if accepted({ block }) then chosen[#chosen + 1] = block end
     end
+    if #chosen == 0 then return braces end
     return accepted(chosen) or braces
 end
 

@@ -324,41 +324,37 @@ end
 local resources = do(Application, owner)
     local Acquisitions = {}
     for name, acquire in pairs Acquiring do
-        Acquisitions["acquire_" .. name] = do(source)
-            return Scope.prepare(owner, || -> acquire(Application, owner, source))
-        end
+        Acquisitions["acquire_" .. name] = do(source) = Scope.prepare(owner,
+            || -> acquire(Application, owner, source))
         Acquisitions["with_" .. name] = do(source)
             owner.mutate("open " .. name)
             return do(body)
                 Check.callable(body, name .. " body")
-                return Scope.with_owner(owner.child name) do(temporary_owner)
-                    return acquire(Application, temporary_owner, source) with
+                return Scope.with_owner(owner.child name) do(temporary_owner) = acquire(Application,
+                    temporary_owner, source) with
                         ready = do(resource)
                             temporary_owner.activate
                             return Application.protocols.acquisition.ready(body resource)
                         end
                         unavailable = Application.protocols.acquisition.unavailable
                     end
-                end
             end
         end
     end
-    local next_frame = do(animation)
-        return Scope.prepare(owner, do()
-                local pointer = Handles.get(animation, "animation")
-                assert(Scope.same_integration(Handles.owner(animation, "animation"), owner),
-                    "animation belongs to another application")
-                local delay = ffi.new "int[1]"
-                local frame = Application.native.BK_anim_next(pointer, delay)
-                if frame == nil then
-                    return Application.protocols.acquisition.unavailable "animation frame decode failed"
-                end
-                return Application.protocols.acquisition.ready with
-                    image = image_capabilities(Application, owner, frame)
-                    milliseconds = tonumber delay[0]
-                end
-            end)
-    end
+    local next_frame = do(animation) = Scope.prepare(owner, do()
+            local pointer = Handles.get(animation, "animation")
+            assert(Scope.same_integration(Handles.owner(animation, "animation"), owner),
+                "animation belongs to another application")
+            local delay = ffi.new "int[1]"
+            local frame = Application.native.BK_anim_next(pointer, delay)
+            if frame == nil then
+                return Application.protocols.acquisition.unavailable "animation frame decode failed"
+            end
+            return Application.protocols.acquisition.ready with
+                image = image_capabilities(Application, owner, frame)
+                milliseconds = tonumber delay[0]
+            end
+        end)
     return define ..Acquisitions
         .next_frame
     end
@@ -407,14 +403,19 @@ local images = do(Application)
         integration(Application).assert_configurable()
         Native.BK_image_set_threads(Check.integer(count, "loader threads", 0, 64))
     end
-    local prefetch = do(path, width, height, fit)
-        owner.mutate "prefetch image"
+    local prefetch = do(path)
         Check.string(path, "image path")
-        Check.integer(width, "width", 1, 16384)
-        Check.integer(height, "height", 1, 16384)
-        local mode = fit_code fit
-        mark_loading Application
-        Native.BK_image_prefetch(path, width, height, mode)
+        return do(size)
+            Check.keys(size, { width = true, height = true }, "image prefetch size")
+            local width = Check.integer(rawget(size, "width"), "width", 1, 16384)
+            local height = Check.integer(rawget(size, "height"), "height", 1, 16384)
+            return do(fit)
+                owner.mutate "prefetch image"
+                local mode = fit_code fit
+                mark_loading Application
+                Native.BK_image_prefetch(path, width, height, mode)
+            end
+        end
     end
     local clear = do()
         owner.mutate "clear image cache"
@@ -462,7 +463,7 @@ local for_control = do(record)
             Native.BK_node_set_video(node, shown_video, shown_fit)
         end
     end
-    local show_image = do(image, fit)
+    local show_image = do(image) = do(fit)
         owner.mutate "show image"
         local pointer, mode = Handles.get(image, "image", owner), fit_code fit
         -- There is no independent native image-fit setter: clear/set fit before lending.
@@ -470,13 +471,16 @@ local for_control = do(record)
         Native.BK_node_set_imbuf(node, pointer)
         shown_video = nil
     end
-    local show_source = do(path, fit)
-        owner.mutate "show source"
+    local show_source = do(path)
         Check.string(path, "image source")
-        local mode = fit_code fit
-        mark_loading record.application
-        Native.BK_node_set_image_source(node, path, mode)
-        shown_video = nil
+        return do(fit)
+            owner.mutate "show source"
+            Check.string(path, "image source")
+            local mode = fit_code fit
+            mark_loading record.application
+            Native.BK_node_set_image_source(node, path, mode)
+            shown_video = nil
+        end
     end
     local show_frame = do(index)
         owner.mutate "show image frame"
@@ -499,7 +503,7 @@ local for_control = do(record)
         .clear_image
     end
     if record.kind ~= "image" and record.kind ~= "video" then return Presentation end
-    local show_video = do(video, fit)
+    local show_video = do(video) = do(fit)
         owner.mutate "show video"
         local pointer, mode = Handles.get(video, "video", owner), fit_code fit
         Native.BK_node_set_video(node, pointer, mode)

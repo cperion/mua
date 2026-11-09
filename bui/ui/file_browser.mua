@@ -20,12 +20,10 @@ local for_control = do(record)
     record.event_snapshot = do(kind)
         if kind == 16 then return "submitted", result() end
     end
-    local command = do(key)
-        return do()
-            owner.mutate("file browser " .. key)
-            Native.BK_set_num(node, key, 1)
-            record.application.check_error
-        end
+    local command = do(key) = do()
+        owner.mutate("file browser " .. key)
+        Native.BK_set_num(node, key, 1)
+        record.application.check_error
     end
     local location = do()
         owner.check "file browser location"

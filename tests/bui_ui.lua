@@ -94,8 +94,8 @@ Activities.with_application(Native)(function(application)
             application.pump(); check(events[3] == 'copied text' and text.current() == 'newer state')
             surface.render()
             local rectangle = button.rectangle()
-            surface.input.press(rectangle.x + 3, rectangle.y + 3, 0)
-            surface.input.release(rectangle.x + 3, rectangle.y + 3, 0)
+            surface.input.press { x = rectangle.x + 3, y = rectangle.y + 3 }
+            surface.input.release { x = rectangle.x + 3, y = rectangle.y + 3 }
             check(#events == 3, 'native activation is deferred')
             application.pump(); check(control.current() == 17 and #events == 3)
             application.pump(); check(events[4] == 17, 'notifications appended by handlers wait a batch')
@@ -121,7 +121,7 @@ Activities.with_application(Native)(function(application)
                 end)
             end) end, 'installation failure')
             application.pump() -- The failed mount's queued focus must not escape into the context.
-            surface.input.key('x', 'x', 0)
+            surface.input.key { text = 'x', keysym = 'x' }
             check(old.caption() == 'old' and application.statistics().registered_nodes == before)
             local replaced = slot.replace(function(place)
                 local label = place.label('new')
@@ -231,7 +231,7 @@ do
                 check(canvas.count() == 3 and canvas.raise(1) and canvas.lower(1))
                 canvas.set_item{ kind = 'oval', id = 1, coordinates = { 0, 0, 25, 25 } }
                 check(canvas.count() == 3)
-                canvas.put(1, { kind = 'round_rectangle', id = 4, coordinates = { 1, 2, 30, 40 }, radius = 4 })
+                canvas.put_at(1) { kind = 'round_rectangle', id = 4, coordinates = { 1, 2, 30, 40 }, radius = 4 }
                 check(canvas.delete(3) and not canvas.delete(999))
                 canvas.truncate(1); check(canvas.count() == 1)
                 local ramp = editors.ramp
@@ -242,18 +242,18 @@ do
                 check(ramp.active_stop() == 2 and ramp.stops()[2].color[2] == 0)
                 refuses(function() ramp.set_stops{} end, '2..32')
                 local curve = editors.curve
-                curve.set_points(0, { { 0, 0 }, { 1, 1 } })
-                check(#curve.points(0) == 2 and math.abs(curve.sample(0, 0.5) - 0.5) < 0.01)
+                curve.set_points(0) { { 0, 0 }, { 1, 1 } }
+                check(#curve.points(0) == 2 and math.abs(curve.sample(0)(0.5) - 0.5) < 0.01)
                 refuses(function() curve.points(4) end, 'range')
                 local textarea = editors.textarea
-                refuses(function() textarea.insert(2, 'split') end, 'UTF-8')
-                textarea.select(1, 3)
+                refuses(function() textarea.insert_at(2) 'split' end, 'UTF-8')
+                textarea.select { start = 1, stop = 3 }
                 textarea.selection(){ selected = function(range) check(range.start == 1 and range.stop == 3) end,
                     empty = function() error('missing selection') end }
-                textarea.delete(1, 3); check(textarea.current() == 'az')
-                textarea.insert(1, 'é'); check(textarea.current() == 'aéz')
+                textarea.erase { start = 1, stop = 3 }; check(textarea.current() == 'az')
+                textarea.insert_at(1) 'é'; check(textarea.current() == 'aéz')
                 textarea.move_caret(4); check(textarea.caret() == 4)
-                textarea.select(0, 0)
+                textarea.select { start = 0, stop = 0 }
                 textarea.selection(){ selected = function() error('unexpected selection') end,
                     empty = function() check(true) end }
                 textarea.set_spans{ { start = 1, stop = 3, foreground = { 1, 0, 0, 1 } } }
@@ -282,9 +282,9 @@ do
                 end)(function(slider)
                     surface.render()
                     local rectangle = slider.rectangle()
-                    surface.input.press(rectangle.x + math.floor(rectangle.width / 2), rectangle.y + 5, 0)
-                    surface.input.motion(rectangle.x + rectangle.width - 2, rectangle.y + 5, 0)
-                    surface.input.release(rectangle.x + rectangle.width - 2, rectangle.y + 5, 0)
+                    surface.input.press { x = rectangle.x + math.floor(rectangle.width / 2), y = rectangle.y + 5 }
+                    surface.input.motion { x = rectangle.x + rectangle.width - 2, y = rectangle.y + 5 }
+                    surface.input.release { x = rectangle.x + rectangle.width - 2, y = rectangle.y + 5 }
                 end)
             end))
         end)
@@ -311,7 +311,7 @@ if arg[2] == '--window' then
                     window.after(120)(function()
                         timer_ran = true
                         frames = window.frames()
-                        window.resize(420, 280)
+                        window.resize { width = 420, height = 280 }
                         window.after(80)(window.close)
                     end)
                     application.run()

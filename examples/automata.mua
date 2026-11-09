@@ -1,0 +1,295 @@
+-- Regexes as an algebra, derivatives as a compiler, product search as a proof.
+-- No regex library: the independent test oracle is a nondeterministic interpreter.
+-- Alphabet: bytes appearing literally in a pattern. Syntax: () | * + ? and escaping.
+--   luajit mua.lua examples/automata.mua
+
+local Regex = family "regular language"
+local Empty = struct { key: String }
+local Epsilon = struct { key: String }
+local Byte = struct { key: String, value: String }
+local Choice = struct { key: String, items: Table }
+local Sequence = struct { key: String, items: Table }
+local Repeat = struct { key: String, body: Regex }
+Regex { Empty, Epsilon, Byte, Choice, Sequence, Repeat }
+
+-- Hash-consing plus associative/commutative/idempotent union gives derivatives
+-- stable identities. Sequence is associative, but emphatically NOT commutative.
+local pool = {}
+local intern = do(node)
+    if pool[node.key] then return pool[node.key] end
+    pool[node.key] = node
+    return node
+end
+local zero = intern(Empty { key = "0" })
+local one = intern(Epsilon { key = "1" })
+local byte = value -> intern(Byte { key = ("b%02x"):format(value:byte()), .value })
+local combine = do(kind, nodes)
+    local items, seen = {}, {}
+    local add
+    add = do(node)
+        if Regex.is(node, kind) then
+            for _, item in ipairs node.items do add item end
+        elseif kind == Sequence or not seen[node.key] then
+            seen[node.key] = true
+            items[#items + 1] = node
+        end
+    end
+    for _, node in ipairs nodes do
+        if kind == Sequence and node == zero then return zero end
+        if node ~= (kind == Choice and zero or one) then add node end
+    end
+    if #items == 0 then return kind == Choice and zero or one end
+    if #items == 1 then return items[1] end
+    if kind == Choice then table.sort(items, |a, b| -> a.key < b.key) end
+    local keys = {}
+    for i, item in ipairs items do keys[i] = item.key end
+    local prefix = kind == Choice and "|" or "."
+    return intern(kind { key = prefix .. "(" .. table.concat(keys, ",") .. ")", .items })
+end
+local choice = nodes -> combine(Choice, nodes)
+local sequence = nodes -> combine(Sequence, nodes)
+local repeat_regex = do(body)
+    if body == zero or body == one then return one end
+    if Regex.is(body, Repeat) then return body end
+    return intern(Repeat { key = "*(" .. body.key .. ")", .body })
+end
+
+local nullable = Regex.pass "accept the empty string" {
+    Empty = |node, recurse| -> false,
+    Epsilon = |node, recurse| -> true,
+    Byte = |node, recurse| -> false,
+    Choice = do(node, recurse)
+        for _, item in ipairs node.items do if recurse item then return true end end
+        return false
+    end,
+    Sequence = do(node, recurse)
+        for _, item in ipairs node.items do if not recurse item then return false end end
+        return true
+    end,
+    Repeat = |node, recurse| -> true
+}
+
+-- D_c(r) is the language remaining after consuming c. Each reachable derivative
+-- becomes one DFA state; nullable determines which states accept.
+local derivative = Regex.pass "consume one byte" {
+    Empty = |node, recurse, c| -> zero,
+    Epsilon = |node, recurse, c| -> zero,
+    Byte = |node, recurse, c| -> node.value == c and one or zero,
+    Choice = do(node, recurse, c)
+        local terms = {}
+        for i, item in ipairs node.items do terms[i] = recurse(item, c) end
+        return choice terms
+    end,
+    Sequence = do(node, recurse, c)
+        local terms = {}
+        for i, item in ipairs node.items do
+            local tail = { recurse(item, c) }
+            for j = i + 1, #node.items do tail[#tail + 1] = node.items[j] end
+            terms[#terms + 1] = sequence tail
+            if not nullable item then break end
+        end
+        return choice terms
+    end,
+    Repeat = |node, recurse, c| -> sequence { recurse(node.body, c), node }
+}
+
+local parse = do(text)
+    local position, alphabet = 1, {}
+    local peek = || -> text:sub(position, position)
+    local fail = do(message)
+        error(("regex byte %d: %s"):format(position, message), 0)
+    end
+    local alternation
+    local concatenation = do()
+        local items = {}
+        while position <= #text and peek() ~= ")" and peek() ~= "|" do
+            local c, node = peek(), nil
+            position += 1
+            if c == "(" then
+                node = alternation()
+                if peek() ~= ")" then fail "expected ')'" end
+                position += 1
+            else
+                if c == "*" or c == "+" or c == "?" then fail "quantifier without operand" end
+                if c == "\\" then
+                    if position > #text then fail "unfinished escape" end
+                    c = peek()
+                    position += 1
+                end
+                alphabet[c] = true
+                node = byte c
+            end
+            local quantifier = peek()
+            if quantifier == "*" then node = repeat_regex node
+            elseif quantifier == "+" then node = sequence { node, repeat_regex node }
+            elseif quantifier == "?" then node = choice { one, node }
+            end
+            if quantifier == "*" or quantifier == "+" or quantifier == "?" then position += 1 end
+            items[#items + 1] = node
+        end
+        return sequence items
+    end
+    alternation = do()
+        local items = { concatenation() }
+        while peek() == "|" do
+            position += 1
+            items[#items + 1] = concatenation()
+        end
+        return choice items
+    end
+    local root = alternation()
+    if position <= #text then fail "unexpected ')'" end
+    return root, alphabet
+end
+
+local compile = do(root, alphabet)
+    local states, ids = {}, {}
+    local state = do(node)
+        if ids[node.key] then return ids[node.key] end
+        local id = #states + 1
+        ids[node.key] = id
+        states[id] = { .node, accept = nullable node, edges = {} }
+        return id
+    end
+    state root
+    local i = 1
+    while i <= #states do
+        for _, c in ipairs alphabet do states[i].edges[c] = state(derivative(states[i].node, c)) end
+        i += 1
+    end
+    return states
+end
+local accepts = do(machine, text)
+    local state = 1
+    for i = 1, #text do
+        state = machine[state].edges[text:sub(i, i)]
+        if not state then return false end
+    end
+    return machine[state].accept
+end
+
+-- BFS in the product automaton. A disagreeing accepting bit is a counterexample.
+-- Exhausting the reachable product is a proof, not a bounded sample of strings.
+-- Parent pointers reconstruct a shortest witness without copying paths in the queue.
+local compare = do(left, right, alphabet)
+    local queue, seen = { { a = 1, b = 1 } }, {["1:1"] = true }
+    local i = 1
+    while i <= #queue do
+        local pair = queue[i]
+        if left[pair.a].accept ~= right[pair.b].accept then
+            local chars, cursor = {}, i
+            while queue[cursor].parent do
+                table.insert(chars, 1, queue[cursor].char)
+                cursor = queue[cursor].parent
+            end
+            return false, table.concat chars, i
+        end
+        for _, c in ipairs alphabet do
+            local a, b = left[pair.a].edges[c], right[pair.b].edges[c]
+            local key = a .. ":" .. b
+            if not seen[key] then
+                seen[key] = true
+                queue[#queue + 1] = { .a, .b, parent = i, char = c }
+            end
+        end
+        i += 1
+    end
+    return true, nil, #queue
+end
+
+-- Independent semantics: return ALL reachable input positions. Repetition closes
+-- a set of positions to a fixed point, so even nullable nested stars terminate.
+local interpret = Regex.pass "nondeterministic reference interpreter" {
+    Empty = |node, recurse, text, start| -> {},
+    Epsilon = |node, recurse, text, start| -> {[start] = true },
+    Byte = do(node, recurse, text, start)
+        if text:sub(start, start) == node.value then return {[start + 1] = true } end
+        return {}
+    end,
+    Choice = do(node, recurse, text, start)
+        local result = {}
+        for _, item in ipairs node.items do
+            for finish in pairs(recurse(item, text, start)) do result[finish] = true end
+        end
+        return result
+    end,
+    Sequence = do(node, recurse, text, start)
+        local positions = {[start] = true }
+        for _, item in ipairs node.items do
+            local next_positions = {}
+            for position in pairs positions do
+                for finish in pairs(recurse(item, text, position)) do next_positions[finish] = true end
+            end
+            positions = next_positions
+        end
+        return positions
+    end,
+    Repeat = do(node, recurse, text, start)
+        local positions, queue = {[start] = true }, { start }
+        local i = 1
+        while i <= #queue do
+            for finish in pairs(recurse(node.body, text, queue[i])) do
+                if not positions[finish] then
+                    positions[finish] = true
+                    queue[#queue + 1] = finish
+                end
+            end
+            i += 1
+        end
+        return positions
+    end
+}
+
+local proof = do(first, second, expected)
+    local a, aa = parse first
+    local b, bb = parse second
+    local alphabet = {}
+    for c in pairs bb do aa[c] = true end
+    for c in pairs aa do alphabet[#alphabet + 1] = c end
+    table.sort alphabet
+    local left, right = compile(a, alphabet), compile(b, alphabet)
+    local equivalent, witness, visited = compare(left, right, alphabet)
+    assert(equivalent == expected)
+    if equivalent then
+        print(("PROVED  %s == %s  (%d product states)"):format(first, second, visited))
+    else
+        assert(accepts(left, witness) ~= accepts(right, witness))
+        print(("REFUTED %s == %s  shortest witness: %q"):format(first, second, witness))
+    end
+end
+
+proof("(a|b)*", "(a*b*)*", true)
+proof("a(b|c)", "ab|ac", true)
+proof("(a|b)*abb", "(a|b)*ab", false)
+proof("a*", "a+", false)
+
+local checks = 0
+local patterns = { "",
+    "a", "a|b", "ab", "a*", "a?b+", "(a|b)*abb", "(a?)*", "((a|)*)*b", "a(b|a)*", "\\*" }
+for _, pattern in ipairs patterns do
+    local root = parse pattern
+    local machine = compile(root, { "a", "b", "*" })
+    local test
+    test = do(text, remaining)
+        local reference = interpret(root, text, 1)[#text + 1] == true
+        assert(accepts(machine, text) == reference, pattern .. " on " .. text)
+        checks += 1
+        if remaining > 0 then
+            for _, c in ipairs { "a", "b", "*" } do test(text .. c, remaining - 1) end
+        end
+    end
+    test("", 5)
+    assert(not accepts(machine, "z"))
+end
+for _, bad in ipairs { "(", ")", "*a", "a**", "a\\", "a(b" } do
+    assert(not pcall(parse, bad), "accepted invalid pattern " .. bad)
+end
+print(("CHECKED %d DFA/interpreter agreements; malformed patterns rejected"):format checks)
+
+--[=[ output
+PROVED  (a|b)* == (a*b*)*  (3 product states)
+PROVED  a(b|c) == ab|ac  (4 product states)
+REFUTED (a|b)*abb == (a|b)*ab  shortest witness: "ab"
+REFUTED a* == a+  shortest witness: ""
+CHECKED 4004 DFA/interpreter agreements; malformed patterns rejected
+]=]

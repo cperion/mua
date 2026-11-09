@@ -1,0 +1,36 @@
+local ffi = require "ffi"
+local Check = require "bui.ui.check"
+
+-- Public painting geometry uses points and boxes, not whichever tuple a C call happens
+-- to expect. Native min/max clipping is a lowering decision, shared by mesh and widget paint.
+local point = do(position)
+    Check.keys(position, { x = true, y = true }, "paint position")
+    return ffi.new("float[2]", {
+            Check.number(rawget(position, "x"), "paint x", -1e7, 1e7),
+            Check.number(rawget(position, "y"), "paint y", -1e7, 1e7),
+        })
+end
+
+local rectangle = do(bounds)
+    Check.keys(bounds, { x = true, y = true, width = true, height = true }, "paint rectangle")
+    return ffi.new("float[4]", {
+            Check.number(Check.default(rawget(bounds, "x"), 0), "rectangle x", -1e7, 1e7),
+            Check.number(Check.default(rawget(bounds, "y"), 0), "rectangle y", -1e7, 1e7),
+            Check.number(rawget(bounds, "width"), "rectangle width", 0, 1e7),
+            Check.number(rawget(bounds, "height"), "rectangle height", 0, 1e7),
+        })
+end
+
+local clip = do(bounds)
+    local coordinates = rectangle bounds
+    -- Native widget clipping interprets an empty box as *no* clip. Do not silently turn
+    -- an empty requested restriction into permission to paint outside it.
+    assert(coordinates[2] > 0 and coordinates[3] > 0, "paint clip must be nonempty")
+    coordinates[2] += coordinates[0]
+    coordinates[3] += coordinates[1]
+    assert(coordinates[2] > coordinates[0] and coordinates[3] > coordinates[1],
+        "paint clip must be representably nonempty")
+    return coordinates
+end
+
+return define .point, .rectangle, .clip end

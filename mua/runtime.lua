@@ -295,30 +295,18 @@ end
 
 -- a nominal record type: closed, typed fields; instances branded by a metatable through
 -- which methods (`function P:m() ... end`) are reached
-function R.struct(name, fields, unchecked)
-    local S = {}
-    local info = { name = name, fields = fields, index = {}, meta = { __index = S, __name = name } }
-    for _, f in ipairs(fields) do info.index[f[1]] = f[2] end
-    structs[S] = info
-    instance_of[info.meta] = S
-    setmetatable(S, {
-        __tostring = function() return name end,
-        __call = function(_, t)
-            if t == nil then t = {} end
-            if type(t) ~= 'table' then error(('%s takes a table of fields, got %s'):format(name, describe_value(t)), 2) end
-            if not unchecked then
-                for k in pairs(t) do
-                    if not info.index[k] then error(("%s has no field '%s'"):format(name, tostring(k)), 2) end
-                end
-                for _, f in ipairs(fields) do
-                    local v = contract(f[2], t[f[1]], 3, "the field '%s' of %s", f[1], name)
-                    if v ~= t[f[1]] then t[f[1]] = v end         -- a `with` filled into an ffistruct
-                end
-            end
-            return setmetatable(t, info.meta)
-        end,
-    })
-    return S
+local Specialize = require 'mua.specialize.init'
+local Structs = require 'mua.runtime.structs'
+R.struct = Structs.new(structs, instance_of, contract, describe_value, Specialize.new())
+
+-- Opt-in runtime view: shares nominal identities and contracts with this runtime,
+-- but owns its factory cache. No global mode switch or hot-path strategy branch.
+-- Supply the view as a chunk's __mua, just as with extend().
+function R.specialized(options)
+    local engine = Specialize.new(options or { mode = 'auto' })
+    return R.extend {
+        struct = Structs.new(structs, instance_of, contract, describe_value, engine),
+    }, engine
 end
 
 -- family: a closed set of structs with passes over it ------------------------------------------------

@@ -4,6 +4,7 @@ local Scope = require "bui.ui.scope"
 local Handles = require "bui.ui.handles"
 local Typography = require "bui.ui.typography"
 local WidgetPaint = require "bui.ui.widget_paint"
+local Geometry = require "bui.ui.paint_geometry"
 
 if jit then jit.off(true, true) end
 
@@ -15,11 +16,7 @@ local vector = do(values, count, name)
     for index, value in ipairs values do copied[index - 1] = Check.number(value, name, -1e7, 1e7) end
     return copied
 end
-local rectangle = do(values)
-    local bounds = vector(values, 4, "rectangle")
-    assert(bounds[2] >= 0 and bounds[3] >= 0, "negative rectangle size")
-    return bounds
-end
+local rectangle = Geometry.rectangle
 
 local shapes = with
     rectangle = { call = "BUI_raster_fill_rect", fields = { "x", "y", "width", "height", "color" } }
@@ -139,7 +136,7 @@ painting = do(Application, owner, pointer, check_borrow)
             draw(pointer, unpack arguments)
         end
     end
-    local polygon = do(points, color)
+    local polygon = do(points) = do(color)
         check
         Check.array(points, "polygon")
         assert(#points >= 3 and #points <= 1048576, "polygon needs 3..1048576 points")
@@ -153,24 +150,24 @@ painting = do(Application, owner, pointer, check_borrow)
         Native.BUI_raster_polygon(pointer,
             ffi.cast("const float (*)[2]", coordinates), #points, channels)
     end
-    local triangles = do(points, colors)
+    local triangles = do(points) = do(colors)
         check
         local coordinates, channels, retained_points, retained_colors = vertices(points, colors)
         assert(#points % 3 == 0, "triangles need groups of three vertices")
         check
         Native.BUI_raster_triangles(pointer, coordinates, channels, #points)
     end
-    local points = do(positions, colors, size)
+    local points = do(positions) = do(colors) = do(size)
         check
-        local coordinates, channels, retained_points, retained_colors = vertices(positions, colors)
+        local coordinates, channels, retained_points, retained_colors = vertices(positions,
+            colors)
         Check.number(size, "point size", 0, 1e7)
         check
         Native.BUI_raster_points(pointer, coordinates, channels, #positions, size)
     end
-    local text = do(position, options, color)
+    local text = do(options) = do(position) = do(color)
         check
-        local origin, channels = vector(position, 2, "text origin"), Check.color(color,
-            "text color")
+        local origin, channels = Geometry.point position, Check.color(color, "text color")
         local description = Typography.description options
         check
         Native.BUI_raster_set_font(pointer, description.family, description.flags)
@@ -180,10 +177,9 @@ painting = do(Application, owner, pointer, check_borrow)
         end
         return Acquisition.ready(nil)
     end
-    local text_run = do(position, Text, color)
+    local text_run = do(Text) = do(position) = do(color)
         check
-        local origin, channels = vector(position, 2, "text origin"), Check.color(color,
-            "text color")
+        local origin, channels = Geometry.point position, Check.color(color, "text color")
         local run = Handles.get(Text, "text")
         assert(Scope.same_integration(owner, Handles.owner(Text, "text")),
             "text belongs to another application")
@@ -192,7 +188,7 @@ painting = do(Application, owner, pointer, check_borrow)
         Native.BUI_raster_text_run(pointer, origin[0], origin[1], run, channels)
         return Acquisition.ready(nil)
     end
-    local image = do(bounds, Image, options)
+    local image = do(Image) = do(bounds) = do(options)
         check
         options = Check.default(options, {})
         Check.keys(options,
@@ -207,7 +203,8 @@ painting = do(Application, owner, pointer, check_borrow)
             "image belongs to another application")
         local width, height = ffi.new "int[1]", ffi.new "int[1]"
         local count = Native.BK_imbuf_size(buffer, width, height)
-        local frame = Check.integer(Check.default(options.frame, 1), "image frame", 1, count)
+        local frame = Check.integer(Check.default(options.frame, 1),
+            "image frame", 1, count)
         check
         local pixels = Native.BK_imbuf_pixels(buffer, frame - 1)
         if pixels == nil then return Acquisition.unavailable "image has no ARGB view" end
@@ -243,9 +240,8 @@ painting = do(Application, owner, pointer, check_borrow)
         for index, vertex in ipairs options.indices do
             indices[index - 1] = Check.integer(vertex, "vertex index", 1, #options.vertices) - 1
         end
-        local clip = options.clip and vector(options.clip, 4, "mesh clip") or nil
-        if clip then assert(clip[2] >= clip[0] and clip[3] >= clip[1], "mesh clip is reversed") end
-        local offset = vector(Check.default(options.offset, { 0, 0 }), 2, "mesh offset")
+        local clip = options.clip and Geometry.clip options.clip or nil
+        local offset = Geometry.point(Check.default(options.offset, { x = 0, y = 0 }))
         local nearest = Check.boolean(Check.default(options.nearest, false), "nearest")
         local Texture = options.texture
         local texture = Texture and Handles.get(Texture, "texture") or 0
@@ -257,10 +253,9 @@ painting = do(Application, owner, pointer, check_borrow)
             nearest and 3 or 1, texture, clip, offset[0], offset[1])
         return Acquisition.ready(nil)
     end
-    local with_primitive_sink = do(body)
-        return primitive_pool(Application).with_sink(pointer, check, body)
-    end
-    local with_view = do(bounds)
+    local with_primitive_sink = do(body) = primitive_pool(Application).with_sink(pointer,
+        check, body)
+    local with_clip = do(bounds)
         local region = rectangle bounds
         for axis = 0, 3 do Check.integer(tonumber region[axis], "view rectangle", -32768, 32768) end
         return do(body)
@@ -288,14 +283,14 @@ painting = do(Application, owner, pointer, check_borrow)
         .text_run
         .image
         .mesh
-        .with_view
+        .with_clip
         .with_primitive_sink
-        with_clip = with_view
     end
 end
 
 -- Borrow a native drawing target for a synchronous custom-draw callback.
-local borrow = do(Application, owner, pointer, body)
+local borrow = do(Application, owner, pointer) = do(body)
+    Check.callable(body, "painting instructions")
     local active = true
     local check = do() assert(active, "drawing activity has ended") end
     local results = packed(pcall(body, painting(Application, owner, pointer, check)))
@@ -369,7 +364,8 @@ local acquire = do(Application, owner, options)
             if region then Native.BUI_raster_set_clip(pointer,
                     region[0], region[1], region[2], region[3]) end
             local results = packed(pcall(Application.paint, do()
-                        return borrow(Application, owner, pointer, body)
+                        local paint = borrow(Application, owner, pointer)
+                        return paint body
                     end))
             local ended, problem = pcall do()
                 if region then Native.BUI_raster_end_frame_region(pointer,
@@ -402,11 +398,9 @@ local acquire = do(Application, owner, options)
             return Acquisition.unavailable "offscreen GPU attachment unavailable"
         end
         local active = true
-        local during = do(operation)
-            return do()
-                assert(active, "GPU activity has ended")
-                return operation()
-            end
+        local during = do(operation) = do()
+            assert(active, "GPU activity has ended")
+            return operation()
         end
         local results = packed(pcall(body, define
             gpu_state = during gpu_state
@@ -436,19 +430,16 @@ local resources = do(Application, owner)
     primitive_pool Application
     local acquire_raster = options -> Scope.prepare(owner,
         || -> acquire(Application, owner, options))
-    local with_raster = do(options)
-        return do(body)
-            Check.callable(body, "raster body")
-            return Scope.with_owner(owner.child "raster") do(temporary)
-                return acquire(Application, temporary, options) with
-                    unavailable = Application.protocols.acquisition.unavailable
-                    ready = do(Raster)
-                        temporary.activate
-                        return Application.protocols.acquisition.ready(body Raster)
-                    end
+    local with_raster = do(options) = do(body)
+        Check.callable(body, "raster body")
+        return Scope.with_owner(owner.child "raster") do(temporary) = acquire(Application,
+            temporary, options) with
+                unavailable = Application.protocols.acquisition.unavailable
+                ready = do(Raster)
+                    temporary.activate
+                    return Application.protocols.acquisition.ready(body Raster)
                 end
             end
-        end
     end
     return define .acquire_raster, .with_raster end
 end

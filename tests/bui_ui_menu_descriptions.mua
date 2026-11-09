@@ -25,8 +25,8 @@ source[3].children[1].caption = "changed child"
 expect(entries[1].caption == "Run" and entries[3].children[1].caption == "Again")
 
 local Counting = define
-    Command = do(node, recurse) return 1 end
-    Separator = do(node, recurse) return 1 end
+    Command = |node, recurse| -> 1
+    Separator = |node, recurse| -> 1
     Submenu = do(node, recurse)
         local count = 1
         for _, child in ipairs node.children do count += recurse child end
@@ -35,7 +35,7 @@ local Counting = define
 end
 local count = Menus.Entry.pass "count every menu entry" with ..Counting end
 local count_commands = Menus.Entry.pass "count only menu commands" with ..Counting
-    Separator = do(node, recurse) return 0 end
+    Separator = |node, recurse| -> 0
     Submenu = do(node, recurse)
         local count = 0
         for _, child in ipairs node.children do count += recurse child end

@@ -45,7 +45,7 @@ examples work, not the prose's claims or the quality of the design. Diagrams use
 | `closed`, `required`, `optional` | a structural type's markers |
 
 Application is curried, so a verb that takes several arguments is written as nested functions
-(`do(document) return do(n) … end end`) or called with brackets (`insert(document, n)`); a verb
+(`do(document) = do(n) … end`) or called with brackets (`insert(document, n)`); a verb
 used as an instruction inside an opened block usually takes one operand, because the context
 supplies its subject.
 
@@ -496,12 +496,10 @@ local new_draft = do(document)
 end
 
 -- an activity that always commits: setup, the body speaking instructions, completion
-local edit = do(document)
-    return do(body)
-        local draft = new_draft document
-        body draft
-        document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
-    end
+local edit = do(document) = do(body)
+    local draft = new_draft document
+    body draft
+    document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
 end
 
 local fresh = { length = 0, cursor = 0, edits = 0 }
@@ -549,26 +547,22 @@ the activity matches on it to choose its completion:**
 ```lua
 local Outcome = oneof { commit: Unit, abort: Number }
 
-local try_edit = do(document)
-    return do(body)
-        local draft = new_draft document
-        local committed = body(draft) {
-            commit() = true,
-            abort(reason) = false,
-        }
-        if committed then
-            document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
-        end
-        return committed
+local try_edit = do(document) = do(body)
+    local draft = new_draft document
+    local committed = body(draft) {
+        commit() = true,
+        abort(reason) = false,
+    }
+    if committed then
+        document.length, document.cursor, document.edits = draft.length, draft.cursor, draft.edits
     end
+    return committed
 end
 
-local type_capped = do(document, n, cap)
-    return try_edit document:
-        insert n
-        if length > cap then return Outcome.abort length end
-        return Outcome.commit()
-    end
+local type_capped = |document, n, cap| -> try_edit document:
+    insert n
+    if length > cap then return Outcome.abort length end
+    return Outcome.commit()
 end
 
 local doc = { length = 0, cursor = 0, edits = 0 }
@@ -592,20 +586,16 @@ Each policy is its own activity, and the order of the spine is the order of comp
 
 ```lua
 -- a policy that completes after the work inside it
-local clamp_length = do(document, max)
-    return do(body)
-        body
-        if document.length > max then
-            document.length = max
-            document.cursor = max
-        end
+local clamp_length = do(document, max) = do(body)
+    body
+    if document.length > max then
+        document.length = max
+        document.cursor = max
     end
 end
-local count_into = do(stats)
-    return do(body)
-        body
-        stats.count = stats.count + 1
-    end
+local count_into = do(stats) = do(body)
+    body
+    stats.count = stats.count + 1
 end
 
 local stats, big = { count = 0 }, { length = 0, cursor = 0, edits = 0 }
@@ -635,12 +625,10 @@ local collect_notes = do(body)
     return log.notes
 end
 
-local type_logged = do(document, n)
-    return collect_notes:
-        edit document:
-            insert n
-            note 1
-        end
+local type_logged = |document, n| -> collect_notes:
+    edit document:
+        insert n
+        note 1
     end
 end
 assert(type_logged({ length = 0, cursor = 0, edits = 0 }, 3) == 1)
@@ -753,23 +741,21 @@ spoke the instruction:
 
 ```lua
 -- the builder: one verb per method; sentences in, a checked description out
-local router = do(Verbs)
-    return do(body)
-        local routes, seen, Routing = {}, {}, {}
-        for name, code in pairs Verbs do
-            Routing[name] = do(path)
-                -- level 3: the error names the line that spoke the route
-                if type path ~= "string" or path:sub(1, 1) ~= "/" then
-                    error(name .. ": a path starts with '/', got " .. tostring path, 3)
-                end
-                if seen[name .. path] then error(name .. " " .. path .. " is declared twice", 3) end
-                seen[name .. path] = true
-                return do(handler) routes[#routes + 1] = { method = code, .path, .handler } end
+local router = do(Verbs) = do(body)
+    local routes, seen, Routing = {}, {}, {}
+    for name, code in pairs Verbs do
+        Routing[name] = do(path)
+            -- level 3: the error names the line that spoke the route
+            if type path ~= "string" or path:sub(1, 1) ~= "/" then
+                error(name .. ": a path starts with '/', got " .. tostring path, 3)
             end
+            if seen[name .. path] then error(name .. " " .. path .. " is declared twice", 3) end
+            seen[name .. path] = true
+            return do(handler) routes[#routes + 1] = { method = code, .path, .handler } end
         end
-        body Routing
-        return routes
     end
+    body Routing
+    return routes
 end
 local routes = router Methods
 assert(not pcall(routes, do(..) get "notes" (|| -> 1) end))  -- a path starts with '/'
@@ -1009,12 +995,10 @@ the opened parameter only when its name is used.
 Handlers are named after outcomes, and the handler sugar `name(p) = e` keeps short arms short:
 
 ```lua
-local first_or = do(xs, fallback)
-    return find_nonzero(xs) {
-        found(i) = xs[i],
-        missing() = fallback,
-    }
-end
+local first_or = |xs, fallback| -> find_nonzero(xs) {
+    found(i) = xs[i],
+    missing() = fallback,
+}
 assert(first_or({ 0, 5 }, -1) == 5 and first_or({}, -1) == -1)
 ```
 
@@ -1146,7 +1130,8 @@ generic or a homonym should stay qualified.
 | `word()` | a zero-argument invocation in an expression; also valid as an explicit statement |
 | trailing block (colon) | scopes, iteration, activities, builders: `f x:` then the block and `end` |
 | `do(x) … end` | a function that is a block: `local f = do(x) … end` for a definition whose body is statements |
-| `return do(x) … end` | an activity that returns the function taking its block: `return do(body) … end` |
+| `do(subject) = do(body) … end` | stages with no intervening setup; only the final block needs `end` |
+| `return do(x) … end` | return the next stage after doing work at the current stage |
 | instruction | inside an opened block, a call without a receiver: `insert n`, `note 1` |
 | `with` blocks | keyed data that spans lines; a `struct` or `oneof` declaration; matching |
 | `{ }` braces | Lua tables, compact one-liners |
@@ -1162,11 +1147,16 @@ A standalone callable name is a zero-argument call statement: `refresh` calls `r
 expression the name remains a value: `local action = refresh` saves the callable, while
 `local result = refresh()` invokes it.
 
-**One lambda spelling for each purpose.** An expression is an arrow (`x -> x * 2`); statements are
-a `do` block (`do(x) … end`). The trailing colon (`f x:`) is only the anonymous opening block,
-`do(..)`. Types and opening need `do`. A function that returns a block is written
-`do(params) … end` with `return do(block_params) … end`, so an activity reads without a
-second spelling.
+**One lambda spelling for each purpose.** An expression is an arrow (`x -> x * 2`), including a
+body written as just `return expression`; other statements use a `do` block (`do(x) … end`).
+A call statement deliberately discards its results, so `do(x) notify x end` stays a block—it
+is not `x -> notify x`. The trailing colon (`f x:`) is only the anonymous opening block,
+`do(..)`. Types and opening need `do`. Stages with no intervening work form a chain:
+`do(subject) = do(body) … end`. Plain expression stages can use `subject -> operand -> expression`.
+Do not mix a prefix of arrows with a final `do(parameters)`: `-> do … end` is the arrow's own
+statement body, not another parameterized function. Keep `return do(next_stage) … end` when
+preceding statements perform setup at the current stage. An expression-only chain needs no
+closer; a remaining final block needs `end`. `endall` is for multiple blocks that actually remain open.
 
 Parentheses group and delimit required argument lists; they are not a substitute for clear
 names. Application binds tighter than operators and takes a name's full postfix chain. Write

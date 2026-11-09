@@ -1,14 +1,17 @@
 local ffi = require "ffi"
 local Check = require "bui.ui.check"
+local Geometry = require "bui.ui.paint_geometry"
 
 local kinds = { button = 1, toggle = 2, checkbox = 3, radio = 4, number = 5, slider = 6,
     text = 7, menu = 8, pulldown = 9, menu_item = 10, list_item = 11, swatch = 12,
     progress = 13, tab = 14, panel_header = 15, disclosure = 16, menu_background = 17,
     tooltip_background = 18, separator = 19, label = 20, arrow = 21, box = 22 }
-local copy_rectangle = do(destination, value, name)
-    Check.array(value, name)
-    assert(#value == 4, name .. " needs four coordinates")
-    for index = 1, 4 do destination[index - 1] = Check.number(value[index], name, -1e7, 1e7) end
+local copy_auxiliary = do(destination, components)
+    Check.array(components, "widget auxiliary")
+    assert(#components == 4, "widget auxiliary needs four components")
+    for index = 1, 4 do
+        destination[index - 1] = Check.number(components[index], "widget auxiliary", -1e7, 1e7)
+    end
 end
 local copy_color = do(destination, value, name)
     local channels = Check.color(value, name)
@@ -30,12 +33,11 @@ local for_paint = do(Native, pointer, check)
         local alignments = { default = -1, left = 0, center = 1, right = 2 }
         item[0].align = assert(alignments[Check.default(options.align, "default")],
             "unknown text alignment")
-        copy_rectangle(item[0].rect, options.rectangle, "widget rectangle")
-        assert(item[0].rect[2] >= 0 and item[0].rect[3] >= 0, "negative widget dimensions")
-        if options.clip then copy_rectangle(item[0].clip, options.clip, "widget clip") end
-        if options.text_rectangle then copy_rectangle(item[0].text_rect,
-                options.text_rectangle, "text rectangle") end
-        if options.auxiliary then copy_rectangle(item[0].aux, options.auxiliary, "widget auxiliary") end
+        ffi.copy(item[0].rect, Geometry.rectangle options.rectangle, 16)
+        if options.clip then ffi.copy(item[0].clip, Geometry.clip options.clip, 16) end
+        if options.text_rectangle then ffi.copy(item[0].text_rect,
+                Geometry.rectangle options.text_rectangle, 16) end
+        if options.auxiliary then copy_auxiliary(item[0].aux, options.auxiliary) end
         item[0].value = Check.number(Check.default(options.value, 0), "widget value", -1e7, 1e7)
         if options.color then copy_color(item[0].color, options.color, "widget color")
         else item[0].color[3] = item[0].kind == 20 and -1 or 1 end
@@ -52,8 +54,7 @@ local for_paint = do(Native, pointer, check)
                 end_color = true, outline = true, emboss = true, horizontal = true,
                 checkerboard = true, pixel_size = true }, "widget base")
         local base = ffi.new "BuiWidgetBase[1]"
-        copy_rectangle(base[0].rect, options.rectangle, "widget rectangle")
-        assert(base[0].rect[2] >= 0 and base[0].rect[3] >= 0, "negative widget dimensions")
+        ffi.copy(base[0].rect, Geometry.rectangle options.rectangle, 16)
         base[0].rad = Check.number(Check.default(options.radius, 4), "outer radius", 0, 1e7)
         base[0].radi = Check.number(Check.default(options.inner_radius,
                 math.max(0, base[0].rad - 1)), "inner radius", 0, base[0].rad)

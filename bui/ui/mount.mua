@@ -165,14 +165,11 @@ node = do(Application, window, parent_owner, parent_node, descriptor, options)
                 ..Fields.for_control record
                 ..Containers.for_control(record, do(installer, body)
                         local installed = mount(Application, window, owner, pointer, installer)
-                        return Scope.with_owner installed.owner do() return body installed.capabilities end
+                        return Scope.with_owner installed.owner (|| -> body installed.capabilities)
                     end)
-                ..Graphs.for_control(record, do(options)
-                        return Application.assembling do()
-                            return node(Application,
-                                window, owner, pointer, Widgets.catalog.graph_node, options).capabilities
-                        end
-                    end)
+                ..Graphs.for_control(record,
+                    options -> Application.assembling (|| -> node(Application,
+                            window, owner, pointer, Widgets.catalog.graph_node, options).capabilities))
             end
             Fields.remember(record.capabilities, record)
             record.ready = true
@@ -223,22 +220,20 @@ placement = do(Application, window, owner, parent_node)
                 owner.mutate("assemble " .. name)
                 return do(body)
                     Check.callable(body, name .. " body")
-                    return Scope.prepare(owner, do()
-                            return Application.assembling do()
-                                local container = node(Application, window, owner,
-                                    parent_node, descriptor, options)
-                                local parent = container.node
-                                if descriptor.native_body then
-                                    parent = Application.native.BK_node_child(parent, 0)
-                                    assert(parent ~= nil, name .. " has no native body")
-                                elseif descriptor.managed_body then
-                                    parent = node(Application, window, container.owner, parent,
-                                        Widgets.catalog[descriptor.managed_body],
-                                        { fill = true, padding = 0 }).node
-                                end
-                                body(placement(Application, window, container.owner, parent))
-                                return container.capabilities
+                    return Scope.prepare(owner, || -> Application.assembling do()
+                            local container = node(Application, window, owner,
+                                parent_node, descriptor, options)
+                            local parent = container.node
+                            if descriptor.native_body then
+                                parent = Application.native.BK_node_child(parent, 0)
+                                assert(parent ~= nil, name .. " has no native body")
+                            elseif descriptor.managed_body then
+                                parent = node(Application, window, container.owner, parent,
+                                    Widgets.catalog[descriptor.managed_body],
+                                    { fill = true, padding = 0 }).node
                             end
+                            body(placement(Application, window, container.owner, parent))
+                            return container.capabilities
                         end)
                 end
             end
@@ -283,7 +278,7 @@ placement = do(Application, window, owner, parent_node)
     end
     local after = do(milliseconds)
         owner.mutate "schedule timer"
-        return do(body) return Application.after(owner, window, milliseconds, body) end
+        return body -> Application.after(owner, window, milliseconds, body)
     end
     return define
         ..Controls
@@ -301,9 +296,7 @@ end
 local with_content = do(Application, window, parent_node, installer, body)
     Check.callable(body, "content body")
     local installed = mount(Application, window, window.owner, parent_node, installer)
-    return Scope.with_owner installed.owner do()
-        return body installed.capabilities
-    end
+    return Scope.with_owner installed.owner (|| -> body installed.capabilities)
 end
 
 return define .with_content, .notify, .mount end

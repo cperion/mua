@@ -62,59 +62,55 @@ local with_application = do(Native, Protocols, body, clock)
     retained_libraries[code_identity] = retained_libraries[code_identity] or Native
     local now = monotonic(Check.callable(Check.default(clock, Clock.now), "monotonic clock"))
     active = true
-    local results = packed(pcall do()
-            return Callbacks.with_callbacks Native do(Boundary)
-                return Scope.with_owner(Scope.new(nil, "application", Boundary)) do(owner)
-                    owner.defer do() Native.BK_image_exit end
-                    local Driver = Dispatch.new(Native, owner, Boundary, Protocols, now)
-                    local Application
-                    local dialogs_for = do(window, parent)
-                        return Dialogs.for_owner(Application, window, parent, Surface.open_child)
-                    end
-                    Application = define ..Driver
-                        native = Native
-                        protocols = Protocols
-                        .owner
-                        .dialogs_for
-                        paint = Boundary.paint
-                        serve = Boundary.serve
-                        callback = Boundary.callback
-                        check_error = Boundary.check_error
-                        register = Boundary.register
-                        resolve = Boundary.resolve
-                    end
-                    owner.activate
-                    local with_window = do(options)
-                        owner.mutate "open window"
-                        return Surface.with_window(Application, options)
-                    end
-                    local with_surface = do(options)
-                        owner.mutate "open surface"
-                        return Surface.with_surface(Application, options)
-                    end
-                    local with_host = do(Services)
-                        owner.mutate "open embedded surface"
-                        return Surface.with_host(Application, Services)
-                    end
-                    return body define
-                        ..appearance(Native, owner)
-                        ..Environment.for_application Application
-                        ..Interop.for_application Application
-                        .with_window
-                        .with_surface
-                        .with_host
-                        resources = Resources.for_owner(Application, owner)
-                        images = Media.images Application
-                        typography = Typography.for_application Application
-                        statistics = Driver.statistics
-                        run = Driver.run
-                        pump = Driver.pump
-                        quit = Driver.quit
-                        with_keep_alive = Driver.with_keep_alive
-                    end
+    local results = packed(pcall (|| -> Callbacks.with_callbacks Native Boundary -> Scope.with_owner(Scope.new(nil,
+                    "application", Boundary)) do(owner)
+                owner.defer do() Native.BK_image_exit end
+                local Driver = Dispatch.new(Native, owner, Boundary, Protocols, now)
+                local Application
+                local dialogs_for = |window, parent| -> Dialogs.for_owner(Application,
+                    window, parent, Surface.open_child)
+                Application = define ..Driver
+                    native = Native
+                    protocols = Protocols
+                    .owner
+                    .dialogs_for
+                    paint = Boundary.paint
+                    serve = Boundary.serve
+                    callback = Boundary.callback
+                    check_error = Boundary.check_error
+                    register = Boundary.register
+                    resolve = Boundary.resolve
                 end
-            end
-        end)
+                owner.activate
+                local with_window = do(options)
+                    owner.mutate "open window"
+                    return Surface.with_window(Application, options)
+                end
+                local with_surface = do(options)
+                    owner.mutate "open surface"
+                    return Surface.with_surface(Application, options)
+                end
+                local with_host = do(Services)
+                    owner.mutate "open embedded surface"
+                    return Surface.with_host(Application, Services)
+                end
+                return body define
+                    ..appearance(Native, owner)
+                    ..Environment.for_application Application
+                    ..Interop.for_application Application
+                    .with_window
+                    .with_surface
+                    .with_host
+                    resources = Resources.for_owner(Application, owner)
+                    images = Media.images Application
+                    typography = Typography.for_application Application
+                    statistics = Driver.statistics
+                    run = Driver.run
+                    pump = Driver.pump
+                    quit = Driver.quit
+                    with_keep_alive = Driver.with_keep_alive
+                end
+            end))
     active = false
     if not results[1] then error(results[2], 0) end
     return unpack(results, 2, results.n)

@@ -75,19 +75,24 @@ local acquire = do(Application, owner, source)
         identifier = Native.BK_video_texture(same_integration(video, "video"), identifier, 0, 0)
         return size()
     end
-    local update = do(horizontal, vertical, source)
-        owner.mutate "update texture"
-        assert(not video, "video textures are updated by refresh")
-        Check.integer(horizontal, "texture x", 0, 16384)
-        Check.integer(vertical, "texture y", 0, 16384)
-        local width, height, stride, rgba = pixels source
-        assert(rgba ~= nil, "texture update needs RGBA pixels")
-        owner.mutate "publish texture update"
-        assert(Native.BUI_texture_update(identifier,
-                horizontal, vertical, width, height, rgba, stride) ~= 0,
-            "texture update failed")
+    -- A location selects where the upload goes; pixels are supplied at the effect boundary.
+    -- Capture scalar coordinates, not a mutable location table or the current native texture ID.
+    local upload_at = do(position)
+        Check.keys(position, { x = true, y = true }, "texture upload position")
+        local horizontal = Check.integer(rawget(position, "x"), "texture x", 0, 16384)
+        local vertical = Check.integer(rawget(position, "y"), "texture y", 0, 16384)
+        return do(source)
+            owner.mutate "upload texture pixels"
+            assert(not video, "video textures are updated by refresh")
+            local width, height, stride, rgba = pixels source
+            assert(rgba ~= nil, "texture upload needs RGBA pixels")
+            owner.mutate "publish texture upload"
+            assert(Native.BUI_texture_update(identifier,
+                    horizontal, vertical, width, height, rgba, stride) ~= 0,
+                "texture upload failed")
+        end
     end
-    local copy_image = do(image, frame)
+    local copy_frame = do(image) = do(frame)
         owner.mutate "update texture from image"
         assert(not video, "video textures are updated by refresh")
         local pointer = same_integration(image, "image")
@@ -109,7 +114,12 @@ local acquire = do(Application, owner, source)
         end
         return Acquisition.ready(nil)
     end
-    local Texture = define .size, .refresh, .update, .copy_image end
+    local Texture = define
+        .size
+        .refresh
+        .upload_at
+        .copy_frame
+    end
     return Acquisition.ready(Handles.register(Texture, owner, "texture", || -> identifier))
 end
 
@@ -117,19 +127,16 @@ end
 local resources = do(Application, owner)
     local acquire_texture = source -> Scope.prepare(owner,
         || -> acquire(Application, owner, source))
-    local with_texture = do(source)
-        return do(body)
-            Check.callable(body, "texture body")
-            return Scope.with_owner(owner.child "texture") do(temporary)
-                return acquire(Application, temporary, source) with
-                    unavailable = Application.protocols.acquisition.unavailable
-                    ready = do(Texture)
-                        temporary.activate
-                        return Application.protocols.acquisition.ready(body Texture)
-                    end
+    local with_texture = do(source) = do(body)
+        Check.callable(body, "texture body")
+        return Scope.with_owner(owner.child "texture") do(temporary) = acquire(Application,
+            temporary, source) with
+                unavailable = Application.protocols.acquisition.unavailable
+                ready = do(Texture)
+                    temporary.activate
+                    return Application.protocols.acquisition.ready(body Texture)
                 end
             end
-        end
     end
     return define .acquire_texture, .with_texture end
 end

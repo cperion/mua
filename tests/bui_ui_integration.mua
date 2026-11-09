@@ -15,7 +15,12 @@ end
 local ready = outcome -> outcome { ready = value -> value, unavailable = reason -> error reason }
 local opened = outcome -> outcome { opened = value -> value, unavailable = reason -> error reason }
 local unlinked, linked = 0, 0
-local Watched = meta { index = do(_, key) return Native[key] end } with
+local installed_host
+local Watched = meta { index = |_, key| -> Native[key] } with
+    BK_context_set_host = do(context, host)
+        if host ~= nil and host[0].warp ~= nil then installed_host = ffi.new("BKHost", host[0]) end
+        Native.BK_context_set_host(context, host)
+    end
     BK_link_fields = do(fields, count)
         expect(Native.BK_node_parent fields[0] == nil,
             "linking activated the native parent-vector hook")
@@ -66,11 +71,11 @@ Ui.with_application Watched do(Application)
     local raster = ready(Application.resources.acquire_raster { width = 32, height = 32 })
     raster.with_frame {} do(Paint)
         Paint.widget_base with
-            rectangle = { 0, 0, 32, 32 }
+            rectangle = { width = 32, height = 32 }
             start_color = { 1, 0, 0, 1 }
             end_color = { 0, 0, 1, 1 }
         end
-        Paint.widget { kind = "label", rectangle = { 0, 0, 32, 32 }, text = "A" }
+        Paint.widget { kind = "label", rectangle = { width = 32, height = 32 }, text = "A" }
         local previous = Native.GPU_backend_sink_get()
         Paint.with_primitive_sink do()
             local sink = Native.GPU_backend_sink_get()
@@ -82,8 +87,18 @@ Ui.with_application Watched do(Application)
                 ffi.cast("const float (*)[2]", points), ffi.cast("const float (*)[4]", colors), 3)
         end
         expect(Native.GPU_backend_sink_get() == previous)
-        refuses(|| -> Paint.widget { kind = "typo", rectangle = { 0, 0, 1, 1 } },
+        refuses(|| -> Paint.widget { kind = "typo", rectangle = { width = 1, height = 1 } },
             "unknown drawn widget")
+        refuses(|| -> Paint.widget with
+            kind = "label"
+            rectangle = { width = 1, height = 1 }
+            clip = { width = 0, height = 1 }
+        end, "clip must be nonempty")
+        refuses(|| -> Paint.widget with
+            kind = "label"
+            rectangle = { width = 1, height = 1 }
+            clip = { x = 1e7, width = 1e-12, height = 1 }
+        end, "representably nonempty")
     end
     expect(#ready(raster.pixels()).bytes == 4096)
     local calls, copied, late = 0, nil, nil
@@ -98,7 +113,7 @@ Ui.with_application Watched do(Application)
         end_frame = do() calls += 1 end
     end do(Sink)
         late = Sink
-        Sink.viewport(32, 32)
+        Sink.set_viewport { width = 32, height = 32 }
         local sink = Native.bui_get_render_sink()
         expect(sink == Native.GPU_backend_sink_get())
         sink.begin_frame(sink.user, 32, 32)
@@ -115,9 +130,10 @@ Ui.with_application Watched do(Application)
         sink.end_frame sink.user
     end
     expect(calls == 3 and Native.GPU_backend_sink_get() == previous)
-    refuses(|| -> late.viewport(1, 1), "activity has ended")
+    refuses(|| -> late.set_viewport { width = 1, height = 1 }, "activity has ended")
 
     local requests, wakes, scheduled, written = 0, 0, 0, nil
+    local warped
     local Services = define
         request = do() requests += 1 end
         wake = do() wakes += 1 end
@@ -127,13 +143,14 @@ Ui.with_application Watched do(Application)
             return Ui.Acquisition.ready "host clipboard"
         end
         write_clipboard = do(text) written = text end
+        warp = do(position) warped = position end
     end
     opened(Application.with_host(Services) { width = 300, height = 300 } do(surface)
             local before = requests
             surface.with_content do(place)
                 local first = place.number { value = 1 }
                 local slot = place.slot {}
-                local second = slot.replace do(children) return children.number { value = 2 } end
+                local second = slot.replace children -> children.number { value = 2 }
                 local disconnect = place.link_fields { first, second }
                 expect(linked == 1)
                 slot.clear
@@ -152,9 +169,9 @@ Ui.with_application Watched do(Application)
                 expect(meter.current() == 7)
                 local list = place.list { items = { "One", "Two" }, selection_mode = "multiple" }
                 expect(#list.items() == 2)
-                list.mark(2, true)
+                list.set_marked 2 true
                 list.clear_marks
-                list.move_view("vertical", 0)
+                list.move_view "vertical" 0
                 expect(list.view("vertical").total >= 1)
                 local ramp = place.ramp { interpolation = "constant" }
                 expect(#ramp.stops() >= 2)
@@ -173,6 +190,10 @@ Ui.with_application Watched do(Application)
                 expect(written == nil)
                 Application.pump
                 expect(written == "copied text")
+                installed_host.warp(installed_host.data, 12, 34)
+                expect(warped == nil)
+                Application.pump
+                expect(warped.x == 12 and warped.y == 34)
                 local fired = false
                 surface.after 0 do() fired = true end
                 expect(scheduled > 0 and not fired)

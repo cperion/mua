@@ -1,0 +1,216 @@
+-- A tiny compiler whose backend is Lua Fun, not generated source text.
+--   LUA_PATH='/path/to/luafun/?.lua;;' luajit mua.lua examples/luafun/compiler.mua
+-- A builder produces inspectable data. Compilation binds its fixed structure to
+-- generator functions. Running supplies a dense array; sum drives the traversal.
+-- Callbacks use one scalar payload; general multireturn mapping is outside this DSL.
+-- LuaJIT may fuse that traversal. bench/luafun_compiler.lua measures and traces it.
+
+local Fun = require "fun"
+
+-- The description is structural: only our engines consume it, so no nominal type
+-- is needed. The builder owns its steps. The returned program can be inspected.
+local describe = do(body)
+    local steps = {}
+    body define
+        filter = do(predicate)
+            assert(type predicate == "function", "filter takes a predicate")
+            steps[#steps + 1] = { kind = "filter", apply = predicate }
+        end
+        map = do(transform)
+            assert(type transform == "function", "map takes a transform")
+            steps[#steps + 1] = { kind = "map", apply = transform }
+        end
+        take = do(count)
+            assert(type count == "number" and count >= 0 and count < math.huge
+                and count % 1 == 0, "take needs a finite nonnegative integer")
+            steps[#steps + 1] = { kind = "take", .count }
+        end
+    end
+    return steps
+end
+
+-- Reference semantics: a small demand-driven interpreter over the description.
+-- Counters belong to this execution, not the program. It inspects the operation
+-- kind at every pull. Explicit availability distinguishes exhaustion from payload.
+local interpret = do(steps, source)
+    local position, counts = 0, {}
+    local pull
+    pull = do(stage)
+        if stage == 0 then
+            position += 1
+            local value = source[position]
+            return value ~= nil, value
+        end
+        local instruction = steps[stage]
+        if instruction.kind == "take" then
+            local taken = counts[stage] or 0
+            if taken >= instruction.count then return false end
+            local available, value = pull(stage - 1)
+            if not available then return false end
+            counts[stage] = taken + 1
+            return true, value
+        end
+        if instruction.kind == "map" then
+            local available, value = pull(stage - 1)
+            if not available then return false end
+            return true, instruction.apply value
+        end
+        assert(instruction.kind == "filter", "unknown instruction")
+        while true do
+            local available, value = pull(stage - 1)
+            if not available then return false end
+            if instruction.apply value then return true, value end
+        end
+    end
+    local total = 0
+    while true do
+        local available, value = pull(#steps)
+        if not available then return total end
+        total += value
+    end
+end
+
+-- Compile once: resolve each operation and capture its policy and predecessor.
+-- Each binder is called once per program step, not once per element. Run-time
+-- wrappers/cursors are still built per invocation; the benchmark includes them.
+-- Lua Fun, rather than this compiler, implements the actual generator machinery.
+local Compiling = define
+    filter = do(instruction, previous)
+        local predicate = instruction.apply
+        return source -> Fun.filter(predicate, previous source)
+    end
+    map = do(instruction, previous)
+        local transform = instruction.apply
+        return source -> Fun.map(transform, previous source)
+    end
+    take = do(instruction, previous)
+        local count = instruction.count
+        return source -> Fun.take_n(count, previous source)
+    end
+end
+local compile = do(steps)
+    local produce = Fun.iter
+    for _, instruction in ipairs steps do
+        local bind = assert(Compiling[instruction.kind], "unknown instruction")
+        produce = bind(instruction, produce)
+    end
+    return source -> Fun.sum(produce source)
+end
+
+-- A second baseline uses the same Lua Fun backend but interprets the description
+-- to assemble the pipeline on EVERY invocation. This separates binding work from
+-- backend behavior; both may be optimized well by LuaJIT.
+local assemble_and_run = do(steps, source)
+    local current = Fun.iter source
+    for _, instruction in ipairs steps do
+        if instruction.kind == "filter" then current = Fun.filter(instruction.apply, current)
+        elseif instruction.kind == "map" then current = Fun.map(instruction.apply, current)
+        elseif instruction.kind == "take" then current = Fun.take_n(instruction.count, current)
+        else error "unknown instruction"
+        end
+    end
+    return current:sum()
+end
+
+local even = value -> value % 2 == 0
+local square = value -> value * value
+local example = describe:
+    filter even
+    map square
+    take 128
+end
+
+if (...) == "library" then
+    return { .describe, .compile, .interpret, .assemble_and_run, .example }
+end
+
+-- Pure cases include different ordering: take before filter limits INPUT demand;
+-- take after filter limits matching OUTPUT demand. They are different programs.
+local plans = {
+    {},
+    example,
+    describe do(..) map square; take 128 end,
+    describe do(..) filter even; map square end,
+    describe do(..) take 0 end,
+    describe do(..) take 5; filter even; map square end,
+    describe do(..) filter even; take 5; map square end,
+    describe do(..) map square; take 7; filter even; take 2 end,
+}
+local checks = 0
+for _, plan in ipairs plans do
+    local run = compile plan
+    for _, length in ipairs { 0, 1, 2, 7, 128, 1024 } do
+        local source = {}
+        for index = 1, length do source[index] = index end
+        local expected = interpret(plan, source)
+        assert(run source == expected)
+        assert(assemble_and_run(plan, source) == expected)
+        assert(run source == expected)  -- fresh traversal state on every invocation
+        checks += 1
+    end
+end
+
+-- Effect order must agree, not just the sum. Build fresh captures for each engine.
+local effects_for = do(engine)
+    local effects = {}
+    local predicate = do(value)
+        effects[#effects + 1] = "filter " .. value
+        return even value
+    end
+    local transform = do(value)
+        effects[#effects + 1] = "map " .. value
+        return square value
+    end
+    local plan = describe:
+        filter predicate
+        map transform
+        take 2
+    end
+    local result = engine(plan, { 1, 2, 3, 4, 5, 6 })
+    assert(result == 20)
+    return table.concat(effects, ", ")
+end
+local expected_effects = effects_for interpret
+local staged = |plan, source| -> compile plan source
+assert(effects_for staged == expected_effects)
+assert(effects_for assemble_and_run == expected_effects)
+assert(expected_effects == "filter 1, filter 2, map 2, filter 3, filter 4, map 4")
+
+-- Compilation binds the current structure, but does not freeze a callback's own
+-- captured state. Mutating the description later does not rewrite an existing run.
+local scale = 2
+local scaled = describe:
+    map value -> value * scale
+end
+local run_scaled = compile scaled
+scaled[1].apply = value -> value * 100
+assert(run_scaled { 3 } == 6)
+scale = 4
+assert(run_scaled { 3 } == 12)
+
+-- No producer work at compilation, and take zero never pulls even a throwing map.
+local never = do(value) error "must not execute" end
+local zero = describe:
+    map never
+    take 0
+end
+assert(compile zero ({ 1 }) == 0 and interpret(zero, { 1 }) == 0)
+for _, invalid in ipairs { -1, 0.5, math.huge } do
+    assert(not pcall(describe, do(verbs) verbs.take invalid end))
+end
+
+local source = {}
+for index = 1, 4096 do source[index] = index end
+local answer = compile example source
+assert(answer == 2829056)
+print "description -> filter, map, take; compiled to generator composition"
+print(("sum -> %d; %d reference cases agree"):format(answer, checks))
+print("effects -> " .. expected_effects)
+print "checked -> fresh execution state, bound structure, live captures, zero demand"
+
+--[=[ output
+description -> filter, map, take; compiled to generator composition
+sum -> 2829056; 48 reference cases agree
+effects -> filter 1, filter 2, map 2, filter 3, filter 4, map 4
+checked -> fresh execution state, bound structure, live captures, zero demand
+]=]

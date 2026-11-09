@@ -26,14 +26,10 @@ end
 local RoundRectangle = struct { id: Number, coordinates: Table, paint: Table, radius: Number }
 Shape { Rectangle, Oval, Line, Polygon, Text, Arc, Image, RoundRectangle }
 
-local common = do(description)
-    return { id = description.id, coordinates = description.coordinates,
-        paint = { fill = description.fill, outline = description.outline, width = description.width,
-            hidden = description.hidden, clip = description.clip } }
-end
-local primitive = do(Constructor)
-    return do(description) return Constructor(common description) end
-end
+local common = description -> { id = description.id, coordinates = description.coordinates,
+    paint = { fill = description.fill, outline = description.outline, width = description.width,
+        hidden = description.hidden, clip = description.clip } }
+local primitive = Constructor -> description -> Constructor(common description)
 local Reading = define
     rectangle = do(description)
         if description.radius > 0 then
@@ -44,16 +40,15 @@ local Reading = define
     oval = primitive Oval
     line = primitive Line
     polygon = primitive Polygon
-    text = do(description)
-        return Text with ..common description
-            text = description.text
-            anchor = description.anchor
-            font = { family = description.family,
-                size = description.size, flags = description.text_flags }
-        end
+    text = description -> Text with ..common description
+        text = description.text
+        anchor = description.anchor
+        font = { family = description.family,
+            size = description.size, flags = description.text_flags }
     end
-    arc = do(description)
-        return Arc { ..common description, start = description.start, extent = description.extent }
+    arc = description -> Arc with ..common description
+        start = description.start
+        extent = description.extent
     end
     image = do(description)
         local source
@@ -71,15 +66,13 @@ local Reading = define
             frame = description.frame
         end
     end
-    round_rectangle = do(description)
-        return RoundRectangle { ..common description, radius = description.radius }
+    round_rectangle = description -> RoundRectangle with ..common description
+        radius = description.radius
     end
 end
 
 -- Semantic checking precedes this projection; each resulting kind has only its own operands.
-local read = do(description)
-    return assert(Reading[description.kind], "unknown canvas shape")(description)
-end
+local read = description -> assert(Reading[description.kind], "unknown canvas shape")(description)
 local coordinates = do(node)
     local copied = {}
     for index, value in ipairs node.coordinates do copied[index] = value end
@@ -96,21 +89,17 @@ local write_attributes = do(node, kind)
         fill = copy node.paint.fill, outline = copy node.paint.outline,
         width = node.paint.width, hidden = node.paint.hidden, clip = copy node.paint.clip }
 end
-local writing = do(kind)
-    return do(node, recurse) return write_attributes(node, kind) end
-end
+local writing = kind -> |node, recurse| -> write_attributes(node, kind)
 local Writing = define
     Rectangle = writing "rectangle"
     Oval = writing "oval"
     Line = writing "line"
     Polygon = writing "polygon"
-    Text = do(node, recurse)
-        return { ..write_attributes(node, "text"), text = node.text, family = node.font.family,
-            size = node.font.size, text_flags = node.font.flags, anchor = node.anchor }
-    end
-    Arc = do(node, recurse)
-        return { ..write_attributes(node, "arc"), start = node.start, extent = node.extent }
-    end
+    Text = |node, recurse| -> { ..write_attributes(node, "text"),
+        text = node.text, family = node.font.family,
+        size = node.font.size, text_flags = node.font.flags, anchor = node.anchor }
+    Arc = |node, recurse| -> { ..write_attributes(node, "arc"),
+        start = node.start, extent = node.extent }
     Image = do(node, recurse)
         local source = node.source with
             path = path -> { source = path }
@@ -121,9 +110,8 @@ local Writing = define
         end
         return { ..write_attributes(node, "image"), ..source, fit = node.fit, frame = node.frame }
     end
-    RoundRectangle = do(node, recurse)
-        return { ..write_attributes(node, "round_rectangle"), radius = node.radius }
-    end
+    RoundRectangle = |node, recurse| -> { ..write_attributes(node, "round_rectangle"),
+        radius = node.radius }
 end
 local write = Shape.pass "write a canvas shape as supplied data" with ..Writing end
 

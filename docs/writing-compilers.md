@@ -174,12 +174,8 @@ pass that has not learned it fail where it is made, not when some program first 
 
 ```lua
 local Area = define
-    Circle = do(node, recurse)
-        return 3 * node.radius * node.radius
-    end
-    Pair = do(node, recurse)
-        return recurse node.left + recurse node.right
-    end
+    Circle = |node, recurse| -> 3 * node.radius * node.radius
+    Pair = |node, recurse| -> recurse node.left + recurse node.right
 end
 local area = Shape.pass "area" with ..Area end
 assert(area two_circles == 15)
@@ -216,12 +212,9 @@ own recursive calls, changed or not:
 
 ```lua
 local Depth = define
-    Circle = do(node, recurse, depth)
-        return depth
-    end
-    Pair = do(node, recurse, depth)
-        return math.max(recurse(node.left, depth + 1), recurse(node.right, depth + 1))
-    end
+    Circle = |node, recurse, depth| -> depth
+    Pair = |node, recurse, depth| -> math.max(recurse(node.left, depth + 1),
+        recurse(node.right, depth + 1))
 end
 local depth_of = Shape.pass "depth" with ..Depth end
 assert(depth_of(two_circles, 0) == 1)
@@ -249,9 +242,7 @@ Because handlers are a vocabulary, passes are built from one another by spread:
 ```lua
 -- a variant that names only what it changes
 local RoundedArea = define ..Area
-    Circle = do(node, recurse)
-        return math.floor(3.14159 * node.radius * node.radius)
-    end
+    Circle = |node, recurse| -> math.floor(3.14159 * node.radius * node.radius)
 end
 local rounded_area = Shape.pass "rounded area" with ..RoundedArea end
 assert(rounded_area two_circles == 15)
@@ -632,12 +623,8 @@ the print must give the same tree.
 
 ```lua
 local Writing = define
-    Literal = do(node, recurse)
-        return tostring node.value
-    end
-    Variable = do(node, recurse)
-        return node.name
-    end
+    Literal = |node, recurse| -> tostring node.value
+    Variable = |node, recurse| -> node.name
     Primitive = do(node, recurse)
         local left, right = recurse node.arguments[1], recurse node.arguments[2]
         return ("(%s %s %s)"):format(node.operator, left, right)
@@ -647,9 +634,8 @@ local Writing = define
         local when_true, when_false = recurse node.when_true, recurse node.when_false
         return ("(if %s %s %s)"):format(condition, when_true, when_false)
     end
-    Let = do(node, recurse)
-        return ("(let ((%s %s)) %s)"):format(node.name, recurse node.value, recurse node.body)
-    end
+    Let = |node, recurse| -> ("(let ((%s %s)) %s)"):format(node.name,
+        recurse node.value, recurse node.body)
     Lambda = do(node, recurse)
         local parameters = table.concat(node.parameters, " ")
         return ("(lambda (%s) %s)"):format(parameters, recurse node.body)
@@ -766,12 +752,8 @@ with (§12). A compiler without one can only be tested against expected outputs 
 
 ```lua
 local Evaluation = define
-    Literal = do(node, recurse, environment)
-        return node.value
-    end
-    Variable = do(node, recurse, environment)
-        return environment[node.name]
-    end
+    Literal = |node, recurse, environment| -> node.value
+    Variable = |node, recurse, environment| -> environment[node.name]
     Primitive = do(node, recurse, environment)
         local left = recurse(node.arguments[1], environment)
         local right = recurse(node.arguments[2], environment)
@@ -788,12 +770,10 @@ local Evaluation = define
         inner[node.name] = recurse(node.value, inner)
         return recurse(node.body, inner)
     end
-    Lambda = do(node, recurse, environment)
-        return do(..arguments)
-            local inner = within environment
-            for index, name in ipairs node.parameters do inner[name] = arguments[index] end
-            return recurse(node.body, inner)
-        end
+    Lambda = do(node, recurse, environment) = do(..arguments)
+        local inner = within environment
+        for index, name in ipairs node.parameters do inner[name] = arguments[index] end
+        return recurse(node.body, inner)
     end
     Application = do(node, recurse, environment)
         local arguments = {}
@@ -886,9 +866,7 @@ local Lowering = define
         write_instruction(lowering, Constant { .register, value = node.value })
         return register
     end
-    Variable = do(node, recurse, lowering)
-        return lowering.registers[node.name]
-    end
+    Variable = |node, recurse, lowering| -> lowering.registers[node.name]
     Primitive = do(node, recurse, lowering)
         local left = recurse(node.arguments[1], lowering)
         local right = recurse(node.arguments[2], lowering)
@@ -1180,9 +1158,7 @@ local Reads = define
 end
 local count_reads = Instruction.pass "count the reads of each register" with ..Reads end
 
-local never_read = do(instruction, counts)
-    return (counts.reads[instruction.register] or 0) == 0
-end
+local never_read = |instruction, counts| -> (counts.reads[instruction.register] or 0) == 0
 local unless_never_read = do(node, recurse, counts)
     if never_read(node, counts) then return {} end
     return { node }
@@ -1287,12 +1263,8 @@ end
 
 local lua_spelling = {["="] = "==" }
 local LuaText = define
-    Constant = do(node, recurse, indent)
-        return indent .. node.register .. " = " .. tostring node.value
-    end
-    Copy = do(node, recurse, indent)
-        return indent .. node.register .. " = " .. node.source
-    end
+    Constant = |node, recurse, indent| -> indent .. node.register .. " = " .. tostring node.value
+    Copy = |node, recurse, indent| -> indent .. node.register .. " = " .. node.source
     Operation = do(node, recurse, indent)
         local operator = lua_spelling[node.operator] or node.operator
         local expression = node.left .. " " .. operator .. " " .. node.right
@@ -1302,18 +1274,10 @@ local LuaText = define
         local arguments = table.concat(node.arguments, ", ")
         return indent .. node.register .. " = " .. node.callee .. "(" .. arguments .. ")"
     end
-    Label = do(node, recurse, indent)
-        return indent .. "::" .. node.name .. "::"
-    end
-    Jump = do(node, recurse, indent)
-        return indent .. "goto " .. node.label
-    end
-    JumpUnless = do(node, recurse, indent)
-        return indent .. "if not " .. node.condition .. " then goto " .. node.label .. " end"
-    end
-    Return = do(node, recurse, indent)
-        return indent .. "return " .. node.source
-    end
+    Label = |node, recurse, indent| -> indent .. "::" .. node.name .. "::"
+    Jump = |node, recurse, indent| -> indent .. "goto " .. node.label
+    JumpUnless = |node, recurse, indent| -> indent .. "if not " .. node.condition .. " then goto " .. node.label .. " end"
+    Return = |node, recurse, indent| -> indent .. "return " .. node.source
     Closure = do(node, recurse, indent)
         local header = ("%s%s = function(%s)"):format(indent,
             node.register, table.concat(node.parameters, ", "))

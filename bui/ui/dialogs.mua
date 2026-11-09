@@ -3,64 +3,81 @@ local Scope = require "bui.ui.scope"
 local Mount = require "bui.ui.mount"
 local Widgets = require "bui.ui.widgets"
 
--- Dialog completion belongs to the launching owner, not the native notification or setup block.
+-- Preparing cannot complete. Presented may complete once. Teardown owns delivery, including
+-- external window closure; it does not confuse an installation failure with cancellation.
+local Progress = oneof { preparing: Unit, presented: Unit, accepted: Any, cancelled: Unit }
+local require_presented = do(progress: Progress): Unit
+    progress with
+        preparing() = error("dialog has not been published", 3)
+        presented() = nil
+        accepted() = error("dialog has already completed", 3)
+        cancelled() = error("dialog has already completed", 3)
+    end
+end
+
+-- The launching owner retains the dialog. Completion is supplied before the installation
+-- block; that block receives Finish first and returns its placement instructions separately.
 local for_owner = do(Application, parent_window, parent, open_child)
     local Opening, Dialog = Application.protocols.opening, Application.protocols.dialog
-    local open_dialog = do(options)
+    local open_dialog = do(options) = do(completed)
+        Check.callable(completed, "dialog completion")
         return do(installer)
-            return do(completed)
-                parent.mutate "open dialog"
-                Check.callable(installer, "dialog installer")
-                Check.callable(completed, "dialog completion")
-                return Scope.prepare(parent, do()
-                        local owner = parent.child "dialog"
-                        local published, outcome = false, nil
-                        owner.defer do()
-                            if published then
-                                Application.post(parent, completed, outcome or Dialog.cancelled())
-                            end
+            parent.mutate "open dialog"
+            Check.callable(installer, "dialog installer")
+            return Scope.prepare(parent, do()
+                    local owner = parent.child "dialog"
+                    local progress = Progress.preparing()
+                    owner.defer do()
+                        local outcome = progress with
+                            preparing() = nil
+                            presented() = Dialog.cancelled()
+                            accepted = Dialog.accepted
+                            cancelled() = Dialog.cancelled()
                         end
-                        local accept = do(value)
-                            owner.mutate "accept dialog"
-                            assert(published, "dialog has not been published")
-                            outcome = Dialog.accepted value
+                        progress = Progress.cancelled()
+                        if outcome then Application.post(parent, completed, outcome) end
+                    end
+                    local accept = do(value)
+                        owner.mutate "accept dialog"
+                        require_presented progress
+                        progress = Progress.accepted value
+                        owner.close
+                    end
+                    local cancel = do()
+                        if not owner.is_alive() then return end
+                        owner.mutate "cancel dialog"
+                        require_presented progress
+                        progress = Progress.cancelled()
+                        owner.close
+                    end
+                    local Finish = define .accept, .cancel end
+                    return open_child(Application, parent_window, owner, options) with
+                        unavailable = do(reason)
                             owner.close
+                            return Opening.unavailable reason
                         end
-                        local cancel = do()
-                            if not owner.is_alive() then return end
-                            owner.mutate "cancel dialog"
-                            assert(published, "dialog has not been published")
-                            owner.close
-                        end
-                        local Finish = define .accept, .cancel end
-                        return open_child(Application, parent_window, owner, options) with
-                            unavailable = do(reason)
-                                owner.close
-                                return Opening.unavailable reason
+                        opened = do(window)
+                            window.owner.defer do()
+                                if owner.is_alive() then Application.post(owner, owner.close) end
                             end
-                            opened = do(window)
-                                -- An externally destroyed native window also completes the activity.
-                                window.owner.defer do()
-                                    if owner.is_alive() then Application.post(owner, owner.close) end
-                                end
-                                local installed = Mount.mount(Application,
-                                    window, window.owner, window.root,
-                                    do(place) return installer(place, Finish) end)
-                                window.capabilities.on_close_requested owner.close
-                                owner.activate
-                                if window.pointer then window.capabilities.show end
-                                published = true
-                                return Opening.opened define
-                                    cancel = owner.close
-                                    content = installed.capabilities
-                                    render = window.capabilities.render
-                                    input = window.capabilities.input
-                                    size = window.capabilities.size
-                                end
+                            local instructions = Check.callable(installer Finish,
+                                "dialog placement instructions")
+                            local installed = Mount.mount(Application,
+                                window, window.owner, window.root, instructions)
+                            window.capabilities.on_close_requested owner.close
+                            owner.activate
+                            if window.pointer then window.capabilities.show end
+                            progress = Progress.presented()
+                            return Opening.opened define
+                                cancel = owner.close
+                                content = installed.capabilities
+                                render = window.capabilities.render
+                                input = window.capabilities.input
+                                size = window.capabilities.size
                             end
                         end
-                    end)
-            end
+                    end
+                end)
         end
     end
     local confirm = do(options)
@@ -70,12 +87,13 @@ local for_owner = do(Application, parent_window, parent, open_child)
         local accepted = Check.string(Check.default(options.accept, "OK"), "accept caption")
         local cancelled = Check.string(Check.default(options.cancel, "Cancel"), "cancel caption")
         local title = Check.string(Check.default(options.title, "Confirm"), "dialog title")
-        return open_dialog { .title, width = 420, height = 160 } do(place, Finish)
-            place.label message
+        local open = open_dialog { .title, width = 420, height = 160 }
+        return completed -> open completed do(Finish) = do(..)
+            label message
             local accept = do() Finish.accept true end
-            place.row {} do(buttons)
-                buttons.button accepted accept
-                buttons.button cancelled Finish.cancel
+            row {}:
+                button accepted accept
+                button cancelled Finish.cancel
             end
             return define .accept end
         end
@@ -94,9 +112,10 @@ local for_owner = do(Application, parent_window, parent, open_child)
             local probe = Application.native.BK_node_new "filebrowser"
             if probe == nil then return Opening.unavailable "file browser unavailable in this build" end
             Application.native.BK_node_free probe
-            return open_dialog { .title, width = 800, height = 520 } do(place, Finish)
-                local browser = place.file_browser copied
-                browser.connect define
+            local open = open_dialog { .title, width = 800, height = 520 }
+            return open completed do(Finish) = do(..)
+                local Browser = file_browser copied
+                Browser.connect define
                     submitted = do(result)
                         result with
                             browsing() = nil
@@ -105,8 +124,8 @@ local for_owner = do(Application, parent_window, parent, open_child)
                         end
                     end
                 end
-                return browser
-            end completed
+                return Browser
+            end
         end
     end
     return define .open_dialog, .confirm, .choose_file end

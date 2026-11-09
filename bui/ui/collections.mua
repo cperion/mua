@@ -157,13 +157,13 @@ local for_control = do(record)
         end
         return children
     end
-    local rename_item = do(identifier, label)
+    local rename_item = do(identifier) = do(label)
         owner.mutate "rename tree item"
         Check.string(label, "tree label")
         Native.BK_tree_item_set_label(find(identifier).pointer, label)
         Native.BK_node_relayout node
     end
-    local item_values = do(identifier, values)
+    local set_item_values = do(identifier) = do(values)
         owner.mutate "tree column values"
         local strings, retained = Check.strings(values, "tree values")
         owner.mutate "publish tree values"
@@ -172,25 +172,27 @@ local for_control = do(record)
         entry.values = retained
         Native.BK_node_relayout node
     end
-    local expand_item = do(identifier, expanded)
+    local set_expanded = do(identifier) = do(expanded)
         owner.mutate "expand tree item"
         Check.boolean(expanded, "expanded")
         Native.BK_tree_item_set(find(identifier).pointer, "expanded", expanded and 1 or 0)
         Native.BK_node_relayout node
     end
-    local mark_item = do(identifier, marked)
+    local set_marked = do(identifier) = do(marked)
         owner.mutate "mark tree item"
         Check.boolean(marked, "marked")
         Native.BK_tree_item_set(find(identifier).pointer, "marked", marked and 1 or 0)
         Native.BK_node_invalidate node
     end
-    local toggle_item = do(identifier, column, enabled)
-        owner.mutate "toggle tree item"
+    local set_toggle = do(identifier) = do(column)
         Check.integer(column, "toggle column", 1, 32)
-        Check.boolean(enabled, "toggle")
-        Native.BK_tree_item_set(find(identifier).pointer,
-            "toggle" .. (column - 1), enabled and 1 or 0)
-        Native.BK_node_invalidate node
+        return do(enabled)
+            owner.mutate "set tree toggle"
+            Check.boolean(enabled, "toggle")
+            Native.BK_tree_item_set(find(identifier).pointer,
+                "toggle" .. (column - 1), enabled and 1 or 0)
+            Native.BK_node_invalidate node
+        end
     end
     local tree_rows = do()
         owner.check "tree rows"
@@ -221,10 +223,10 @@ local for_control = do(record)
         .select_item
         .item
         .rename_item
-        .item_values
-        .expand_item
-        .mark_item
-        .toggle_item
+        .set_item_values
+        .set_expanded
+        .set_marked
+        .set_toggle
         .tree_rows
         .item_children
     end

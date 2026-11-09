@@ -3,16 +3,26 @@ local Check = require "bui.ui.check"
 local Scope = require "bui.ui.scope"
 local Handles = require "bui.ui.handles"
 
+local styles = { regular = 0, bold = 1, italic = 2, bold_italic = 3 }
+local font_style = do(name)
+    local flags = styles[name]
+    assert(flags ~= nil, "font style expects regular, bold, italic, or bold_italic")
+    return flags
+end
+
 local description = do(options)
     Check.keys(options,
-        { text = true, family = true, flags = true, size = true }, "text description")
-    local text = Check.string(options.text, "text")
+        { text = true, family = true, style = true, underline = true, size = true },
+        "text description")
+    local supplied = { ..options }
+    local text = Check.string(supplied.text, "text")
     assert(#text <= 1048576, "text description is too long")
     return with
         .text
-        family = Check.string(Check.default(options.family, ""), "font family")
-        flags = Check.integer(Check.default(options.flags, 0), "font flags", 0, 7)
-        size = Check.number(Check.default(options.size, 14), "font size", 1, 4096)
+        family = Check.string(Check.default(supplied.family, ""), "font family")
+        flags = font_style(Check.default(supplied.style, "regular")) +
+        (Check.boolean(Check.default(supplied.underline, false), "underline") and 4 or 0)
+        size = Check.number(Check.default(supplied.size, 14), "font size", 1, 4096)
     end
 end
 
@@ -60,19 +70,16 @@ end
 -- Preparation can persist under its resource owner or be bounded by one activity body.
 local resources = do(Application, owner)
     local acquire_text = options -> Scope.prepare(owner, || -> acquire(Application, owner, options))
-    local with_text = do(options)
-        return do(body)
-            Check.callable(body, "prepared text body")
-            return Scope.with_owner(owner.child "prepared text") do(temporary)
-                return acquire(Application, temporary, options) with
-                    unavailable = Application.protocols.acquisition.unavailable
-                    ready = do(Text)
-                        temporary.activate
-                        return Application.protocols.acquisition.ready(body Text)
-                    end
+    local with_text = do(options) = do(body)
+        Check.callable(body, "prepared text body")
+        return Scope.with_owner(owner.child "prepared text") do(temporary) = acquire(Application,
+            temporary, options) with
+                unavailable = Application.protocols.acquisition.unavailable
+                ready = do(Text)
+                    temporary.activate
+                    return Application.protocols.acquisition.ready(body Text)
                 end
             end
-        end
     end
     return define .acquire_text, .with_text end
 end
@@ -91,15 +98,19 @@ local for_application = do(Application)
         end
         return Acquisition.ready(tonumber width[0])
     end
-    local add_font = do(family, flags, bytes)
-        owner.mutate "register font"
+    local register_font = do(family)
         Check.string(family, "font family")
-        Check.integer(flags, "font style", 0, 3)
-        assert(type bytes == "string" and #bytes <= 2147483647, "font bytes expected")
-        if Native.BUI_text_add_font(family, flags, bytes, #bytes) == 0 then
-            return Acquisition.unavailable "font could not be registered"
+        return do(style)
+            local flags = font_style style
+            return do(bytes)
+                owner.mutate "register font"
+                assert(type bytes == "string" and #bytes <= 2147483647, "font bytes expected")
+                if Native.BUI_text_add_font(family, flags, bytes, #bytes) == 0 then
+                    return Acquisition.unavailable "font could not be registered"
+                end
+                return Acquisition.ready(nil)
+            end
         end
-        return Acquisition.ready(nil)
     end
     local ui_width = do(text)
         owner.check "measure UI text"
@@ -116,7 +127,7 @@ local for_application = do(Application)
     return define
         .available
         .measure
-        .add_font
+        .register_font
         .default_font
         .ui_width
     end
