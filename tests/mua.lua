@@ -188,6 +188,8 @@ parses('with entries stop at the next entry', 'p = P with x = a y = b end', 'p =
 parses('contextual with', 'return with\n  x = 1\nend', 'return ctx{x=1}')
 parses('with as a name', 'x = with + 1', 'x = (with + 1)')
 parses('a handler entry', 'r = s with\n  done() = 0\n  failed(e) = e\nend', 'r = s(with{done=fn()=0, failed=fn(e)=e})')
+parses('an applied result type in a with entry', 'r = s with\n  a = do(c: C): Ref U32 = Ref c.x\n  b = do(d: D): Ref U32 = d\nend\nreturn r',
+    'r = s(with{a=fn(c):Ref(U32)=Ref(c.x), b=fn(d):Ref(U32)=d}), return r')
 parses('endall closes the spine', 'outer:each:\n  inner:each:\n    f a b\nendall\ng()',
     'outer:each(colon(..){inner:each(colon(..){f(a)(b)})}), g()')
 parses('endall stops at a typed word', 'local w = do(): U32\n  xs:each do(a)\n    f a\n  end\n  return 1\nend',

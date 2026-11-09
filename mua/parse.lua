@@ -528,7 +528,9 @@ end
 
 -- a type annotation is an ordinary expression; it ends where an expression must end
 -- (`,` `)` `=` a keyword, or a new line before a name)
-function P:typeexpr() return self:expr(nil, true) end
+-- a type annotation never begins a `with` entry: `do(c: C): Ref U32 = e` in a `with` block
+-- annotates `Ref U32`, its `U32 =` is not the next entry
+function P:typeexpr() return self:with_flags({ in_with = false }, function() return self:expr(nil, true) end) end
 
 -- expressions -------------------------------------------------------------------------------
 
