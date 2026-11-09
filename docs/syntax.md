@@ -143,7 +143,9 @@ are exactly those of the expanded program.
 
 `..e` in an argument list, a return list or an initializer list expands a call's several
 results or a table's array part. `define` followed by entries and `end` is a table (a plain one, never a host's contextual construction), so a definition reads as
-a definition; a **structural type** is the table it is given.
+a definition; a **structural type** is the table it is given. A block that is a table is a table
+wherever a table may appear, an argument included, so a definition passes straight to what reads
+it: `iter start do(state, control) … end`.
 
 **`meta`** installs a vocabulary as a metatable. `meta { index = …, tostring = … }` (or
 `meta with … end`) copies its entries under `__` names (`__index`, `__tostring`; a name that
@@ -265,7 +267,7 @@ follows the same rule. Reads and writes allocate nothing and call nothing per ac
 
 Without a host, annotations are contracts, checked when a function is called, when it returns,
 and when a typed local is assigned. A checker is a built-in (`Number String Boolean Table
-Function Any Unit Optional(T)`), a predicate function (`checker("Node", test)` gives one a name, so a
+Function Any Unit Optional(T) iter`), a predicate function (`checker("Node", test)` gives one a name, so a
 failure says `expects Node`), a closed structural type, a `struct`
 or a `oneof`. A failure names what was expected and what was found at the caller's line:
 
@@ -297,6 +299,42 @@ the alternatives: a missing or unknown handler is an error at the match.
 local Shape = oneof { circle: Number, rect: Table }
 local area = do(s: Shape): Number = s { circle = r -> r * r, rect = t -> t.w * t.h }
 ```
+
+**`iter`** is one iteration over a step: a cursor. `iter` takes the initial state, then the step,
+curried, so the definition reads in the order a traversal has. The step is Lua's own iterator
+protocol: it answers the next control and the value it produces, and a nil value ends the
+traversal, so there is no sentinel state. The control starts at 0:
+
+```lua
+local counting = do(limit: Number): iter
+    return iter limit do(state, control)
+        if control >= state then return end
+        return control + 1, control + 1
+    end
+end
+
+local walk: iter = counting 3
+for value in walk do print value end          -- 1, 2, 3
+for value in walk do print value end          -- nothing: it is spent
+```
+
+A cursor is a value twice over. `for value in walk do` uses it as one, and
+`walk.step, walk.state, walk.control` hands plain Lua the triple it already understands, so a
+cursor passes to ordinary Lua code — and to Lua Fun — with no adapter. The cursor owns its
+control, so using the value again continues where it stopped: a `for` that breaks leaves the rest
+for a later `for`, and a saved value is a saved position. Since the loop names one variable, a
+step answers one value; the progress is `walk.control`. `walk:take n` is a bounded view that
+spends from the same cursor, so resuming the cursor continues after what the view read. `iter` is
+a checker (`local x: iter`, `do(…): iter`), so an iteration can be named in a signature and a
+value that is not one is refused: `expects iter, got a table`.
+
+Two cursors are independent, and interleaving them shares nothing; one cursor used from two loops
+at once is one traversal, not two. A reusable source is a function that returns a cursor
+(`counting` above), not an `iter` value. [`examples/iter.mua`](../examples/iter.mua) is the guided
+tour, and [streams.md](streams.md) tells a stage, a box and a fused loop apart.
+
+`iter nil` is not an application (a nil literal is not an argument); write `iter (nil) do(…)` when
+the state is nothing.
 
 **`ffistruct`** declares a C struct for LuaJIT's FFI and gives back its ctype:
 

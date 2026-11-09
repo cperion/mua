@@ -14,6 +14,7 @@ local structs = setmetatable({}, { __mode = 'k' })      -- struct type -> { name
 local sums = setmetatable({}, { __mode = 'k' })         -- oneof type -> { name, alts, index, meta }
 local closed = setmetatable({}, { __mode = 'k' })       -- closed structural type -> { declared names }
 local instance_of = setmetatable({}, { __mode = 'k' })  -- instance metatable -> its struct or oneof
+local iterations = setmetatable({}, { __mode = 'k' })   -- an iteration's metatable -> true
 -- ffistruct ctypes by their printed form (`ctype<struct tag>`: a ctype object is not interned, so
 -- it cannot be a table key) -> { name, tag }
 local ctypes = {}
@@ -28,6 +29,7 @@ local function describe_value(v)
         if structs[owner] then return 'a ' .. structs[owner].name end
         return ('%s.%s'):format(sums[owner].name, rawget(v, 'tag'))
     end
+    if mt and iterations[mt] then return 'an iteration' end
     if type(v) == 'cdata' then
         local ct = ffi().typeof(v)
         return 'a ' .. (ctype_info(ct) and ctype_info(ct).name or tostring(ct))
@@ -466,6 +468,65 @@ function R.ffistruct(name, fields)
     return ct
 end
 
+-- iter: one iteration over a step ------------------------------------------------------------------
+-- `iter start do(state, control) … end` is a cursor, curried so the definition reads in the order a
+-- traversal has: where it starts, then how it moves on. The step is Lua's own iterator protocol —
+-- it answers the next control and the value it produces, and a nil value ends the traversal — so a
+-- cursor is a value twice over: `for value in walk do` uses it as one, and
+-- `walk.step, walk.state, walk.control` hands plain Lua the triple it already understands, with no
+-- adapter. The control starts at 0, so a step that counts begins with `control + 1`; the cursor
+-- owns it, so using the value again continues where it stopped, and `take n` is a bounded view
+-- that spends from the same cursor. The word is a checker, so a cursor can be a parameter's, a
+-- result's or a local's type, and a contract that fails says `expects iter`.
+
+local iteration_meta, iter                                   -- forward: the metatable, then the type
+
+-- the value the for reads: the control it threads is the cursor's own
+local function iteration_advance(self)
+    local control, value = self.step(self.state, self.control)
+    if value ~= nil then self.control = control end
+    return value
+end
+
+local function iteration_of(start, step)
+    if type(step) ~= 'function' then
+        error(('iter takes its start and then its step: iter start do(state, control) … end, got %s')
+            :format(describe_value(step)), 2)
+    end
+    return setmetatable({ step = step, state = start, control = 0 }, iteration_meta)
+end
+
+local function iteration_take(self, limit)
+    if type(limit) ~= 'number' then
+        error(('take takes a count of steps, got %s'):format(describe_value(limit)), 2)
+    end
+    local left = limit
+    return iteration_of(nil, function(state, control)
+        if left <= 0 then return end
+        left = left - 1
+        local value = iteration_advance(self)
+        if value == nil then return end
+        return control + 1, value
+    end)
+end
+
+iteration_meta = {
+    __index = { take = iteration_take, advance = iteration_advance },
+    __call = iteration_advance,
+    __tostring = function() return 'an iteration' end,
+}
+iterations[iteration_meta] = true
+iter = checker('iter', function(value)
+    return type(value) == 'table' and getmetatable(value) == iteration_meta
+end)
+getmetatable(iter).__call = function(_, start, step)
+    if step ~= nil then
+        error('iter takes its start and then its step: iter start do(state, control) … end', 2)
+    end
+    return function(step) return iteration_of(start, step) end
+end
+R.iter = iter
+
 -- opening (design §4.4, E1) ----------------------------------------------------------------------
 -- An opened Lua table introduces its string keys as they are when it is opened. open returns the
 -- context (after checking that it can introduce names); emitted code tests, once, which of the
@@ -488,7 +549,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'checker', 'family', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R

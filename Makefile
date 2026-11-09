@@ -3,6 +3,7 @@ LUA ?= luajit
 .PHONY: test
 test:
 	$(LUA) tests/mua.lua
+	$(LUA) tests/iter.lua
 	$(LUA) tests/guide.lua
 	$(LUA) tests/cli.lua
 	$(LUA) tests/fmt.lua

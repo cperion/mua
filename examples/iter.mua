@@ -1,0 +1,188 @@
+-- `iter`: one iteration over a step, for the sources that are not tables yet.
+-- Run from the repository root: luajit mua.lua examples/iter.mua
+--
+-- A table is already a collection: `ipairs` indexes it and nothing needs defining. But plenty of
+-- sources are not there yet -- a text to read line by line, a batch of programs to compile only as
+-- they are asked for, a page to fetch when the reader wants it. Building the whole collection does
+-- work nobody asked for, and `ipairs` has nothing to index. `iter` is the value for that case: a
+-- cursor that knows where it starts and how it moves on, and that can be stopped, kept, resumed,
+-- passed on, or named in a signature.
+
+------------------------------------------------------------------------------------------------
+-- A cursor is a start and a step
+
+-- `counting` answers a fresh cursor over 1..limit for each call, so a caller that wants to walk the
+-- numbers twice asks twice: the state is the limit, and the control is the count reached so far.
+local counting = do(limit: Number): iter
+    return iter limit do(state, control)
+        if control >= state then return end
+        return control + 1, control + 1
+    end
+end
+
+-- `walk` is the cursor itself, held in a local rather than written into a `for`, because what this
+-- example shows is what the value does between loops.
+local walk: iter = counting 4
+
+-- `taken` is what one loop over `walk` yields, kept so the output can show the traversal rather
+-- than just its length.
+local taken = do(source)
+    local values = {}
+    for value in source do values[#values + 1] = value end
+    return values
+end
+print(("counting 4 -> %s"):format(table.concat(taken walk, ", ")))
+
+-- `again` is how many items a second loop over the same cursor finds, which is the whole point of
+-- a cursor: it is a position, not a collection, so it is spent rather than reset.
+local again = 0
+for value in walk do again += 1 end
+print(("the same cursor again -> %d values"):format again)
+
+------------------------------------------------------------------------------------------------
+-- The cursor owns its progress
+
+-- `resumed` is a fresh cursor over 1..6 for the stop-and-continue case below.
+local resumed = counting 6
+-- `first` is what one loop reads before it stops; `rest` is what the next loop finds left, so the
+-- two together show that stopping is safe and leaves the position intact.
+local first, rest = {}, {}
+for value in resumed do
+    first[#first + 1] = value
+    if #first == 2 then break end
+end
+for value in resumed do rest[#rest + 1] = value end
+print(("stop after 2 -> %s, then %s"):format(table.concat(first, ", "), table.concat(rest, ", ")))
+
+-- `pad` is a longer cursor, so that a bounded read can be shown spending a little of it.
+local pad = counting 20
+-- `front` is the bounded view: at most three steps, taken from `pad` rather than copied from it.
+local front = pad:take 3
+-- `bounded` is what the view yields, collected so the output can show both it and where the parent
+-- now stands.
+local bounded = do(source)
+    local values = {}
+    for value in source do values[#values + 1] = value end
+    return values
+end
+print(("take 3 -> %s; the cursor is at %d"):format(table.concat(bounded front, ", "), pad.control))
+
+------------------------------------------------------------------------------------------------
+-- The same value is also a plain Lua iterator
+
+-- `triple` is a cursor read the way Lua reads any iterator, so this section needs no adapter: the
+-- step, the state and the control are the three things a generic `for` already takes.
+local triple = counting 3
+-- `spelled` is what `step`, `state` and `control` produce together, kept so the output can show
+-- that the control is the value's own progress and the pairs are `(control, value)`.
+local spelled = do()
+    local pairs_taken = {}
+    for control, value in triple.step, triple.state, triple.control do
+        pairs_taken[#pairs_taken + 1] = ("%d:%d"):format(control, value)
+    end
+    return pairs_taken
+end
+print(("as a triple -> %s (the loop kept the control, so the cursor is still at %d)"):format(
+        table.concat(spelled(), " "), triple.control))
+
+------------------------------------------------------------------------------------------------
+-- Two cursors share nothing
+
+-- `left` and `right` are separate cursors over the same numbers, so each keeps its own position;
+-- one is what a nested loop interleaves with, and the other is what it leaves alone.
+local left, right = counting 2, counting 2
+-- `mixed` is the interleaving, one step of each in turn, kept to show that neither loop disturbed
+-- the other's place.
+local mixed = {}
+for value in left do
+    mixed[#mixed + 1] = "l" .. value
+    for other in right do
+        mixed[#mixed + 1] = "r" .. other
+        break
+    end
+end
+print(("interleaved -> %s"):format(table.concat(mixed, " ")))
+
+------------------------------------------------------------------------------------------------
+-- The shape a real source takes
+
+-- `lines_of` answers a cursor over the lines of a text, so an input is read as it is asked for
+-- rather than split into a list first: the state is the text, which never changes, and the control
+-- is the offset just past the line last read, which is exactly where the next step starts.
+local lines_of = do(text: String): iter
+    return iter text do(state, control)
+        if control >= #state then return end
+        -- `stop` is where this line ends: the next newline after the control, or the text's end.
+        local stop = state:find("\n", control + 1, true) or #state + 1
+        return stop, state:sub(control + 1, stop - 1)
+    end
+end
+
+-- `poem` is the source under read; the cursor below holds no copy of it and no list of lines.
+local poem = "one\ntwo\nthree"
+-- `reading` is the whole traversal, collected only because this example prints at the end.
+local reading = do(source)
+    local lines = {}
+    for line in source do lines[#lines + 1] = line end
+    return lines
+end
+print(("lines of a text -> %s"):format(table.concat(reading(lines_of poem), " | ")))
+
+-- `manual` is a second cursor over the same text, advanced by calling it rather than by looping,
+-- which is how a consumer that is not a `for` -- a pager, a parser, a scheduler -- asks for the
+-- next item.
+local manual = lines_of poem
+-- `head` is that one step, so the output can show a single item taken without opening a loop.
+local head = manual()
+print(("by hand -> %s, then %s"):format(tostring head, tostring(manual())))
+
+------------------------------------------------------------------------------------------------
+-- `iter` is a type as well as a constructor
+
+-- `take_two` is what a signature looks like: its parameter and its result are both cursors, so a
+-- caller cannot pass an array or a raw iterator where a traversal is meant.
+local take_two = do(source: iter): iter
+    return source:take 2
+end
+-- `drained` counts what `take_two` yields, showing that the bounded view it returns is a cursor of
+-- the same kind, usable by any loop.
+local drained = 0
+for value in take_two(counting 9) do drained += value end
+print(("a cursor parameter and result -> %d"):format drained)
+
+-- `refused` turns the contract's complaint into a value, so the example can print what a wrong
+-- value is told at the boundary instead of just failing.
+local refused = do(source)
+    local ok, problem = pcall(take_two, source)
+    assert(not ok, "take_two accepted a value that is not a cursor")
+    return (problem:gsub("^[^:]*:%d+: ", ""))
+end
+print(("an array where a cursor belongs -> %s"):format(refused { 1, 2, 3 }))
+
+------------------------------------------------------------------------------------------------
+-- What this is not for
+
+-- `words` is an array: it is already a collection, so it needs no cursor at all.
+local words = { "read", "check", "lower", "emit" }
+-- `shouted` is that array through `ipairs`, which needs no definition, no state and no control, and
+-- costs about half per element, so this is the case where the table is the traversal.
+local shouted = do()
+    local out = {}
+    for _, word in ipairs words do out[#out + 1] = word:upper() end
+    return out
+end
+print(("an array -> %s (use ipairs)"):format(table.concat(shouted(), " ")))
+
+--[=[ output
+counting 4 -> 1, 2, 3, 4
+the same cursor again -> 0 values
+stop after 2 -> 1, 2, then 3, 4, 5, 6
+take 3 -> 1, 2, 3; the cursor is at 3
+as a triple -> 1:1 2:2 3:3 (the loop kept the control, so the cursor is still at 0)
+interleaved -> l1 r1 l2 r2
+lines of a text -> one | two | three
+by hand -> one, then two
+a cursor parameter and result -> 3
+an array where a cursor belongs -> contract: parameter 'source' of take_two expects iter, got a table
+an array -> READ CHECK LOWER EMIT (use ipairs)
+]=]
