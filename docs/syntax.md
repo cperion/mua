@@ -269,8 +269,10 @@ follows the same rule. Reads and writes allocate nothing and call nothing per ac
 
 Without a host, annotations are contracts, checked when a function is called, when it returns,
 and when a typed local is assigned. A checker is a built-in (`Number String Boolean Table
-Function Any Unit Optional(T) iter`), a predicate function (`checker("Node", test)` gives one a name, so a
-failure says `expects Node`), a closed structural type, a `struct`
+Function Any Unit Optional(T) iter`), a predicate function (`checker "Node" test` gives one a name,
+so a failure says `expects Node`; a short function needs a name parameter to follow an argument
+without brackets — `checker "Node" v -> …` parses, `checker "Node" |v| -> …` does not, because `|`
+is an operator between operands), a closed structural type, a `struct`
 or a `oneof`. A failure names what was expected and what was found at the caller's line:
 
 ```lua

@@ -460,9 +460,12 @@ end
 local depth_of = Expression.pass "how deep" with ..Depth end
 return depth_of(Sum { left = Literal { value = 1 }, right = Negation { operand = Literal { value = 2 } } }, 0)]], 2)
 -- checker names a predicate
-errors('a named checker names what it expected', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nf(3)', 'expects Even')
-runs('a named checker accepts', 'local Even = checker("Even", v -> v % 2 == 0)\nlocal f = do(n: Even): Number = n\nreturn f(4)', 4)
-errors('checker takes a name and a predicate', 'local c = checker(1, 2)', 'takes a name and a predicate')
+errors('a named checker names what it expected', 'local Even = checker "Even" do(v) return v % 2 == 0 end\nlocal f = do(n: Even): Number = n\nf(3)', 'expects Even')
+runs('a named checker accepts', 'local Even = checker "Even" do(v) return v % 2 == 0 end\nlocal f = do(n: Even): Number = n\nreturn f(4)', 4)
+runs('a checker takes a named predicate', 'local is_even = do(v) return v % 2 == 0 end\nlocal Even = checker "even" is_even\nlocal f = do(n: Even): Number = n\nreturn f(6)', 6)
+errors('checker takes its name, then its predicate', 'local c = checker(1, 2)', 'takes its name, then its predicate')
+errors('a checker names the type first', 'local c = checker 1', 'names the type first')
+errors('a checker wants a predicate', 'local c = checker "x" 5', 'is number 5, not a function')
 -- meta installs a vocabulary as a metatable
 runs('meta installs methods and metamethods', [[
 local Counter = meta with

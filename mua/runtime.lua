@@ -199,31 +199,38 @@ function R.expand(t) return unpack(t, 1, t.n or #t) end
 
 -- checkers and contracts (design §4.7) ------------------------------------------------------------
 
-local function checker(name, test)
-    local c = setmetatable({}, { __tostring = function() return name end })
-    checkers[c] = { name = name, test = test }
-    return c
-end
--- `checker(name, test)`: a predicate with a name, so a contract that fails says what it expected
--- (`expects Node`) instead of `a predicate`
-function R.checker(name, test)
-    if type(name) ~= 'string' or type(test) ~= 'function' then
-        error('checker takes a name and a predicate: checker("Node", value -> …)', 2)
+-- `checker "Node" do(value) … end`: a predicate with a name, so a contract that fails says what it
+-- expected (`expects Node`) instead of `a predicate`. Curried like `pass`, so a declaration reads
+-- without brackets: the name first, then the predicate.
+local function checker(name, ...)
+    if ... ~= nil then
+        error('checker takes its name, then its predicate: checker "Node" do(value) … end', 2)
     end
-    return checker(name, test)
+    if type(name) ~= 'string' then
+        error(('checker names the type first: checker "Node" do(value) … end, got %s'):format(describe_value(name)), 3)
+    end
+    return function(test)
+        if type(test) ~= 'function' then
+            error(('the predicate of the checker %s is %s, not a function'):format(name, describe_value(test)), 2)
+        end
+        local c = setmetatable({}, { __tostring = function() return name end })
+        checkers[c] = { name = name, test = test }
+        return c
+    end
 end
-R.Number = checker('Number', function(v) return type(v) == 'number' end)
-R.String = checker('String', function(v) return type(v) == 'string' end)
-R.Boolean = checker('Boolean', function(v) return type(v) == 'boolean' end)
-R.Table = checker('Table', function(v) return type(v) == 'table' end)
-R.Function = checker('Function', function(v) return type(v) == 'function' end)
-R.Any = checker('Any', function() return true end)
-R.Unit = checker('Unit', function(v) return v == nil end)
+R.checker = checker
+R.Number = checker('Number')(function(v) return type(v) == 'number' end)
+R.String = checker('String')(function(v) return type(v) == 'string' end)
+R.Boolean = checker('Boolean')(function(v) return type(v) == 'boolean' end)
+R.Table = checker('Table')(function(v) return type(v) == 'table' end)
+R.Function = checker('Function')(function(v) return type(v) == 'function' end)
+R.Any = checker('Any')(function() return true end)
+R.Unit = checker('Unit')(function(v) return v == nil end)
 local optionals = setmetatable({}, { __mode = 'k' })
 function R.Optional(T)
     local c = optionals[T]
     if not c then
-        c = checker('Optional(' .. R.describe(T) .. ')', function(v) return v == nil or (R.check(T, v)) end)
+        c = checker('Optional(' .. R.describe(T) .. ')')(function(v) return v == nil or (R.check(T, v)) end)
         optionals[T] = c
     end
     return c
@@ -504,7 +511,7 @@ iteration_meta = {
     __tostring = function() return 'an iteration' end,
 }
 iterations[iteration_meta] = true
-iter = checker('iter', function(value)
+iter = checker('iter')(function(value)
     return type(value) == 'table' and getmetatable(value) == iteration_meta
 end)
 getmetatable(iter).__call = function(_, start, step)

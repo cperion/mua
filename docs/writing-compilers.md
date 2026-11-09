@@ -34,7 +34,7 @@ source positions or collected problems.
 | `Family.pass "description" with … end` | a function over the family: one handler per kind, checked when it is made (§4) |
 | `define … end` | a vocabulary: the handlers of a pass, shared and extended by spread |
 | `..Base` and an explicit entry | composition: a spread contributes entries, an explicit entry overrides; two spreads that offer one name clash unless an entry names it |
-| `checker("name", test)` | a named predicate, for contracts the built-ins do not cover (§3.3) |
+| `checker "name" test` | a named predicate, for contracts the built-ins do not cover (§3.3) |
 | `meta { index = … }` | a metatable from a vocabulary; here, scopes that fall back to the scope around them (§7) |
 | `load(text, name)` | running the Lua a compiler emits (§11) |
 
@@ -155,7 +155,7 @@ local list_of = do(element_type)
         end
         return true
     end
-    return checker("list of " .. tostring element_type, every)
+    return checker("list of " .. tostring element_type)(every)
 end
 ```
 
