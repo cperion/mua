@@ -5,11 +5,14 @@ if jit then jit.off(true, true) end
 
 -- Descriptors are data shared by construction and later updates. The native spelling
 -- stays here; a caption and a value have the same public meaning on every control.
-local catalog = {}
+local catalog = label "Generated control descriptors" {}
 local kinds = do(names, descriptor)
     for name in names:gmatch "%S+" do
         local public_name, native_name = name:match "([^=]+)=([^=]+)"
-        catalog[public_name or name] = { ..descriptor, kind = native_name or name }
+        local description = (descriptor.container and "Layout container: " or "Interactive or display control: ")
+        .. (public_name or name)
+        catalog[public_name or name] = label description ({ ..descriptor,
+                kind = native_name or name })
     end
 end
 local Control = { caption = "text" }
@@ -177,7 +180,7 @@ local Instructions = define
     normal = ColorSetting
     strings = StringsSetting
 end
-local Publishing = define
+local Publishing = label "publish a checked widget setting" define
     NumberSetting = |node, recurse, record| -> record.native.BK_set_num(record.node,
         node.key, node.value)
     StringSetting = |node, recurse, record| -> record.native.BK_set_str(record.node,
@@ -191,13 +194,17 @@ local Publishing = define
         return 1
     end
 end
-local publish = Setting.pass "publish a checked widget setting" with ..Publishing end
+local publish = Setting.pass Publishing
 
 -- Check a complete update before changing C; limits precede initial values deterministically.
-local prepare = do(descriptor, options)
-    if type options == "string" then options = { caption = options } end
+local prepare = label "Validate and order a complete property update" do(descriptor, options)
+    if type options == "string" then options = label options ({}) end
     options = Check.default(options, {})
     Check.table(options, descriptor.kind .. " options")
+    local caption = label_of options
+    if caption ~= nil and options.caption == nil and options[descriptor.caption] == nil then
+        options = { ..options, .caption }
+    end
     local prepared = {}
     if options.minimum and options.maximum then
         Check.number(options.minimum, "minimum")
@@ -229,7 +236,8 @@ local prepare = do(descriptor, options)
 end
 
 -- Publish a checked update, rechecking liveness after any input accessors have run.
-local apply = do(record, prepared)
+local apply = label "Publish checked properties and synchronize the caption label" do(record,
+    prepared)
     record.owner.mutate("apply " .. record.kind .. " properties")
     local Native, node = record.native, record.node
     local limits = record.limits or {}
@@ -243,11 +251,18 @@ local apply = do(record, prepared)
         local accepted = publish(entry, record)
         assert(accepted == 1, record.kind .. ": native property refused " .. entry.name)
     end
+    for _, entry in ipairs prepared do
+        if entry.key == record.descriptor.caption then
+            label entry.value record.owner
+            label entry.value record
+            if record.capabilities then label entry.value record.capabilities end
+        end
+    end
     record.limits = { .minimum, .maximum }
 end
 
 -- Read the committed value, independently of any queued change snapshots.
-local current = do(record)
+local current = label "Read a control's committed native value" do(record)
     record.owner.check "read current value"
     local Native, node, kind = record.native, record.node, record.descriptor.value_type
     if kind == "string" then return ffi.string(Native.BK_get_str(node, "value")) end
@@ -276,7 +291,8 @@ local notifications = { expanded = true }
 for _, name in pairs event_names do notifications[name] = true end
 
 -- Copy transient native payloads before C returns; notification delivery never borrows them.
-local snapshot = do(record, kind, reference, first, second)
+local snapshot = label "Copy transient native event data before returning to C" do(record,
+    kind, reference, first, second)
     if record.event_snapshot then
         local name, payload = record.event_snapshot(kind, reference, first, second)
         if name then return name, payload end
@@ -301,7 +317,7 @@ local snapshot = do(record, kind, reference, first, second)
     return name, payload
 end
 
-return define
+return label "Control descriptions, checked updates and event snapshots" define
     .catalog
     .Setting
     .prepare

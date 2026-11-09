@@ -27,7 +27,7 @@ end
 function M.new(structs, instance_of, contract, describe, specialize)
     return function(name, fields, is_unchecked)
         local S = {}
-        local info = { name = name, fields = fields, index = {}, meta = { __index = S, __name = name } }
+        local info = { name = name, fields = fields, index = {}, meta = { __index = S, __name = name, __label = name } }
         for _, f in ipairs(fields) do info.index[f[1]] = f[2] end
         structs[S] = info
         instance_of[info.meta] = S
@@ -35,6 +35,7 @@ function M.new(structs, instance_of, contract, describe, specialize)
         local construct = artifact.bind(fields, info.index, info.meta, name, contract, describe,
             type, pairs, rawget, setmetatable, error, tostring)
         setmetatable(S, {
+            __label = name,
             __tostring = function() return name end,
             __call = construct,
         })

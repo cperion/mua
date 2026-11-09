@@ -18,7 +18,7 @@ local with_callbacks = do(Native) = do(body)
     end
     local assert_mutation = do(operation)
         if phase ~= "idle" and phase ~= "notification" then
-            error(operation .. ": forbidden during " .. phase .. " callback", 3)
+            error((label_of(operation) or operation) .. ": forbidden during " .. phase .. " callback", 3)
         end
     end
     local callback = do(signature, handler, fallback, role)

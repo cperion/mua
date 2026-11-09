@@ -7,6 +7,18 @@
   [Implemented API](../docs/bui-ui.md), [capability/ownership inventory](../docs/bui-coverage.md),
   [full design](../docs/bui-activities.md).
 
+## Shared human labels
+
+Widget string shorthand (`button "Save"`) uses Mua's shared label protocol. Labeled
+option tables supply a default caption; explicit `caption` or native caption fields
+(`text`/`label`, depending on the control) win. Successful caption updates label the
+control's capability vocabulary, record and lifetime owner. Surface titles likewise
+label their window, owner and capabilities; labeled surface options supply a default title.
+Use `label_of(control)` for inspection. Native UI changes still go through the existing
+caption/title update APIs: attaching metadata alone does not call native setters.
+Guards and validators also accept labeled objects as diagnostic context, alongside strings.
+Labels never replace semantic IDs, callback phases or lookup keys.
+
 Native builds and the managed activity tests support Linux and Windows (MinGW-w64).
 The managed tests require Mua's LuaJIT syntax backport; select it with CMake's
 `MUA_LUAJIT_EXECUTABLE`. Raw ABI/FFI tests use `LUAJIT_EXECUTABLE` separately.

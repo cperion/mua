@@ -45,6 +45,8 @@ end
 R.describe_value = describe_value
 
 function R.describe(T)
+    local label = R.label_of and R.label_of(T)
+    if type(label) == 'string' then return label end
     if checkers[T] then return checkers[T].name end
     if structs[T] then return structs[T].name end
     if sums[T] then return sums[T].name end
@@ -195,6 +197,38 @@ function R.meta(vocabulary)
 end
 
 -- `f(a, ..t)`: the array part of t, as the call's last arguments
+-- Human-facing identity only. Never replace an existing metatable: contracts and
+-- native integrations may use its identity. Overrides are weak and instance-local.
+local labels = setmetatable({}, { __mode = 'k' })
+function R.label_of(value)
+    local kind = type(value)
+    if kind == 'cdata' then
+        local own = labels[value]
+        if own ~= nil then return own end
+        local info = ctype_info(ffi().typeof(value))
+        return info and info.label or nil
+    end
+    if kind ~= 'table' and kind ~= 'function' and kind ~= 'userdata' then return nil end
+    local own = labels[value]
+    if own ~= nil then return own end
+    local mt = getmetatable(value)
+    return type(mt) == 'table' and rawget(mt, '__label') or nil
+end
+function R.label(text)
+    assert(type(text) == 'string', 'label expects a string')
+    return function(value)
+        local kind = type(value)
+        assert(kind == 'table' or kind == 'function' or kind == 'userdata' or kind == 'cdata',
+            'label expects a table, function, userdata or cdata')
+        if kind == 'table' and getmetatable(value) == nil then
+            setmetatable(value, { __label = text })
+        else
+            labels[value] = text
+        end
+        return value
+    end
+end
+
 function R.expand(t) return unpack(t, 1, t.n or #t) end
 
 -- checkers and contracts (design §4.7) ------------------------------------------------------------
@@ -213,7 +247,7 @@ local function checker(name, ...)
         if type(test) ~= 'function' then
             error(('the predicate of the checker %s is %s, not a function'):format(name, describe_value(test)), 2)
         end
-        local c = setmetatable({}, { __tostring = function() return name end })
+        local c = setmetatable({}, { __label = name, __tostring = function() return name end })
         checkers[c] = { name = name, test = test }
         return c
     end
@@ -325,7 +359,7 @@ end
 -- it is made, and a value that is no member is named when the pass meets it.
 function R.family(name)
     if type(name) ~= 'string' then error('family takes a name: family "Expr"', 2) end
-    local F = setmetatable({}, { __tostring = function() return name end })
+    local F = setmetatable({}, { __label = name, __tostring = function() return name end })
     local kinds, members, sealed = {}, {}, false         -- members: struct -> true
     local function need_sealed(what)
         if not sealed then error(("the family '%s' is %s before it is sealed (seal it with { … } after its structs)"):format(name, what), 3) end
@@ -363,7 +397,9 @@ function R.family(name)
     end
     function F.pass(pass_name)
         need_sealed('given a pass')
-        return function(handlers)
+        local supplied = type(pass_name) == 'table' and pass_name or nil
+        if supplied then pass_name = R.label_of(supplied) or 'anonymous pass' end
+        local function build(handlers)
             if type(handlers) ~= 'table' then error(("pass '%s' takes a table of handlers, one per kind"):format(pass_name), 2) end
             local by_meta, known = {}, {}
             for S in pairs(members) do known[structs[S].name] = S end
@@ -390,8 +426,10 @@ function R.family(name)
                 end
                 return handler(node, recurse, ...)
             end
-            return recurse
+            return R.label(pass_name)(recurse)
         end
+        if supplied then return build(supplied) end
+        return build
     end
     return F
 end
@@ -400,7 +438,7 @@ end
 -- it with one handler per alternative, and every match checks the handlers name exactly those
 function R.oneof(name, alts, unchecked)
     local S = {}
-    local info = { name = name, alts = alts, index = {}, meta = {} }
+    local info = { name = name, alts = alts, index = {}, meta = { __label = name } }
     for _, a in ipairs(alts) do info.index[a[1]] = a[2] end
     sums[S] = info
     instance_of[info.meta] = S
@@ -427,12 +465,12 @@ function R.oneof(name, alts, unchecked)
     end
     for _, a in ipairs(alts) do
         local tag, T = a[1], a[2]
-        S[tag] = function(payload)
+        S[tag] = R.label(name .. '.' .. tag)(function(payload)
             if not unchecked then payload = contract(T, payload, 3, 'the payload of %s.%s', name, tag) end
             return setmetatable({ tag = tag, value = payload }, info.meta)
-        end
+        end)
     end
-    setmetatable(S, { __tostring = function() return name end })
+    setmetatable(S, { __label = name, __tostring = function() return name end })
     return S
 end
 
@@ -459,7 +497,7 @@ function R.ffistruct(name, fields)
     local tag = ('mua_%s_%d'):format(name:gsub('[^%w_]', '_'), ffi_tags)
     ffi().cdef(('struct %s { %s };'):format(tag, table.concat(decls, ' ')))
     local ct = ffi().typeof('struct ' .. tag)
-    ctypes[tostring(ct)] = { name = name, tag = tag, fields = names }
+    ctypes[tostring(ct)] = { name = name, label = name, tag = tag, fields = names }
     return ct
 end
 
@@ -544,7 +582,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R

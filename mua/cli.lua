@@ -6,7 +6,7 @@
 --   mua --no-contracts ...             translate without the contract checks
 --   mua -l module ...                  require a module first
 --   mua fmt [--check | --write] files  format Mua source (see mua/fmt_cli.lua)
---   mua lint [--outline] files         the file as its declarations and comments (mua/lint_cli.lua)
+--   mua outline file.mua [args]        execute a file and outline its returned labels
 --   MUA_CACHE=dir mua ...              keep translated chunks as bytecode in dir (mua.load opts.cache)
 --
 -- Exit status: 0, or 1 for a translation error, a missing file or an uncaught error (reported on
@@ -18,6 +18,7 @@ local M = {}
 
 local USAGE = [[
 usage: mua [options] file.mua [args]
+  outline FILE     execute FILE and outline its returned labels (has side effects)
   -e code          run a chunk of Mua
   -d               print the translation of the file instead of running it
   -l module        require a module before running
@@ -45,7 +46,10 @@ local function run(chunk, args)
 end
 
 local function main(argv, opts)
-    for _, command in ipairs { 'fmt', 'lint' } do
+    if argv[1] == 'lint' then
+        return fail('mua lint has been retired; mua outline FILE executes code and reads returned labels')
+    end
+    for _, command in ipairs { 'fmt', 'outline' } do
         if argv[1] == command then
             local rest = {}
             for j = 2, #argv do rest[#rest + 1] = argv[j] end

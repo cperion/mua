@@ -41,12 +41,11 @@ end
 
 -- Create an acquiring owner; children inherit their parent's integration guard and lifetime.
 local new
-new = do(parent, label, Guard)
+new = label "Acquire a lifetime nested under its parent" do(parent, description, Guard)
     local inherited = parent and ledger_of parent
-    if parent then parent.mutate("acquire " .. label) end
+    if parent then parent.mutate("acquire " .. description) end
     local ledger = with
         .parent
-        .label
         state = "acquiring"
         children = {}
         cleanups = {}
@@ -58,7 +57,8 @@ new = do(parent, label, Guard)
     and (not parent or parent.is_alive())
     local check = do(operation)
         if not is_alive() then
-            error((operation or "use") .. ": " .. label .. " activity has ended", 3)
+            error((label_of operation or operation or "use") .. ": " .. label_of owner .. " activity has ended",
+                3)
         end
         if ledger.guard then ledger.guard.check_error end
     end
@@ -85,14 +85,14 @@ new = do(parent, label, Guard)
     end
     local close = do()
         if ledger.state == "closed" or ledger.state == "closing" then return end
-        if ledger.guard then ledger.guard.assert_mutation("complete " .. label) end
+        if ledger.guard then ledger.guard.assert_mutation("complete " .. label_of owner) end
         -- No destructor may observe a still-live sibling in the retiring subtree.
         revoke ledger
         local failures = {}
         release(ledger, failures)
         if failures.present then error(failures.problem, 0) end
     end
-    owner = define
+    owner = label description define
         .is_alive
         .check
         .mutate
@@ -109,10 +109,10 @@ new = do(parent, label, Guard)
 end
 
 -- Distinguish separate integrations without exposing their mutable application state.
-local same_integration = |first, second| -> ledger_of(first).integration == ledger_of(second).integration
+local same_integration = label "Check whether owners share an integration" (|first, second| -> ledger_of(first).integration == ledger_of(second).integration)
 
 -- Complete the owner on every exit, preserving nil results and the original body failure.
-local with_owner = do(owner) = do(body)
+local with_owner = label "Run an activity and retire its owner on every exit" do(owner) = do(body)
     assert(type body == "function", "activity body expects a function")
     local results = packed(pcall(body, owner))
     local cleaned, problem = pcall owner.close
@@ -123,7 +123,7 @@ end
 
 -- Adopt successful acquisitions; a failed preparation releases only its new ledger entries.
 -- Domain mutations and external I/O are not rolled back by this activity.
-local prepare = do(owner, body)
+local prepare = label "Adopt acquisitions or release tentative resources on failure" do(owner, body)
     owner.mutate "prepare owned resources"
     local ledger = ledger_of owner
     local child_count, cleanup_count = #ledger.children, #ledger.cleanups
@@ -147,4 +147,9 @@ local prepare = do(owner, body)
     return unpack(results, 2, results.n)
 end
 
-return define .new, .same_integration, .with_owner, .prepare end
+return label "Activity ownership and deterministic cleanup" define
+    .new
+    .same_integration
+    .with_owner
+    .prepare
+end

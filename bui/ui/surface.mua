@@ -178,6 +178,9 @@ local capabilities_for = do(Application, window)
         owner.mutate "set title"
         assert(window.pointer, "headless surfaces have no window title")
         Native.BK_window_set_title(window.pointer, Check.string(text, "title"))
+        label text window
+        label text owner
+        if window.capabilities then label text window.capabilities end
     end
     local frames = do()
         owner.check "frames"
@@ -259,10 +262,10 @@ local acquire_surface = do(Application, parent, options, acquire, host_services)
     Check.keys(options, { title = true, width = true, height = true }, "surface options")
     local width = Check.integer(Check.default(options.width, 640), "width", 1, 32768)
     local height = Check.integer(Check.default(options.height, 480), "height", 1, 32768)
-    local title = Check.string(Check.default(options.title, "Mua"), "title")
+    local title = Check.string(Check.default(options.title, label_of(options) or "Mua"), "title")
     local Native, Opening = Application.native, Application.protocols.opening
     return Scope.prepare(parent, do()
-            local owner = parent.child "surface"
+            local owner = label(title)(parent.child "surface")
             local root = Native.BK_node_new "column"
             assert(root ~= nil, "surface root allocation failed")
             owner.defer do() Native.BK_node_free root end
@@ -277,7 +280,7 @@ local acquire_surface = do(Application, parent, options, acquire, host_services)
             assert(context ~= nil, "context allocation failed")
             owner.defer do() Native.BK_context_free context end
             Native.BK_context_set_header(context, header)
-            local window = { .owner, .context, .root, .header, .width, .height, .host_services }
+            local window = label(title)({ .owner, .context, .root, .header, .width, .height, .host_services })
             local host, callbacks = Application.attach_surface window
             Native.BK_context_set_host(context, host)
             return acquire(Application, window, title) with
@@ -289,7 +292,7 @@ local acquire_surface = do(Application, parent, options, acquire, host_services)
                     if window.pointer then Native.BK_window_set_callbacks(window.pointer, callbacks) end
                     owner.activate
                     Application.check_error
-                    window.capabilities = capabilities_for(Application, window)
+                    window.capabilities = label(title)(capabilities_for(Application, window))
                     return Opening.opened window
                 end
             end

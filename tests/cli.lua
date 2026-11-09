@@ -25,15 +25,22 @@ local function piped(...)
     for _, line in ipairs { ... } do parts[#parts + 1] = q(line) end
     return table.concat(parts, ' ') .. ' | ' .. cli
 end
-check('lint is clean', piped('-- What the value is for.', 'local value = 1') .. ' lint -', 0)
-check('lint reports a bare declaration', piped('local value = 1') .. ' lint -',
-    1, 'no comment says what `value` is for')
-check('lint reports a repeated name', piped('-- `value` is what it is for.', 'local value = 1') .. ' lint -',
-    1, 'opens by naming `value`')
-check('lint wants a file comment', piped('local value = 1') .. ' lint -', 1, 'opens with code')
-check('lint asks for formatting first', piped('local value=1') .. ' lint -', 2, 'format the source first')
-check('lint outlines', piped('-- What the value is for.', 'local value = 1') .. ' lint --outline -',
-    0, 'local value = 1')
+check('old comment lint is retired', cli .. ' lint', 1, 'has been retired')
+check('outline documents execution', cli .. ' outline --help', 0, 'side effects')
+check('outline needs a file', cli .. ' outline', 1, 'usage: mua outline')
+check('outline missing file', cli .. ' outline ' .. fixture('does_not_exist.mua'), 1, 'No such file')
+check('outline reports runtime errors', cli .. ' outline ' .. fixture('named_error.mua'), 1, 'boom')
+check('outline reports syntax errors', cli .. ' outline ' .. fixture('syntax_error.mua'), 1, 'syntax_error.mua:1')
+check('outline executes generated values', cli .. ' outline ' .. q(root .. '/examples/outline.mua'),
+    0, '6 labeled values · 1 callable', 'Outlining must not execute this action')
+check('outline real compiler exports', cli .. ' outline ' .. q(root .. '/examples/lisp.mua') .. ' library',
+    0, '14 labeled values · 13 callable', 'compiled 16')
+check('outline real BUI vocabularies', cli .. ' outline ' .. q(root .. '/examples/bui/outline.mua'),
+    0, 'Interactive or display control: button')
+check('outline executes normal side effects', cli .. ' outline ' .. fixture('ok.mua'),
+    0, 'fixture ok')
+check('outline arguments and requires', cli .. ' outline ' .. fixture('outline.mua') .. ' hello',
+    0, 'hello')
 check('plain program', cli .. ' ' .. fixture('ok.mua'), 0, 'fixture ok')
 check('dump only', cli .. ' -d ' .. fixture('ok.mua'), 0, 'fixture ok')
 check('standalone expression', cli .. ' -e ' .. q('print(1+1)'), 0, '2')

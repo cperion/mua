@@ -1,0 +1,6 @@
+local word = ...
+assert(word == "hello" and arg[1] == word)
+assert(arg[0]:match "outline.mua$")
+local library = require "tests.fixtures.library"
+assert(library.identity(3) == 3)
+return nil, label(word)({})

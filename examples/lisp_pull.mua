@@ -128,36 +128,37 @@ end
 -- unoptimized execution and the reference interpreter.
 
 local corpus = {
-    { name = "constant condition", source = "(if (< 1 2) (+ 10 (* 2 3)) 99)", expected = 16 },
-    { name = "function",
+    label "constant condition" { source = "(if (< 1 2) (+ 10 (* 2 3)) 99)", expected = 16 },
+    label "function" {
         source = "(define square (lambda (x) (* x x))) (square (+ 3 4))", expected = 49 },
-    { name = "recursion",
+    label "recursion" {
         source = "(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 10)",
         expected = 3628800 },
-    { name = "closure",
+    label "closure" {
         source = "(define adder (lambda (a) (lambda (b) (+ a b)))) ((adder 3) 4)", expected = 7 },
-    { name = "shadowing", source = "(let ((x 2)) (+ (let ((x 5)) x) x))", expected = 7 },
-    { name = "false result", source = "(= 1 2)", expected = false },
-    { name = "nested functions",
+    label "shadowing" { source = "(let ((x 2)) (+ (let ((x 5)) x) x))", expected = 7 },
+    label "false result" { source = "(= 1 2)", expected = false },
+    label "nested functions" {
         source = "(define apply (lambda (f x) (f x))) (apply (lambda (n) (if (< n 0) (- 0 n) n)) (- 0 4))",
         expected = 4 },
-    { name = "recursive let",
+    label "recursive let" {
         source = "(let ((sum (lambda (n) (if (< n 1) 0 (+ n (sum (- n 1))))))) (sum 10))",
         expected = 55 },
 }
 for _, program in ipairs corpus do
+    local description = label_of program
     local eager = core.compile program.source
     local pulled = compile program.source
-    assert(core.same(eager.tree, pulled.tree), program.name .. ": tree")
-    assert(core.same(eager.instructions, pulled.instructions), program.name .. ": lowering")
-    assert(core.same(eager.optimized, pulled.optimized), program.name .. ": optimization")
-    assert(eager.lua == pulled.lua, program.name .. ": emitted Lua")
+    assert(core.same(eager.tree, pulled.tree), description .. ": tree")
+    assert(core.same(eager.instructions, pulled.instructions), description .. ": lowering")
+    assert(core.same(eager.optimized, pulled.optimized), description .. ": optimization")
+    assert(eager.lua == pulled.lua, description .. ": emitted Lua")
     assert(core.same(optimizer.optimize pulled.optimized, pulled.optimized),
-        program.name .. ": fixed point")
-    local result = assert(loadstring(pulled.lua, "=pull " .. program.name))()
+        description .. ": fixed point")
+    local result = assert(loadstring(pulled.lua, "=pull " .. description))()
     assert(result == program.expected and result == core.evaluate(pulled.tree, {}))
     assert(assert(loadstring(core.emit_lua pulled.instructions))() == result)
-    print(("%s -> %s; identical tree, IR and Lua"):format(program.name, tostring result))
+    print(("%s -> %s; identical tree, IR and Lua"):format(description, tostring result))
 end
 
 -- Repeat and nest work: later rewrites must not mutate earlier results.

@@ -15,6 +15,8 @@ its own right and knows nothing about Nua, which is a host of it (Lua â†’ Mua â†
   to; `MUA_CACHE=dir` turns the bytecode cache on.
 - `mua/fmt.lua`, `mua/fmt_text.lua`, `mua/fmt_cli.lua`: the formatter and `mua fmt`; a host (Nua is
   one) passes its parse forms, facts and extra passes (`docs/formatting.md`).
+- `mua outline FILE [args]`: executes a file and outlines labels on its returned values,
+  including generated vocabularies (`docs/outline.md`). Replaces mandatory comment linting.
 - `examples/`: runnable programs, one idea each: `hello` (application, currying, short functions),
   `blocks` (trailing blocks, activities, `endall`), `vocabularies` (`define`, spread, opening, closed
   types), `contracts` (`struct`, `oneof`, matching), `router` (a builder and its engine),

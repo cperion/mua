@@ -171,6 +171,8 @@ node = do(Application, window, parent_owner, parent_node, descriptor, options)
                     options -> Application.assembling (|| -> node(Application,
                             window, owner, pointer, Widgets.catalog.graph_node, options).capabilities))
             end
+            local description = label_of record
+            if description then label description record.capabilities end
             Fields.remember(record.capabilities, record)
             record.ready = true
             owner.activate

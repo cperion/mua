@@ -1,0 +1,15 @@
+-- Run with `mua outline examples/outline.mua`: generated values describe themselves.
+local themes = label "Available themes" {}
+for _, name in ipairs { "Light", "Dark", "Sepia" } do
+    themes[#themes + 1] = label name ({})
+end
+
+return label "Editor" define
+    save = label "Save the current document" do()
+        error "Outlining must not execute this action"
+    end
+    .themes
+end
+
+--[=[ output
+]=]

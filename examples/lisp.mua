@@ -8,7 +8,7 @@
 ------------------------------------------------------------------------------------------------
 -- Reading: text to data. A number is a number, a symbol a string, a list a table.
 
-local read = do(text)
+local read = label "Read source text into Lisp forms" do(text)
     local spaced = text:gsub("%(", " ( "):gsub("%)", " ) ")
     local tokens = {}
     for token in spaced:gmatch "%S+" do tokens[#tokens + 1] = token end
@@ -86,7 +86,7 @@ parse = do(datum)
 end
 
 -- A program is some (define name value) forms and then the expression they are for.
-local parse_program = do(forms)
+local parse_program = label "Build an expression tree from definitions and a final expression" do(forms)
     local body = parse forms[#forms]
     for index = #forms - 1, 1, -1 do
         local form = forms[index]
@@ -106,7 +106,7 @@ local scope_with = do(outer, names)
     return inner
 end
 
-local Checking = define
+local Checking = label "check names and arity" define
     Literal = do(node, recurse, scope)
         return
     end
@@ -140,10 +140,10 @@ local Checking = define
         for _, argument in ipairs node.arguments do recurse(argument, scope) end
     end
 end
-local check = Expression.pass "check names and arity" with ..Checking end
+local check = Expression.pass Checking
 
 -- The same family, run directly: the reference the compiled code is compared with.
-local Evaluation = define
+local Evaluation = label "evaluate the source directly" define
     Literal = |node, recurse, environment| -> node.value
     Variable = |node, recurse, environment| -> environment[node.name]
     Primitive = do(node, recurse, environment)
@@ -175,7 +175,7 @@ local Evaluation = define
         return recurse(node.callee, environment)(unpack arguments)
     end
 end
-local evaluate = Expression.pass "evaluate the source directly" with ..Evaluation end
+local evaluate = Expression.pass Evaluation
 
 ------------------------------------------------------------------------------------------------
 -- The intermediate form: registers and jumps, one list of instructions per function.
@@ -207,7 +207,7 @@ end
 
 -- Lowering: a pass from one family to the other. The lowering state holds the code being written,
 -- the register each name stands for, and the supply of fresh names.
-local Lowering = define
+local Lowering = label "lower the source to instructions" define
     Literal = do(node, recurse, lowering)
         local register = lowering.fresh "value"
         write_instruction(lowering, Constant { .register, value = node.value })
@@ -266,14 +266,15 @@ local Lowering = define
         return register
     end
 end
-local lower = Expression.pass "lower the source to instructions" with ..Lowering end
+local lower = Expression.pass Lowering
 
 -- Optimizing. A rewrite answers each instruction with the instructions that replace it, so
 -- `Unchanged` (every instruction stands for itself) is the base the others extend by spread, and
 -- each names only the kinds it changes.
 -- Both strategies use these exact passes. Only the replacement protocol and its
 -- driver vary; the eager example keeps lists, the pull companion returns triples.
-local eager_rewrite = do(pass, code, state)
+local eager_rewrite = label "Collect instruction replacements in traversal order" do(pass,
+    code, state)
     local written = {}
     local work = { ..state, .written }
     for _, instruction in ipairs code do
@@ -284,7 +285,8 @@ local eager_rewrite = do(pass, code, state)
     return written
 end
 
-local make_optimizer = do(single, empty, rewrite)
+local make_optimizer = label "Build optimization passes for a replacement protocol" do(single,
+    empty, rewrite)
     local itself = single
     local Unchanged = define
         Constant = itself
@@ -306,7 +308,7 @@ local make_optimizer = do(single, empty, rewrite)
 
     -- Folding: what a register holds is known from its Constant, along straight-line code. A join
     -- point (a label) forgets it, and a function starts knowing nothing.
-    local Folding = define ..Unchanged
+    local Folding = label "fold what is known" define ..Unchanged
         Constant = do(node, recurse, facts)
             facts.known[node.register] = { node.value }
             return single node
@@ -347,10 +349,10 @@ local make_optimizer = do(single, empty, rewrite)
             return single(Closure { register = node.register, parameters = node.parameters, .code })
         end
     end
-    local fold = Instruction.pass "fold what is known" with ..Folding end
+    local fold = Instruction.pass Folding
 
     -- Which labels are still jumped to.
-    local JumpedTo = define
+    local JumpedTo = label "find the labels still jumped to" define
         Constant = nothing
         Copy = nothing
         Operation = nothing
@@ -367,7 +369,7 @@ local make_optimizer = do(single, empty, rewrite)
             walk(recurse, node.code, labels)
         end
     end
-    local find_labels = Instruction.pass "find the labels still jumped to" with ..JumpedTo end
+    local find_labels = Instruction.pass JumpedTo
 
     -- Reaching: nothing runs between a jump and the next label that is jumped to, and a jump to the
     -- label right after it is no jump.
@@ -380,7 +382,7 @@ local make_optimizer = do(single, empty, rewrite)
         flow.dead = true
         return single node
     end
-    local Reaching = define
+    local Reaching = label "drop what cannot run" define
         Constant = unless_dead
         Copy = unless_dead
         Operation = unless_dead
@@ -403,13 +405,13 @@ local make_optimizer = do(single, empty, rewrite)
             return single(Closure { register = node.register, parameters = node.parameters, .code })
         end
     end
-    local reach = Instruction.pass "drop what cannot run" with ..Reaching end
+    local reach = Instruction.pass Reaching
 
     -- Reading: how often each register is read, then the removal of pure instructions nobody reads.
     local read_once_more = do(register, counts)
         counts.reads[register] = (counts.reads[register] or 0) + 1
     end
-    local Reads = define
+    local Reads = label "count the reads of each register" define
         Constant = nothing
         Label = nothing
         Jump = nothing
@@ -434,14 +436,14 @@ local make_optimizer = do(single, empty, rewrite)
             walk(recurse, node.code, counts)
         end
     end
-    local count_reads = Instruction.pass "count the reads of each register" with ..Reads end
+    local count_reads = Instruction.pass Reads
 
     local never_read = |instruction, counts| -> (counts.reads[instruction.register] or 0) == 0
     local unless_never_read = do(node, recurse, counts)
         if never_read(node, counts) then return empty() end
         return single node
     end
-    local Sweeping = define ..Unchanged
+    local Sweeping = label "sweep what nobody reads" define ..Unchanged
         Constant = unless_never_read
         Copy = unless_never_read
         Operation = unless_never_read
@@ -451,11 +453,11 @@ local make_optimizer = do(single, empty, rewrite)
             return single(Closure { register = node.register, parameters = node.parameters, .code })
         end
     end
-    local sweep = Instruction.pass "sweep what nobody reads" with ..Sweeping end
+    local sweep = Instruction.pass Sweeping
 
     -- the same representation: the same kinds, with the same fields, all the way down
     local same
-    same = do(left, right)
+    same = label "Compare nested values and their nominal types" do(left, right)
         if type left ~= "table" or type right ~= "table" then return left == right end
         if getmetatable left ~= getmetatable right then return false end
         for key, value in pairs left do
@@ -468,7 +470,7 @@ local make_optimizer = do(single, empty, rewrite)
     end
 
     local instruction_count
-    instruction_count = do(code)
+    instruction_count = label "Count instructions including nested closures" do(code)
         local total = 0
         for _, instruction in ipairs code do
             total += 1
@@ -478,7 +480,7 @@ local make_optimizer = do(single, empty, rewrite)
     end
 
     -- the passes in order until a round changes nothing, bounded so a mistake cannot loop forever
-    local optimize = do(code)
+    local optimize = label "Fold and remove dead instructions until stable" do(code)
         for _ = 1, 8 do
             local before = code
             code = rewrite(fold, code, { known = {} })
@@ -503,7 +505,7 @@ local Unchanged = eager.Unchanged
 ------------------------------------------------------------------------------------------------
 -- Listing and emitting: passes that answer with text.
 
-local Listing = define
+local Listing = label "list an instruction for reading" define
     Constant = |node, recurse, indent| -> indent .. node.register .. " = " .. tostring node.value
     Copy = |node, recurse, indent| -> indent .. node.register .. " = " .. node.source
     Operation = do(node, recurse, indent)
@@ -527,8 +529,8 @@ local Listing = define
         return table.concat(lines, "\n")
     end
 end
-local list_instruction = Instruction.pass "list an instruction for reading" with ..Listing end
-local listing = do(code)
+local list_instruction = Instruction.pass Listing
+local listing = label "Render instructions as a readable listing" do(code)
     local lines = {}
     for _, instruction in ipairs code do lines[#lines + 1] = list_instruction(instruction, "  ") end
     return table.concat(lines, "\n")
@@ -551,7 +553,7 @@ local function_body = do(write, code, indent)
     return table.concat(lines, "\n")
 end
 local lua_spelling = {["="] = "==" }
-local LuaText = define ..Listing
+local LuaText = label "write an instruction as Lua" define ..Listing
     Operation = do(node, recurse, indent)
         local operator = lua_spelling[node.operator] or node.operator
         local expression = node.left .. " " .. operator .. " " .. node.right
@@ -567,14 +569,16 @@ local LuaText = define ..Listing
         return header .. "\n" .. body .. "\n" .. indent .. "end"
     end
 end
-local write_lua = Instruction.pass "write an instruction as Lua" with ..LuaText end
-local emit_lua = code -> function_body(write_lua, code, "")
+local write_lua = Instruction.pass LuaText
+local emit_lua = label "Emit executable Lua from instructions" code -> function_body(write_lua,
+    code, "")
 
 ------------------------------------------------------------------------------------------------
 -- The compiler: the stages in order. `compile` answers the tree, the instructions before and
 -- after optimizing, and the Lua it emits.
 
-local make_compiler = do(read_source, optimize_code) = do(text)
+local make_compiler = label "Compose a reader and optimizer into a compiler" do(read_source,
+    optimize_code) = do(text)
     local tree = parse_program(read_source text)
     check(tree, {})
     local lowering = { code = {}, registers = {}, fresh = fresh_names() }
@@ -582,14 +586,27 @@ local make_compiler = do(read_source, optimize_code) = do(text)
     local optimized = optimize_code lowering.code
     return { .tree, instructions = lowering.code, .optimized, lua = emit_lua optimized }
 end
-local compile = make_compiler(read, optimize)
+local compile = label "Compile Lisp through checking, lowering and optimization" (make_compiler(read,
+        optimize))
 
 -- The companion and benchmarks load this file as a library, sharing the families,
 -- all language decisions, and every pass. Running it normally still prints the demo.
 if (...) == "library" then
-    return { .read, .parse_program, .check, .evaluate, .make_optimizer, .make_compiler,
-        .compile,
-        .optimize, .emit_lua, .listing, .instruction_count, .eager_rewrite, same = eager.same }
+    return label "Lisp compiler: from source forms to executable Lua" define
+        .read
+        .parse_program
+        .check
+        .evaluate
+        .make_optimizer
+        .make_compiler
+        .compile
+        .optimize
+        .emit_lua
+        .listing
+        .instruction_count
+        .eager_rewrite
+        same = eager.same
+    end
 end
 
 local run = do(text)
@@ -599,12 +616,12 @@ local run = do(text)
 end
 
 local programs = {
-    { title = "a constant condition folds away", source = "(if (< 1 2) (+ 10 (* 2 3)) 99)" },
-    { title = "a function and a call",
+    label "a constant condition folds away" { source = "(if (< 1 2) (+ 10 (* 2 3)) 99)" },
+    label "a function and a call" {
         source = "(define square (lambda (x) (* x x))) (square (+ 3 4))" },
-    { title = "recursion",
+    label "recursion" {
         source = "(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 10)" },
-    { title = "a closure",
+    label "a closure" {
         source = "(define adder (lambda (a) (lambda (b) (+ a b)))) ((adder 3) 4)" },
 }
 for _, program in ipairs programs do
@@ -613,7 +630,7 @@ for _, program in ipairs programs do
     local after = instruction_count compiled.optimized
     local values = ("compiled %s, evaluated %s"):format(tostring compiled_value,
         tostring evaluated_value)
-    print(("%s: %s, %d -> %d instructions"):format(program.title, values, before, after))
+    print(("%s: %s, %d -> %d instructions"):format(label_of program, values, before, after))
 end
 
 local folded = compile programs[1].source

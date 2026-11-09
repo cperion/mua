@@ -1,0 +1,6 @@
+-- Inspect the real managed-UI vocabularies without opening a native window.
+return label "BUI: descriptions and ownership before native execution" define
+    validation = require "bui.ui.check"
+    ownership = require "bui.ui.scope"
+    widgets = require "bui.ui.widgets"
+end

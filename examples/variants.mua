@@ -4,7 +4,7 @@
 
 -- A behavior is a vocabulary. These are shared by spreading them into each variant's.
 local Describable = define
-    describe = self -> self.tag .. " with area " .. self:area()
+    describe = self -> label_of self .. " with area " .. self:area()
 end
 
 -- `variants` makes a constructor per tag. Each tag has one metatable (`meta`), built once from that
@@ -12,8 +12,8 @@ end
 local variants = do(behaviors)
     local constructors = {}
     for tag, methods in pairs behaviors do
-        local install = meta { index = methods }
-        constructors[tag] = fields -> install { ..fields, .tag }
+        local install = meta { index = methods, label = tag }
+        constructors[tag] = fields -> install { ..fields }
     end
     return constructors
 end
@@ -32,7 +32,7 @@ print(circle:describe())
 print(square:describe())
 
 -- The instance holds data only; the methods live on the tag's behavior.
-print(circle.r, circle.tag, rawget(circle, "area"))
+print(circle.r, label_of circle, rawget(circle, "area"))
 
 -- Instances of one tag share one metatable; different tags do not.
 print(getmetatable circle == getmetatable(shapes.circle { r = 1 }))
@@ -44,13 +44,13 @@ print circle.perimeter
 -- A behavior can be extended without touching the others: an explicit entry settles a name
 -- that two vocabularies offer.
 local Loud = define
-    describe = self -> string.upper self.tag
+    describe = self -> string.upper(label_of self)
 end
 local louder = variants with
     circle = define
         ..Describable
         ..Loud
-        describe = self -> "loud " .. string.upper self.tag
+        describe = self -> "loud " .. string.upper(label_of self)
         area = self -> 0
     end
 end

@@ -149,6 +149,37 @@ a definition; a **structural type** is the table it is given. A block that is a 
 wherever a table may appear, an argument included, so a definition passes straight to what reads
 it: `iter start do(state, control) … end`.
 
+**Human labels.** `label "description" value` attaches optional human-facing identity
+and returns the same table, function, userdata or FFI cdata value. `label_of(value)` reads it, or returns
+nil when absent. Labels are not fields, dispatch keys or semantic IDs; they may supply
+captions and diagnostics. Labeling a container does not label its contents.
+
+```mua
+local Checking = label "check literals" define
+    Literal = do(node) assert(node.value ~= nil) end
+end
+local program = label "recursion" with
+    source = "(define fact ...)"
+end
+```
+
+A metatable's `__label` supplies the default (including `meta with label = "…" end`).
+The runtime keeps per-value overrides in a weak registry for functions and values with
+existing metatables (and cdata), preserving shared metatables and contract identity. Plain tables
+without a metatable receive one containing `__label`. Use `label_of`, not direct metatable
+inspection, to read the effective label. Labels do not implicitly enter a block's scope.
+A family pass accepts a labeled handler table directly: `Expression.pass Checking`;
+the existing `Expression.pass "description" handlers` form remains supported.
+
+Named constructors supply labels automatically: `checker`, `family`, `struct`, `oneof`,
+`ffistruct`, and named passes. Primitive checkers and `Optional(T)` are labeled too.
+Struct and oneof instances default to their declared type's label; alternative constructor
+functions use `Type.tag`. FFI types and instances use their registered declaration label.
+An explicit per-value label overrides the default without relabeling siblings. Relabeling
+an FFI ctype object is local to that object, not every equivalent ctype handle.
+Semantic names (struct handler keys, union tags and C type names) remain unchanged.
+`describe` uses the effective label for human-facing contract descriptions.
+
 **`meta`** installs a vocabulary as a metatable. `meta { index = …, tostring = … }` (or
 `meta with … end`) copies its entries under `__` names (`__index`, `__tostring`; a name that
 already starts with `__` is kept) and returns a function that sets that metatable on the table it
