@@ -31,8 +31,10 @@ can still interrupt the subsequent writes; this is not a multi-file transaction.
 ## Comments: `mua lint`
 
 The formatter writes the layout; `mua lint` reads it, and the layout is what decides which
-declarations a reader must be able to follow. Two rules:
+declarations a reader must be able to follow. Three rules:
 
+- a **file opens** by saying what it is for. A rule of dashes under it is a divider, not a
+  description, so a file whose first comment is only dashes is reported too;
 - a declaration at the file's own level — the left margin — says **what it is for**, in a comment
   above it or beside it;
 - that comment does **not open by naming** what the declaration already names. The name is in front

@@ -8,13 +8,34 @@ local function check(condition, name)
     checks = checks + 1
 end
 
+local function findings(source)
+    return lint.findings(source, 'source.mua')
+end
+
+-- the declaration rules, which the file's own rule is reported separately from
 local function kinds(source)
     local listed = {}
-    for _, finding in ipairs(lint.findings(source, 'source.mua')) do
-        listed[#listed + 1] = finding.kind .. ':' .. finding.line
+    for _, finding in ipairs(findings(source)) do
+        if finding.kind ~= 'file' then listed[#listed + 1] = finding.kind .. ':' .. finding.line end
     end
     return table.concat(listed, ' ')
 end
+
+local function file_rule(source)
+    for _, finding in ipairs(findings(source)) do
+        if finding.kind == 'file' then return finding.detail .. ':' .. finding.line end
+    end
+    return 'none'
+end
+
+-- a file opens by saying what it is for, and a rule of dashes is not a description
+check(file_rule('-- What this file is for.\nlocal value = 1\n') == 'none', 'a written opening')
+check(file_rule('\n\n-- What this file is for.\nlocal value = 1\n') == 'none', 'after blank lines')
+check(file_rule('local value = 1\n') == 'code:1', 'code first')
+check(file_rule('-- ----------\nlocal value = 1\n') == 'rule:1', 'a rule of dashes')
+check(file_rule('-- =====\n-- ====\nlocal value = 1\n') == 'rule:1', 'rules of equals')
+check(file_rule('-- What this file is for.\n-- ----------\nlocal value = 1\n') == 'none',
+    'words before a rule')
 
 -- a declaration at the file's own level says what it is for
 check(kinds('-- What the total is for.\nlocal total = 0\n') == '', 'documented above')

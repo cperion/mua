@@ -30,6 +30,7 @@ check('lint reports a bare declaration', piped('local value = 1') .. ' lint -',
     1, 'no comment says what `value` is for')
 check('lint reports a repeated name', piped('-- `value` is what it is for.', 'local value = 1') .. ' lint -',
     1, 'opens by naming `value`')
+check('lint wants a file comment', piped('local value = 1') .. ' lint -', 1, 'opens with code')
 check('lint asks for formatting first', piped('local value=1') .. ' lint -', 2, 'format the source first')
 check('lint outlines', piped('-- What the value is for.', 'local value = 1') .. ' lint --outline -',
     0, 'local value = 1')

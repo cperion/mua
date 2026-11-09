@@ -1,9 +1,10 @@
 -- mua.lint: a Mua source read as its declarations and their comments.
 --
--- Two rules, and one view that shows whether they were followed. A declaration at the file's own
--- level — the left margin, which the formatter keeps — says what it is for, in a comment above it
--- or beside it. That comment does not open by naming what the declaration already names: the name
--- is in front of the reader, so the words are spent on its purpose instead. Printing only the
+-- Three rules, and one view that shows whether they were followed. A file opens with a comment
+-- saying what the file is for — a rule of dashes is a divider, not a description. A declaration at
+-- the file's own level — the left margin, which the formatter keeps — says what it is for, in a
+-- comment above it or beside it. That comment does not open by naming what the declaration already
+-- names: the name is in front of the reader, so the words are spent on its purpose instead. Printing only the
 -- declarations and their comments then shows the file as the comment poem it has to read as; when
 -- a comment is vague or misaimed, that is where it shows.
 --
@@ -100,13 +101,35 @@ local function documentation(text, only, line)
     return table.concat(parts, ' ')
 end
 
--- what the rules say about a source: `undocumented` is a declaration at the file's level with no
--- comment, `repeats` is one whose comment opens by naming it
+-- the file's own opening: a comment before any code, holding words and not only a rule of dashes
+local function opening(text, only, lines)
+    local at = 1
+    while at <= #lines and lines[at]:match('^%s*$') do at = at + 1 end
+    local start = at
+    if not only[at] then return start, 'code' end
+    local prose = false
+    while only[at] do
+        local words = strip(text[at])
+        if words ~= '' and not words:find('^[-=]+$') then prose = true end
+        at = at + 1
+    end
+    if prose then return start end
+    return start, 'rule'
+end
+
+-- what the rules say about a source: `file` is a file that does not open by saying what it is for,
+-- `undocumented` is a declaration at the file's level with no comment, `repeats` is one whose
+-- comment opens by naming it
 function M.findings(source, filename)
     filename = filename or '=(lint)'
     local lines = lines_of(source)
     local text, only = comments(source, filename)
     local reports = {}
+    local opening_line, opening_problem = opening(text, only, lines)
+    if opening_problem then
+        reports[#reports + 1] = { line = math.min(opening_line, #lines), kind = 'file',
+            detail = opening_problem, names = {} }
+    end
     for _, declaration in ipairs(declarations(source, filename)) do
         if column_of(lines, declaration.line) == 0 then
             local block = documentation(text, only, declaration.line)

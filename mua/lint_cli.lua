@@ -8,8 +8,9 @@ local M = {}
 
 local function usage_text(command)
     return ('usage: %s [--outline] [--] [FILE ... | -]\n'
-        .. 'Reports a declaration at the file\'s own level with no comment, and a comment that opens\n'
-        .. 'by naming the declaration it describes. --outline prints the file as its declarations and\n'
+        .. 'Reports a file that does not open by saying what it is for, a declaration at the file\'s own\n'
+        .. 'level with no comment, and a comment that opens by naming the declaration it describes.\n'
+        .. '--outline prints the file as its declarations and comments.\n'
         .. 'their comments. Format the source first: the rules read the layout.\n'):format(command)
 end
 
@@ -23,7 +24,15 @@ local function read(path)
 end
 
 local function report(path, finding)
-    if finding.kind == 'undocumented' then
+    if finding.kind == 'file' then
+        if finding.detail == 'rule' then
+            io.write(('%s:%d: the file opens with a rule of dashes; say what the file is for\n'):format(
+                path, finding.line))
+        else
+            io.write(('%s:%d: the file opens with code; say what the file is for\n'):format(
+                path, finding.line))
+        end
+    elseif finding.kind == 'undocumented' then
         io.write(('%s:%d: no comment says what `%s` is for\n'):format(path, finding.line,
             table.concat(finding.names, '`, `')))
     else
