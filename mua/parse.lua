@@ -925,7 +925,10 @@ function P:starts_argument(last)
     end
     if tk.t == 'number' or tk.t == 'string' then return true end
     if tk.kw == 'true' or tk.kw == 'false' then return true end
-    if tk.kw == 'do' then return not self.in_header end
+    -- a `do` begins a statement as well as a lambda, so only one that continues the line is an
+    -- argument: `f do(x) … end` applies f, while a `do … end` block on the next line is the next
+    -- statement (§2 rule 2: a newline ends the chain before any token that can begin a statement)
+    if tk.kw == 'do' then return not self.in_header and not tk.nl end
     if tk.t == 'name' and not is_endall(tk) then
         -- a name argument: only directly after a name or an argument, on the same line, and
         -- not the start of the next `with` entry

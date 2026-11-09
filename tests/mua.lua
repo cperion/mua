@@ -280,6 +280,8 @@ end
 return tostring(P)]], 'mine')
 runs('keyed spread overlap', 'local ok = pcall(function() return { ..{ a = 1 }, ..{ a = 2 } } end)\nreturn ok', false)
 runs('contextual with is a table', 'local t = with\n  k = 7\nend\nreturn t.k', 7)
+runs('a do block after a call begins a statement', 'local function plain() return 7 end\nlocal total = plain()\ndo\n  total += 1\nend\nreturn total', 8)
+runs('a do lambda continuing the line is an argument', 'local function apply(f) return f(2) end\nreturn apply do(x) return x * 3 end', 6)
 runs('opening reads members', 'local ctx = { a = 10 }\nlocal f = do(..) return a + 1 end\nreturn f(ctx)', 11)
 runs('opening calls members', 'local v = { double = function(x) return x * 2 end }\nlocal f = do(..) return double 4 end\nreturn f(v)', 8)
 runs('opening writes members it introduces', 'local ctx = { n = 1 }\nlocal f = do(..) n = n + 1 end\nf(ctx)\nreturn ctx.n', 2)

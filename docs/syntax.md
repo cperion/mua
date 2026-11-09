@@ -39,16 +39,18 @@ local twice = map xs x -> x * 2
 ```
 
 1. **What can be an argument.** After a callable expression, these start an argument: a number,
-   a string, `true` or `false`, a table constructor, a `do` lambda or a short function — on any
-   line — and a **name**, only on the same line and only directly after a name, a name
-   argument (with its member chain: `f a.b x` is `f(a.b)(x)`), a number, string or boolean
+   a string, `true` or `false`, a table constructor or a short function — on any line — a `do`
+   lambda, only on the same line, and a **name**, only on the same line and only directly after a
+   name, a name argument (with its member chain: `f a.b x` is `f(a.b)(x)`), a number, string or boolean
    argument (`f 1 x` is `f(1)(x)`) or a spaced group (rule 3). A name does not continue an
    application after an attached call (`f a(b) x` is `f(a(b))` followed by `x`, rule 7) or
    after a table.
 2. **The newline rule.** A newline ends an application chain before any token that can begin a
    statement. Names and `(` can begin statements, so `local y = x` followed by `y = y + 1` on
-   the next line stays two statements. Literals, tables and lambdas cannot begin statements, so
-   they still attach across lines.
+   the next line stays two statements, and a `do` can begin one too: a `do … end` block on its own
+   line is the next statement, while a `do` lambda that continues the line is an argument (for a
+   block on a line of its own, §4's colon form is the spelling).
+   Literals, tables and short functions cannot begin statements, so they still attach across lines.
 3. **What an argument is.** A primary expression with its postfix chain, as Lua parses it:
    `.name`, `[i]`, `:m args`, `(args)`, and for a name, a table constructor or string. So
    `f a.b` is `f(a.b)` and `f a(b)` is `f(a(b))`. A literal's chain stops at a table or string
