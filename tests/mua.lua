@@ -519,14 +519,14 @@ test "run at once":
     ran = true
 end
 return label_of(cases[1].run) == "first shows this" and ran]], true)
-runs('show answers its value, and shown says what it is and holds', [[
+runs('trace answers its value, and inspect says what it is and holds', [[
 local Point = struct { x: Number, y: Number }
 local origin = label "the origin" Point { x = 0, y = 0 }
 local plain = { name = "box", inner = origin }
-assert(show(41) + 1 == 42)
-assert(shown(origin) == "the origin: a Point { x = 0, y = 0 }", shown(origin))
-assert(shown(plain) == 'a table { inner = «the origin», name = "box" }', shown(plain))
-return shown "text"]], '"text"')
+assert(trace(41) + 1 == 42)
+assert(inspect(origin) == "the origin: a Point { x = 0, y = 0 }", inspect(origin))
+assert(inspect(plain) == 'a table { inner = «the origin», name = "box" }', inspect(plain))
+return inspect "text"]], '"text"')
 errors('a test takes a name first', 'test(5)', 'test takes a name first')
 errors('a test takes a block', 'test "named" (5)', "test 'named' takes a block")
 runs('a program may define its own test', [[

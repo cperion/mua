@@ -229,8 +229,8 @@ function R.label(text)
     end
 end
 
--- `show value`: print what a value is and what it holds, and answer it unchanged, so it goes
--- anywhere in an expression. `shown value` is the text. One level of contents is read raw, as
+-- `trace value`: print what a value is and what it holds, and answer it unchanged, so it goes
+-- anywhere in an expression while debugging. `inspect value` is the text. One level of contents is read raw, as
 -- the outline reads (no `__index`, `__pairs` or `__tostring`); a nested value appears as its
 -- label, or as what it is.
 local function brief(value)
@@ -243,7 +243,7 @@ local function brief(value)
     if type(value) == 'number' or type(value) == 'boolean' or value == nil then return tostring(value) end
     return describe_value(value)
 end
-function R.shown(value)
+function R.inspect(value)
     local own = R.label_of(value)
     local parts = {}
     if type(value) == 'table' then
@@ -269,8 +269,8 @@ function R.shown(value)
     if own then return own .. ': ' .. parts[1] end
     return parts[1]
 end
-function R.show(value, ...)
-    print(R.shown(value))
+function R.trace(value, ...)
+    print(R.inspect(value))
     return value, ...
 end
 
@@ -667,7 +667,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'show', 'shown', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R
