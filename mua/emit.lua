@@ -479,6 +479,23 @@ function E:stat(s)
             end
         end
     elseif k == 'compound' then
+        -- a free name inside an opened region: read and write the opened context's member, if any,
+        -- as a plain assignment to it does, so `count += 1` cannot become a compound assignment to
+        -- a conditional expression
+        local a = s.target.k == 'name' and s.target.name
+        if a and self:opened_free(a) then
+            self:put('do local __value = ', line)
+            self:put(self:resolved(a))
+            self:put(' ' .. s.op .. ' ')
+            self:expr(s.e)
+            local opens = self:opens_for(a)
+            for i, o in ipairs(opens) do
+                self:put(('; %s %s then %s.%s = __value'):format(i == 1 and 'if' or 'elseif',
+                    o.flags[a] or (o.alias .. '.' .. a .. ' ~= nil'), o.alias, a))
+            end
+            self:put(('; else %s = __value end end; '):format(a))
+            return
+        end
         self:put('', line); self:expr(s.target); self:put(' ' .. s.op .. '= '); self:expr(s.e); self:put('; ')
         local tb = s.target.k == 'name' and self:binding(s.target.name)
         if tb and tb.type then

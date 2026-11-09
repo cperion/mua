@@ -283,6 +283,8 @@ runs('contextual with is a table', 'local t = with\n  k = 7\nend\nreturn t.k', 7
 runs('opening reads members', 'local ctx = { a = 10 }\nlocal f = do(..) return a + 1 end\nreturn f(ctx)', 11)
 runs('opening calls members', 'local v = { double = function(x) return x * 2 end }\nlocal f = do(..) return double 4 end\nreturn f(v)', 8)
 runs('opening writes members it introduces', 'local ctx = { n = 1 }\nlocal f = do(..) n = n + 1 end\nf(ctx)\nreturn ctx.n', 2)
+runs('an opening compound-assigns the member it introduces', 'local ctx = { n = 1, t = "a" }\nlocal f = do(..)\n  n += 4\n  t ..= "b"\n  return n\nend\nlocal n = f(ctx)\nreturn n * 10 + #ctx.t', 52)
+runs('an opening compound-assigns the innermost member', 'local outer = { n = 1 }\nlocal inner = { n = 2 }\nlocal f = do(o, i)\n  local o..\n  local i..\n  n += 10\n  return n\nend\nreturn f(outer, inner) * 10 + inner.n', 132)
 runs('opening writes other names where Lua would', 'local ctx = {}\nlocal f = do(..) fresh_global_x = 4 end\nf(ctx)\nlocal v = fresh_global_x\nfresh_global_x = nil\nreturn v', 4)
 runs('a local shadows an opening', 'local ctx = { a = 1 }\nlocal f = do(..)\n  local a = 5\n  return a\nend\nreturn f(ctx)', 5)
 runs('local ctx.. opens', 'local v = { k = 9 }\nlocal ctx.. = v\nreturn k', 9)
