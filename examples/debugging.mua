@@ -1,0 +1,42 @@
+-- Debugging by labels: a value says what it is. `trace` prints a value and answers it, so it goes
+-- anywhere in an expression; a labeled part is summed up by its label, an unlabeled one opened.
+local Product = struct { name: String, price: Number, count: Number }
+
+local stock = label "the shop's stock" {
+    label "a pencil" Product { name = "pencil", price = 2, count = 10 },
+    label "a notebook" Product { name = "notebook", price = 5, count = 3 },
+}
+
+local value_of = label "what a product is worth" product -> product.price * product.count
+
+-- the total, traced on its way: the program reads the same with or without `trace`
+local total = 0
+for _, product in ipairs stock do total = total + trace(value_of product) end
+print("total", total)
+
+-- the stock is opened; its products are summed up by their labels
+trace stock
+-- drilling in deliberately: through one level of labels, or into one part
+trace_through 1 stock
+trace stock[2]
+
+-- a project's own debugging words, beside Mua's, under one opening
+local tools.. = {
+    ..debugging,
+    -- what a function is for, from its label
+    purpose = |f| -> label_of f or "no label",
+}
+print(purpose value_of)
+
+--[=[ output
+20
+15
+total	35
+the shop's stock: a table { [1] = «a pencil», [2] = «a notebook» }
+the shop's stock: a table {
+    [1] = «a pencil» a Product { count = 10, name = "pencil", price = 2 },
+    [2] = «a notebook» a Product { count = 3, name = "notebook", price = 5 },
+}
+a notebook: a Product { count = 3, name = "notebook", price = 5 }
+what a product is worth
+]=]
