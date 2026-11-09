@@ -49,22 +49,28 @@ end
 
 -- What a value is and what it holds. A labeled value is its label: whoever labeled it summed
 -- it up. An unlabeled table is opened, all of it, so the depth is decided by how well the code
--- is labeled. A table met twice is numbered and referred to (`↩ #2`); a short table stays on one
+-- is labeled. `options.open = n` drills through n levels of labeled values deliberately: such a
+-- value shows its label beside its contents. A table met twice is numbered and referred to (`↩ #2`); a short table stays on one
 -- line, a long one is a tree. `label_of` and `describe` come from the runtime.
 function M.inspect(value, label_of, describe, options)
     options = options or {}
     local width = options.width or 80
     local entry_limit = options.max_entries or 500
     local depth_limit = options.max_depth or 32
+    local open = options.open or 0
     -- tables reached more than once, by the walk that will print them
     local seen, shared = {}, {}
-    local function count(item, root)
-        if type(item) ~= 'table' or (not root and label_of(item) ~= nil) then return end
+    -- `opened`: how many labeled values deep this part lies
+    local function count(item, root, opened)
+        if type(item) ~= 'table' then return end
+        local labeled = not root and label_of(item) ~= nil
+        if labeled and opened >= open then return end
         if seen[item] then shared[item] = true; return end
         seen[item] = true
-        for key, child in next, item do count(child, false) end
+        local inner = labeled and opened + 1 or opened
+        for key, child in next, item do count(child, false, inner) end
     end
-    count(value, true)
+    count(value, true, 0)
     local numbers, next_number, entries = {}, 0, 0
     local render
     local function scalar(item)
@@ -77,12 +83,15 @@ function M.inspect(value, label_of, describe, options)
         end
         return describe(item)
     end
-    render = function(item, indent, depth, root)
+    render = function(item, indent, depth, root, opened)
         local own = label_of(item)
-        if own ~= nil and not root then return '«' .. M.text(own) .. '»' end
+        local labeled = own ~= nil and not root
+        if labeled and (opened >= open or type(item) ~= 'table') then return '«' .. M.text(own) .. '»' end
         if type(item) ~= 'table' then return scalar(item) end
+        local inner = labeled and opened + 1 or opened
         if numbers[item] then return '↩ #' .. numbers[item] end
         local head = describe(item)
+        if labeled then head = '«' .. M.text(own) .. '» ' .. head end
         if shared[item] then
             next_number = next_number + 1
             numbers[item] = next_number
@@ -98,14 +107,14 @@ function M.inspect(value, label_of, describe, options)
                 parts[#parts + 1] = ('… %d more'):format(#keys - #parts)
                 break
             end
-            local name = type(key) == 'string' and key:match('^[%a_][%w_]*$') and key or ('[' .. render(key, indent .. '    ', depth + 1, false) .. ']')
-            parts[#parts + 1] = name .. ' = ' .. render(rawget(item, key), indent .. '    ', depth + 1, false)
+            local name = type(key) == 'string' and key:match('^[%a_][%w_]*$') and key or ('[' .. render(key, indent .. '    ', depth + 1, false, inner) .. ']')
+            parts[#parts + 1] = name .. ' = ' .. render(rawget(item, key), indent .. '    ', depth + 1, false, inner)
         end
         local line = head .. ' { ' .. table.concat(parts, ', ') .. ' }'
         if #indent + #line <= width and not line:find('\n', 1, true) then return line end
         return head .. ' {\n' .. indent .. '    ' .. table.concat(parts, ',\n' .. indent .. '    ') .. ',\n' .. indent .. '}'
     end
-    local body = render(value, '', 0, true)
+    local body = render(value, '', 0, true, 0)
     local own = label_of(value)
     if own ~= nil then return M.text(own) .. ': ' .. body end
     return body

@@ -534,6 +534,11 @@ assert(inspect(cycle) == 'a table #1 { name = "loop", self = ↩ #1 }', inspect(
 local long = {}
 for i = 1, 30 do long[i] = i end
 assert(inspect(long):find("{\n    [1] = 1,\n", 1, true), inspect(long))
+local editor = { themes = label "Available themes" { label "Light" { tone = 1 } } }
+assert(inspect(editor) == "a table { themes = «Available themes» }", inspect(editor))
+assert(inspect(editor.themes) == "Available themes: a table { [1] = «Light» }", inspect(editor.themes))
+assert(inspect(editor, { open = 1 }) == "a table { themes = «Available themes» a table { [1] = «Light» } }", inspect(editor, { open = 1 }))
+assert(inspect(editor, { open = math.huge, width = 200 }) == "a table { themes = «Available themes» a table { [1] = «Light» a table { tone = 1 } } }", inspect(editor, { open = math.huge, width = 200 }))
 return inspect "text"]], '"text"')
 errors('a test takes a name first', 'test(5)', 'test takes a name first')
 errors('a test takes a block', 'test "named" (5)', "test 'named' takes a block")
