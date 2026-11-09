@@ -541,6 +541,11 @@ assert(inspect_through 1 (editor) == "a table { themes = «Available themes» a 
 assert(trace_through 0 (41) + 1 == 42)
 assert(inspect_through(math.huge)(editor):find("«Light» a table { tone = 1 }", 1, true), inspect_through(math.huge)(editor))
 return inspect "text"]], '"text"')
+runs('a vocabulary of an activity is opened, extended by spread, and labeled', [[
+local tools.. = { ..debugging, twice = |x| -> x * 2 }
+assert(label_of(debugging) == "debugging: say what values are, by their labels")
+assert(debugging.trace == trace and testing.test == test and contracts.Number == Number)
+return twice(inspect_through 0 (21) == "21" and 21 or 0)]], 42)
 errors('a test takes a name first', 'test(5)', 'test takes a name first')
 errors('a test takes a block', 'test "named" (5)', "test 'named' takes a block")
 runs('a program may define its own test', [[

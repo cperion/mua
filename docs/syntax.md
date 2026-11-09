@@ -180,6 +180,12 @@ an FFI ctype object is local to that object, not every equivalent ctype handle.
 Semantic names (struct handler keys, union tags and C type names) remain unchanged.
 `describe` uses the effective label for human-facing contract descriptions.
 
+**Vocabularies of an activity.** `testing` (`test`, `collect`), `debugging` (`trace`, `inspect`,
+`trace_through`, `inspect_through`) and `contracts` (`checker`, `check`, `required`, `optional`,
+`closed` and the base checkers) group words that are also ambient, as labeled tables. A file may
+open the one it is doing (`local debugging..`), and a project extends one by spread: `local
+tools.. = { ..debugging, timed = ... }`.
+
 `trace value` prints what a value is and what it holds, and answers the value unchanged, so it
 goes anywhere in an expression while debugging: `local total = trace(compute x) + 1`.
 `inspect value` is that text. A labeled value inside appears as its label (`«the origin»`):

@@ -650,9 +650,42 @@ function R.collect(run)
     return cases
 end
 
+-- Vocabularies of an activity (testing, debugging, contracts): the same words as the ambient
+-- ones, grouped and labeled, so a file may open the one it is doing (`local debugging..`) and a
+-- project may extend it by spread (`{ ..debugging, timed = ... }`). An outline of them is Mua's
+-- vocabulary in its own words.
+-- each word says what it does
+for word, text in pairs {
+    test = "name a case: run it now, or collect it for a runner",
+    collect = "run a block and answer the cases its tests named",
+    trace = "print what a value is, by its label, and answer it",
+    inspect = "the text of what a value is and holds, stopping at labels",
+    trace_through = "trace, opening this many levels of labeled values",
+    inspect_through = "inspect, opening this many levels of labeled values",
+    checker = "a named predicate a contract can check",
+    check = "whether a value meets a contract",
+    closed = "a table that refuses keys it was not made with",
+    Optional = "a contract that also admits nil",
+    required = "a field a closed table must be given",
+    optional = "a field a closed table may be given",
+} do
+    if R[word] ~= nil and R.label_of(R[word]) == nil then R.label(text)(R[word]) end
+end
+R.testing = R.label "testing: name cases, collect them for a runner" {
+    test = R.test, collect = R.collect,
+}
+R.debugging = R.label "debugging: say what values are, by their labels" {
+    trace = R.trace, inspect = R.inspect, trace_through = R.trace_through, inspect_through = R.inspect_through,
+}
+R.contracts = R.label "contracts: what a value must be" {
+    checker = R.checker, check = R.check, required = R.required, optional = R.optional, closed = R.closed,
+    Optional = R.Optional, Number = R.Number, String = R.String, Boolean = R.Boolean, Table = R.Table,
+    Function = R.Function, Any = R.Any, Unit = R.Unit,
+}
+
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'testing', 'debugging', 'contracts', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R
