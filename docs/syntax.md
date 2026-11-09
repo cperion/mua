@@ -185,9 +185,9 @@ goes anywhere in an expression while debugging: `local total = trace(compute x) 
 `inspect value` is that text. A labeled value inside appears as its label (`«the origin»`):
 whoever labeled it summed it up. An unlabeled table is opened, all of it, so how deep `trace`
 looks is decided by how well the code is labeled. The value you trace is always opened, labeled or not; to look inside a
-part, trace the part. `inspect(value, { open = n })` drills through n levels of labeled values at
-once, each shown with its label beside its contents (`«the origin» a Point { x = 0, y = 0 }`);
-`open = math.huge` opens everything. A table met twice is numbered and referred to
+part, trace the part. `trace_through n value` and `inspect_through n value` drill through n levels of
+labeled values at once, each shown with its label beside its contents (`«the origin» a Point {
+x = 0, y = 0 }`); `math.huge` opens everything. They are curried: the levels, then the value. A table met twice is numbered and referred to
 (`↩ #1`); a short table stays on one line, a long one is an indented tree. Like the outline, it
 reads raw table values, never `__index`, `__pairs` or `__tostring`.
 

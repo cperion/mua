@@ -233,12 +233,30 @@ end
 -- answer it unchanged, so it goes anywhere in an expression while debugging. `inspect value`
 -- is the text.
 local inspection = require 'mua.runtime.inspection'
-function R.inspect(value, options)
-    return inspection.inspect(value, R.label_of, describe_value, options)
+function R.inspect(value, ...)
+    if select('#', ...) > 0 then error('inspect takes one value; to drill through labels, inspect_through n value', 2) end
+    return inspection.inspect(value, R.label_of, describe_value)
 end
 function R.trace(value, ...)
-    print(R.inspect(value))
+    print(inspection.inspect(value, R.label_of, describe_value))
     return value, ...
+end
+-- `trace_through n value`, `inspect_through n value`: the same, opening n levels of labeled
+-- values (`math.huge`: all of them). Curried: the levels first, then the value.
+local function levels(word, n)
+    if type(n) ~= 'number' or n < 0 then error(('%s takes how many labeled levels to open, then the value: %s 2 value'):format(word, word), 3) end
+    return n
+end
+function R.inspect_through(n)
+    local open = levels('inspect_through', n)
+    return function(value) return inspection.inspect(value, R.label_of, describe_value, { open = open }) end
+end
+function R.trace_through(n)
+    local open = levels('trace_through', n)
+    return function(value, ...)
+        print(inspection.inspect(value, R.label_of, describe_value, { open = open }))
+        return value, ...
+    end
 end
 
 function R.expand(t) return unpack(t, 1, t.n or #t) end
@@ -634,7 +652,7 @@ end
 
 -- the words a Mua program may name without defining them: the emitter binds those a chunk
 -- uses to these, unless the chunk's environment defines them
-R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'Number', 'String', 'Boolean', 'Table',
+R.words = { 'define', 'meta', 'label', 'label_of', 'checker', 'family', 'iter', 'closed', 'required', 'optional', 'check', 'test', 'collect', 'trace', 'inspect', 'trace_through', 'inspect_through', 'Number', 'String', 'Boolean', 'Table',
             'Function', 'Any', 'Unit', 'Optional' }
 
 return R
