@@ -385,6 +385,14 @@ local p = P { x = 1 }
 p.x = nil
 p.x = "no"]], "the field 'x' of P expects Number")
 errors('a struct\'s __newindex is a method', 'local P = struct { x: Number }\nP.__newindex = 5', 'is a method')
+runs('a struct method named as a metamethod is its instances\' metamethod', [[
+local Scale = struct { factor: Number }
+function Scale:__call(x) return x * self.factor end
+function Scale:__tostring() return "scale " .. self.factor end
+function Scale:__eq(other) return self.factor == other.factor end
+local s = Scale { factor = 3 }
+return table.concat({ s(5), tostring(s), tostring(s == Scale { factor = 3 }) }, ",")]], '15,scale 3,true')
+errors('a struct metamethod is a method', 'local P = struct { x: Number }\nP.__call = 5', 'is a method')
 runs('a struct is a checker', 'local Point = struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f(Point { x = 7 })', 7)
 errors('a struct checker is nominal', 'local Point = struct { x: Number }\nlocal f = do(p: Point): Number = p.x\nreturn f({ x = 7 })',
     'expects Point, got a table')

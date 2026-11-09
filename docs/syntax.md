@@ -357,6 +357,10 @@ declare, with the instance, the member's name and the value; a declared field is
 assigned under its contract. A type a host builds can so take members defined after it
 (`function Fixed.__cast(v) … end`) while it stays a closed, checked struct.
 
+A method named as another Lua metamethod (`__call`, `__tostring`, `__eq`, `__lt`, `__le`,
+`__len`, `__concat`, and the arithmetic ones) is its instances' metamethod: a struct whose
+values are applied (`function Scale:__call(x) … end`) stays a struct.
+
 **`oneof`** is a tagged union with a constructor per alternative. A value is matched by calling
 it with one handler per alternative, and **every match checks** that the handlers name exactly
 the alternatives: a missing or unknown handler is an error at the match.
