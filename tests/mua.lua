@@ -509,6 +509,16 @@ local outer = collect do()
     assert(#inner == 1 and inner[1].name == "inner")
 end
 return #outer == 1 and outer[1].name == "outer"]], true)
+runs('a case\'s block is labeled with what it shows', [[
+local cases = collect do()
+    test "first shows this":
+    end
+end
+local ran = nil
+test "run at once":
+    ran = true
+end
+return label_of(cases[1].run) == "first shows this" and ran]], true)
 errors('a test takes a name first', 'test(5)', 'test takes a name first')
 errors('a test takes a block', 'test "named" (5)', "test 'named' takes a block")
 runs('a program may define its own test', [[

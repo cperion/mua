@@ -581,7 +581,8 @@ function R.extend(overrides)
 end
 
 -- tests --------------------------------------------------------------------------------------
--- `test "what it shows":` … `end` names a case whose block is its body. Inside `collect(run)`,
+-- `test "what it shows":` … `end` names a case whose block is its body, and labels the block
+-- with it. Inside `collect(run)`,
 -- the cases `run` names are registered, in order, for a runner to run; anywhere else a case runs
 -- at once and a failure raises `test 'name' failed: …`, so a file of tests is also a program.
 local collectors = {}
@@ -593,6 +594,8 @@ function R.test(name, body)
         if type(run) ~= 'function' then
             error(("test '%s' takes a block: test %q: ... end"):format(name, name), 2)
         end
+        -- a case's block is labeled with what it shows: its identity in outlines and reports
+        R.label(name)(run)
         local collector = collectors[#collectors]
         if collector then
             collector[#collector + 1] = { name = name, run = run }
