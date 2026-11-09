@@ -180,6 +180,11 @@ an FFI ctype object is local to that object, not every equivalent ctype handle.
 Semantic names (struct handler keys, union tags and C type names) remain unchanged.
 `describe` uses the effective label for human-facing contract descriptions.
 
+`show value` prints what a value is and what it holds (its label, then one level of its
+contents, nested values by their labels) and answers the value unchanged, so it goes anywhere in
+an expression: `local total = show(compute x) + 1`. `shown value` is that text. Like the outline,
+it reads raw table values, never `__index`, `__pairs` or `__tostring`.
+
 **`meta`** installs a vocabulary as a metatable. `meta { index = …, tostring = … }` (or
 `meta with … end`) copies its entries under `__` names (`__index`, `__tostring`; a name that
 already starts with `__` is kept) and returns a function that sets that metatable on the table it
